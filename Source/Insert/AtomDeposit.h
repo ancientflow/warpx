@@ -41,7 +41,7 @@
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
-#include </home/ps/warpx/warpx-cuda-latest/Source/Evolve/WarpXInsertConfig.h>
+#include <Insert/WarpXInsertConfig.h>
 #include <BoundaryConditions/WarpX_PEC.H>
 #include <algorithm>
 #include <array>
