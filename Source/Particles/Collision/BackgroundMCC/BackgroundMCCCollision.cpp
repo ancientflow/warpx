@@ -20,8 +20,19 @@
 #include <AMReX_REAL.H>
 #include <AMReX_Vector.H>
 
+#include "Insert/WarpXInsertConfig.h"
+#include "Insert/AtomDeposit.h"
 #include <string>
 
+#include "Insert/WarpXFunc.h"
+
+#ifdef PUSH_GAP
+extern std::vector<std::pair<int, int>> push_control;
+#endif
+
+#ifdef MCCDENSITY
+extern std::vector<amrex::MultiFab> global_rho;
+#endif
 BackgroundMCCCollision::BackgroundMCCCollision (std::string const& collision_name)
     : CollisionBase(collision_name)
 {
@@ -165,6 +176,20 @@ BackgroundMCCCollision::BackgroundMCCCollision (std::string const& collision_nam
         m_ionization_processes_exe.push_back(p.executor());
     }
 #endif
+
+#ifdef MCCDENSITY
+    pp_collision_name.get("ground_species", m_ground_species);
+    pp_collision_name.get("ground_rho_index", m_ground_rho_index);
+#ifdef MCC_EXCITATION
+    m_have_excitation = false;
+    m_excitation_product = m_ground_species;
+    m_excitation_rho_index = m_ground_rho_index;
+
+    pp_collision_name.query("have_excitation", m_have_excitation);
+    pp_collision_name.query("excitation_product", m_excitation_product);
+    pp_collision_name.query("excitation_rho_index", m_excitation_rho_index);
+#endif
+#endif
 }
 
 /** Calculate the maximum collision frequency using a fixed energy grid that
@@ -216,25 +241,26 @@ BackgroundMCCCollision::get_nu_max(amrex::Vector<ScatteringProcess> const& mcc_p
 }
 
 void
-BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt, MultiParticleContainer* mypc)
-{
+BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
+                                      MultiParticleContainer* mypc) {
     WARPX_PROFILE("BackgroundMCCCollision::doCollisions()");
     using namespace amrex::literals;
 
     auto& species1 = mypc->GetParticleContainerFromName(m_species_names[0]);
     // this is a very ugly hack to have species2 be a reference and be
     // defined in the scope of doCollisions
-    auto& species2 = (
-                      (m_species_names.size() == 2) ?
-                      mypc->GetParticleContainerFromName(m_species_names[1]) :
-                      mypc->GetParticleContainerFromName(m_species_names[0])
-                      );
+    auto& species2 =
+        ((m_species_names.size() == 2)
+             ? mypc->GetParticleContainerFromName(m_species_names[1])
+             : mypc->GetParticleContainerFromName(m_species_names[0]));
 
     if (!init_flag) {
         m_mass1 = species1.getMass();
 
         // calculate maximum collision frequency without ionization
+        m_max_background_density = 1.0_prt;
         m_nu_max = get_nu_max(m_scattering_processes);
+        m_sigma_max = m_nu_max;
 
         // calculate total collision probability
         auto coll_n = m_nu_max * dt;
@@ -244,25 +270,30 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt, Mult
         // probability is sufficiently accurately, otherwise the MCC results
         // will be very heavily affected by small changes in the timestep
         if (coll_n > 0.1_prt) {
-            ablastr::warn_manager::WMRecordWarning("BackgroundMCC Collisions",
-                     "dt is too large to ensure accurate MCC results , coll_n: " +
-                      std::to_string(coll_n) + " is > 0.1 and collision probability is = " +
-                      std::to_string(m_total_collision_prob) + "\n");
+            ablastr::warn_manager::WMRecordWarning(
+                "BackgroundMCC Collisions",
+                "dt is too large to ensure accurate MCC results , coll_n: " +
+                    std::to_string(coll_n) +
+                    " is > 0.1 and collision probability is = " +
+                    std::to_string(m_total_collision_prob) + "\n");
         }
 
         if (ionization_flag) {
             // calculate maximum collision frequency for ionization
             m_nu_max_ioniz = get_nu_max(m_ionization_processes);
-
+            m_ioni_sigma_max = m_nu_max_ioniz;
             // calculate total ionization probability
             auto coll_n_ioniz = m_nu_max_ioniz * dt;
             m_total_collision_prob_ioniz = 1.0_prt - std::exp(-coll_n_ioniz);
 
             if (coll_n_ioniz > 0.1_prt) {
-                ablastr::warn_manager::WMRecordWarning("BackgroundMCC Collisions",
-                         "dt is too large to ensure accurate MCC ionization , coll_n_ionization: " +
-                          std::to_string(coll_n_ioniz) + " is > 0.1 and ionization probability is = " +
-                          std::to_string(m_total_collision_prob_ioniz) + "\n");
+                ablastr::warn_manager::WMRecordWarning(
+                    "BackgroundMCC Collisions",
+                    "dt is too large to ensure accurate MCC ionization , "
+                    "coll_n_ionization: " +
+                        std::to_string(coll_n_ioniz) +
+                        " is > 0.1 and ionization probability is = " +
+                        std::to_string(m_total_collision_prob_ioniz) + "\n");
             }
 
             // if an ionization process is included the secondary species mass
@@ -277,21 +308,84 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt, Mult
         }
 
         amrex::Print() << Utils::TextMsg::Info(
-            "Setting up Monte-Carlo collisions for " + m_species_names[0] + " with:\n"
-            + "     total non-ionization collision probability: "
-            + std::to_string(m_total_collision_prob)
-            + "\n     total ionization collision probability: "
-            + std::to_string(m_total_collision_prob_ioniz)
-        );
+            "Setting up Monte-Carlo collisions for " + m_species_names[0] +
+            " with:\n" + "     total non-ionization collision probability: " +
+            std::to_string(m_total_collision_prob) +
+            "\n     total ionization collision probability: " +
+            std::to_string(m_total_collision_prob_ioniz));
 
         init_flag = true;
     }
 
+    // 计算密度
+#ifdef MCCDENSITY
+    WarpX& warpx_instance = WarpX::GetInstance();
+
+    MultiFab& m_ground_rho = global_rho[m_ground_rho_index];
+    MultiFab& m_excitation_rho = global_rho[m_excitation_rho_index];
+    auto& ground_pc =
+        mypc->GetParticleContainer(mypc->getSpeciesID(m_ground_species));
+    auto& excitation_pc =
+        mypc->GetParticleContainer(mypc->getSpeciesID(m_excitation_product));
+
+    int ncell;
+    ParticleReal sim_L;
+    amrex::ParmParse pp_mc("my_constants");
+    pp_mc.getWithParser("sim_L", sim_L);
+    pp_mc.getWithParser("n_cell", ncell);
+    ParticleReal inv_gap = ncell / sim_L;
+    // 计数修改发生在evolve步骤，碰撞发生该步之前，上一个循环push之后，计数归零，需要进行全局沉积
+    // 设置三个新变量 m_ground_species m_excitation_product m_have_excitation
+    if (push_control[mypc->getSpeciesID(m_ground_species)].second == 0) {
+        m_ground_rho.setVal(0.0);
+        AtomDepostiAPI(ground_pc, m_ground_rho);
+    }
+    const SmartCopyFactory copy_factory_exc(ground_pc, excitation_pc);
+    const auto CopyExc = copy_factory_exc.getSmartCopy();
+
+    m_max_background_density = m_ground_rho.max(0);
+    
+    //  calculate maximum collision frequency without ionization
+    m_nu_max = m_sigma_max * m_max_background_density;
+
+    // calculate total collision probability
+    auto coll_n = m_nu_max * dt;
+    m_total_collision_prob = 1.0_prt - std::exp(-coll_n);
+
+    amrex::Print() << "max local atom density: " << m_max_background_density
+                   << " m^3; total collision probabilty: "
+                   << m_total_collision_prob << "\n";
+
+    if (ionization_flag) {
+        // calculate maximum collision frequency for ionization
+        m_nu_max_ioniz = m_ioni_sigma_max * m_max_background_density;
+
+        // calculate total ionization probability
+        auto coll_n_ioniz = m_nu_max_ioniz * dt;
+        m_total_collision_prob_ioniz = 1.0_prt - std::exp(-coll_n_ioniz);
+
+        if (coll_n_ioniz > 0.1_prt) {
+            ablastr::warn_manager::WMRecordWarning(
+                "BackgroundMCC Collisions",
+                "dt is too large to ensure accurate MCC ionization , "
+                "coll_n_ionization: " +
+                    std::to_string(coll_n_ioniz) +
+                    " is > 0.1 and ionization probability is = " +
+                    std::to_string(m_total_collision_prob_ioniz) + "\n");
+        }
+    }
+#endif
+
     // Loop over refinement levels
+#ifdef MCCDENSITY
+    const int depos_order = WarpX::nox;
+#endif
+#ifdef MCC_EXCITATION
+    amrex::Vector<amrex::Vector<amrex::ParticleReal>> pdata(7);
+#endif
     auto const flvl = species1.finestLevel();
     for (int lev = 0; lev <= flvl; ++lev) {
-
-        auto *cost = WarpX::getCosts(lev);
+        auto* cost = WarpX::getCosts(lev);
 
         // firstly loop over particles box by box and do all particle conserving
         // scattering
@@ -299,29 +393,150 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt, Mult
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
         for (WarpXParIter pti(species1, lev); pti.isValid(); ++pti) {
-            if (cost && WarpX::load_balance_costs_update_algo == LoadBalanceCostsUpdateAlgo::Timers)
-            {
+            if (cost && WarpX::load_balance_costs_update_algo ==
+                            LoadBalanceCostsUpdateAlgo::Timers) {
                 amrex::Gpu::synchronize();
             }
             auto wt = static_cast<amrex::Real>(amrex::second());
 
+            // 调用耦合函数
+#ifndef MCCDENSITY
             doBackgroundCollisionsWithinTile(pti, cur_time);
+#else
+            /**********************准备需要用到的数组***************************/
+            auto geo = warpx_instance.Geom(lev);
+            auto& ptile = ground_pc.ParticlesAt(lev, pti);
+            auto bin = ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
+            const int* offsets = bin.offsetsPtr();
+            int* indices = bin.permutationPtr();
+            int np = ptile.numParticles();
+            int numbins = bin.numBins();
 
-            if (cost && WarpX::load_balance_costs_update_algo == LoadBalanceCostsUpdateAlgo::Timers)
-            {
+            amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
+            int* p_delete = num_delete.dataPtr();
+
+            // 记录每个cell中的原子数
+            amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0);
+            int* p_particle_num = particle_num_in_cell.dataPtr();
+            ParallelFor(numbins, [=] AMREX_GPU_DEVICE(int ibin) {
+                p_particle_num[ibin] = offsets[ibin + 1] - offsets[ibin];
+            });
+
+            amrex::Gpu::DeviceVector<int> mask(np, 0);
+            int* p_mask = mask.dataPtr();
+            /*****************************************************************/
+            if (depos_order == 1) {
+                doBackgroundCollisionsWithinTileCouple<1>(
+                    pti, cur_time, m_ground_rho, p_delete, p_particle_num,
+                    ncell, inv_gap);
+#ifdef MCC_EXCITATION
+                if (m_have_excitation) {
+                    ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
+                                                numbins, ground_pc, pti,
+                                                m_ground_rho, m_excitation_rho,
+                                                excitation_pc, inv_gap, p_mask);
+                }
+#endif
+            } else if (depos_order == 2) {
+                doBackgroundCollisionsWithinTileCouple<2>(
+                    pti, cur_time, m_ground_rho, p_delete, p_particle_num,
+                    ncell, inv_gap);
+#ifdef MCC_EXCITATION
+                if (m_have_excitation) {
+                    ReplaceParticlesEachCell<2>(p_delete, offsets, indices,
+                                                numbins, ground_pc, pti,
+                                                m_ground_rho, m_excitation_rho,
+                                                excitation_pc, inv_gap, p_mask);
+                }
+#endif
+            } else if (depos_order == 3) {
+                doBackgroundCollisionsWithinTileCouple<3>(
+                    pti, cur_time, m_ground_rho, p_delete, p_particle_num,
+                    ncell, inv_gap);
+#ifdef MCC_EXCITATION
+                if (m_have_excitation) {
+                    ReplaceParticlesEachCell<3>(p_delete, offsets, indices,
+                                                numbins, ground_pc, pti,
+                                                m_ground_rho, m_excitation_rho,
+                                                excitation_pc, inv_gap, p_mask);
+                }
+#endif
+            } else if (depos_order == 4) {
+                doBackgroundCollisionsWithinTileCouple<4>(
+                    pti, cur_time, m_ground_rho, p_delete, p_particle_num,
+                    ncell, inv_gap);
+#ifdef MCC_EXCITATION
+                if (m_have_excitation) {
+                    ReplaceParticlesEachCell<4>(p_delete, offsets, indices,
+                                                numbins, ground_pc, pti,
+                                                m_ground_rho, m_excitation_rho,
+                                                excitation_pc, inv_gap, p_mask);
+                }
+#endif
+            } else {
+                doBackgroundCollisionsWithinTileCouple<1>(
+                    pti, cur_time, m_ground_rho, p_delete, p_particle_num,
+                    ncell, inv_gap);
+#ifdef MCC_EXCITATION
+                if (m_have_excitation) {
+                    ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
+                                                numbins, ground_pc, pti,
+                                                m_ground_rho, m_excitation_rho,
+                                                excitation_pc, inv_gap, p_mask);
+                }
+#endif
+            }
+#ifdef MCC_EXCITATION
+            if (m_have_excitation) {
+                auto& exc_ptile = excitation_pc.ParticlesAt(0, pti);
+                int np_exc = exc_ptile.numParticles();
+
+                const auto num_added = filterCopyTransformParticles<1>(
+                    excitation_pc, exc_ptile, ptile, p_mask, np_exc, CopyExc);
+                setNewParticleIDs(exc_ptile, np_exc, num_added);
+            }
+#endif
+#endif
+            if (cost && WarpX::load_balance_costs_update_algo ==
+                            LoadBalanceCostsUpdateAlgo::Timers) {
                 amrex::Gpu::synchronize();
                 wt = static_cast<amrex::Real>(amrex::second()) - wt;
-                amrex::HostDevice::Atomic::Add( &(*cost)[pti.index()], wt);
+                amrex::HostDevice::Atomic::Add(&(*cost)[pti.index()], wt);
             }
         }
-
         // secondly perform ionization through the SmartCopyFactory if needed
+#ifdef MCC_EXCITATION
+        ground_pc.deleteInvalidParticles();
+#endif
         if (ionization_flag) {
+#ifndef MCC_DELETE
             doBackgroundIonization(lev, cost, species1, species2, cur_time);
+#else
+            if (depos_order == 1) {
+                doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
+                                                cur_time, m_ground_rho,
+                                                inv_gap);
+            } else if (depos_order == 2) {
+                doBackgroundIonizationCouple<2>(lev, cost, species1, species2,
+                                                cur_time, m_ground_rho,
+                                                inv_gap);
+            } else if (depos_order == 3) {
+                doBackgroundIonizationCouple<3>(lev, cost, species1, species2,
+                                                cur_time, m_ground_rho,
+                                                inv_gap);
+            } else if (depos_order == 4) {
+                doBackgroundIonizationCouple<4>(lev, cost, species1, species2,
+                                                cur_time, m_ground_rho,
+                                                inv_gap);
+            } else {
+                doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
+                                                cur_time, m_ground_rho,
+                                                inv_gap);
+            }
+#endif
         }
     }
 }
-
 
 void BackgroundMCCCollision::doBackgroundCollisionsWithinTile
 ( WarpXParIter& pti, amrex::Real t )
@@ -473,6 +688,237 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTile
                           );
 }
 
+// 耦合到本地密度
+template <int depos_order>
+void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
+    WarpXParIter& pti, amrex::Real t, amrex::MultiFab& ground_rho,
+    int* p_delete, int* p_particle_num, int ncell, amrex::Real inv_gap){
+    using namespace amrex::literals;
+
+    // So that CUDA code gets its intrinsic, not the host-only C++ library
+    // version
+    using std::sqrt;
+
+    // get particle count
+    const long np = pti.numParticles();
+
+    // get parsers for the background density and temperature
+    auto T_a_func = m_background_temperature_func;
+
+    // get collision parameters
+    auto* scattering_processes = m_scattering_processes_exe.data();
+    auto const process_count =
+        static_cast<int>(m_scattering_processes_exe.size());
+
+    auto const total_collision_prob = m_total_collision_prob;
+    auto const nu_max = m_nu_max;
+
+    // store projectile and target masses
+    auto const m = m_mass1;
+    auto const M = m_background_mass;
+
+    // precalculate often used value
+    constexpr auto c2 = PhysConst::c * PhysConst::c;
+    auto const mc2 = m * c2;
+
+    // we need particle positions in order to calculate the local density
+    // and temperature
+    auto GetPosition = GetParticlePosition<PIdx>(pti);
+
+    // get Struct-Of-Array particle data, also called attribs
+    auto& attribs = pti.GetAttribs();
+    amrex::ParticleReal* const AMREX_RESTRICT ux = attribs[PIdx::ux].dataPtr();
+    amrex::ParticleReal* const AMREX_RESTRICT uy = attribs[PIdx::uy].dataPtr();
+    amrex::ParticleReal* const AMREX_RESTRICT uz = attribs[PIdx::uz].dataPtr();
+
+    // 统计原子数密度 仅单个box
+    auto const& ground_rho_arr = ground_rho.array(pti);
+
+    amrex::Box box = pti.tilebox();
+    box.grow(ground_rho.nGrowVect());
+    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0._rt);
+    const Dim3 lo = lbound(box);
+
+    amrex::ParallelForRNG(
+        np,
+        [=] AMREX_GPU_HOST_DEVICE(long ip, amrex::RandomEngine const& engine) {
+            // determine if this particle should collide
+            if (amrex::Random(engine) > total_collision_prob) {
+                return;
+            }
+
+            amrex::ParticleReal x, y, z;
+            GetPosition.AsStored(ip, x, y, z);
+            Compute_shape_factor<depos_order> const compute_shape_factor;
+
+            amrex::Real sx[depos_order + 1] = {0._rt},
+                        sy[depos_order + 1] = {0._rt},
+                        sz[depos_order + 1] = {0._rt};
+
+            int px = compute_shape_factor(sx, (x - xyzmin.x) * inv_gap);
+            int py = compute_shape_factor(sy, (y - xyzmin.y) * inv_gap);
+            int pz = compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
+            amrex::ParticleReal n_a = 0;
+
+            for (int iz = 0; iz <= depos_order; iz++) {
+                for (int iy = 0; iy <= depos_order; iy++) {
+                    for (int ix = 0; ix <= depos_order; ix++) {
+                        n_a += sx[ix] * sy[iy] * sz[iz] *
+                               ground_rho_arr(lo.x + px + ix, lo.y + py + iy,
+                                              lo.z + pz + iz);
+                    }
+                }
+            }
+            // 修改点位 插值，使用高阶形函数
+            /*
+            amrex::Real pid = x / *pgap, pjd = y / *pgap, pkd = z / *pgap;
+
+            int pi = static_cast<int>(x / *pgap), pj = static_cast<int>(y /
+        *pgap), pk = static_cast<int>(z / *pgap);
+
+
+        amrex::Real dil = pid - pi, dih = 1 - dil, djl = pjd - pj,
+                    djh = 1 - djl, dkl = pkd - pk, dkh = 1 - dkl;
+
+            const amrex::ParticleReal n_a = xe_rho_arr(pi, pj, pk);
+            xe_rho_arr(pi, pj, pk) * dih * djh * dkh +
+            xe_rho_arr(pi + 1, pj, pk) * dil * djh * dkh +
+            xe_rho_arr(pi, pj + 1, pk) * dih * djl * dkh +
+            xe_rho_arr(pi + 1, pj + 1, pk) * dil * djl * dkh +
+            xe_rho_arr(pi, pj, pk + 1) * dih * djh * dkl +
+            xe_rho_arr(pi + 1, pj, pk + 1) * dil * djh * dkl +
+            xe_rho_arr(pi, pj + 1, pk + 1) * dih * djl * dkl +
+            xe_rho_arr(pi + 1, pj + 1, pk + 1) * dil * dil * dkl;*/
+
+            const amrex::ParticleReal T_a = T_a_func(x, y, z, t);
+
+            amrex::ParticleReal v_coll, v_coll2, sigma_E, nu_i = 0;
+            double gamma, E_coll;
+            amrex::ParticleReal ua_x, ua_y, ua_z, vx, vy, vz;
+            amrex::ParticleReal uCOM_x, uCOM_y, uCOM_z;
+            const amrex::ParticleReal col_select = amrex::Random(engine);
+
+            // get velocities of gas particles from a Maxwellian distribution
+            auto const vel_std = sqrt(PhysConst::kb * T_a / M);
+            ua_x = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
+            ua_y = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
+            ua_z = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
+
+            // we assume the target particle is not relativistic (in
+            // the lab frame) and therefore we can transform the projectile
+            // velocity to a frame in which the target is stationary with
+            // a simple Galilean boost
+            // not doing the full Lorentz boost here saves us computation
+            // since most particles will not actually collide
+            vx = ux[ip] - ua_x;
+            vy = uy[ip] - ua_y;
+            vz = uz[ip] - ua_z;
+            v_coll2 = (vx * vx + vy * vy + vz * vz);
+            v_coll = std::sqrt(v_coll2);
+
+            // calculate the collision energy in eV
+            ParticleUtils::getCollisionEnergy(v_coll2, m, M, gamma, E_coll);
+
+            // loop through all collision pathways
+            for (int i = 0; i < process_count; i++) {
+                auto const& scattering_process = *(scattering_processes + i);
+
+                // get collision cross-section
+                sigma_E = scattering_process.getCrossSection(
+                    static_cast<amrex::ParticleReal>(E_coll));
+
+                // calculate normalized collision frequency
+                nu_i += n_a * sigma_E * v_coll / nu_max;
+
+                // check if this collision should be performed
+                if (col_select > nu_i) {
+                    continue;
+                }
+
+                // charge exchange is implemented as a simple swap of the
+                // projectile and target velocities which doesn't require any of
+                // the Lorentz transformations below; note that if the
+                // projectile and target have the same mass this is identical to
+                // back scattering
+                if (scattering_process.m_type ==
+                    ScatteringProcessType::TWOPRODUCT_REACTION) {
+                    ux[ip] = ua_x;
+                    uy[ip] = ua_y;
+                    uz[ip] = ua_z;
+                    break;
+                }
+
+                // At this point the given particle has been chosen for a
+                // collision and so we perform the needed calculations to
+                // transform to the COM frame.
+                uCOM_x =
+                    static_cast<amrex::ParticleReal>(m * vx / (gamma * m + M));
+                uCOM_y =
+                    static_cast<amrex::ParticleReal>(m * vy / (gamma * m + M));
+                uCOM_z =
+                    static_cast<amrex::ParticleReal>(m * vz / (gamma * m + M));
+
+                // subtract any energy penalty of the collision from the
+                // projectile energy
+                if (scattering_process.m_energy_penalty > 0.0_prt) {
+                    constexpr auto eV = PhysConst::q_e;
+                    E_coll = (Algorithms::KineticEnergy<double>(vx, vy, vz, m) -
+                              scattering_process.m_energy_penalty * eV);
+                    const auto scale_fac = static_cast<amrex::ParticleReal>(
+                        std::sqrt(E_coll * (E_coll + 2.0_prt * mc2) / c2) / m /
+                        v_coll);
+                    vx *= scale_fac;
+                    vy *= scale_fac;
+                    vz *= scale_fac;
+                }
+
+                // transform to COM frame
+                ParticleUtils::doLorentzTransform(vx, vy, vz, uCOM_x, uCOM_y,
+                                                  uCOM_z);
+
+                if (scattering_process.m_type ==
+                     ScatteringProcessType::ELASTIC) {
+                        ParticleUtils::RandomizeVelocity(
+                            vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz),
+                            engine);
+                } else if (scattering_process.m_type ==
+                            ScatteringProcessType::EXCITATION) {
+#ifndef MCC_EXCITATION
+                    ParticleUtils::RandomizeVelocity(
+                        vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
+#else
+                    int pi = static_cast<int>(x * inv_gap),
+                        pj = static_cast<int>(y * inv_gap),
+                        pk = static_cast<int>(z * inv_gap);
+                    int pos = pi * ncell * ncell + pj * ncell + pk;
+                    if (p_particle_num[pos] > 0) {
+                        ParticleUtils::RandomizeVelocity(
+                            vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz),
+                            engine);
+                        amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
+                        amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
+                    }
+#endif
+                } else if (scattering_process.m_type ==
+                           ScatteringProcessType::BACK) {
+                    // elastic scattering with cos(chi) = -1 (i.e. 180 degrees)
+                    vx *= -1.0_prt;
+                    vy *= -1.0_prt;
+                    vz *= -1.0_prt;
+                }
+
+                // transform back to scattering frame
+                ParticleUtils::doLorentzTransform(vx, vy, vz, -uCOM_x, -uCOM_y,
+                                                  -uCOM_z);
+
+                // update particle velocity with new components in labframe
+                ux[ip] = vx + ua_x;
+                uy[ip] = vy + ua_y;
+                uz[ip] = vz + ua_z;
+                break;
+            }
+        });
+}
 
 void BackgroundMCCCollision::doBackgroundIonization
 ( int lev, amrex::LayoutData<amrex::Real>* cost,
@@ -528,6 +974,157 @@ void BackgroundMCCCollision::doBackgroundIonization
             amrex::Gpu::synchronize();
             wt = static_cast<amrex::Real>(amrex::second()) - wt;
             amrex::HostDevice::Atomic::Add( &(*cost)[pti.index()], wt);
+        }
+    }
+}
+
+template <int depos_order>
+void BackgroundMCCCollision::doBackgroundIonizationCouple (
+    int lev, amrex::LayoutData<amrex::Real>* cost,
+    WarpXParticleContainer& species1, WarpXParticleContainer& species2,
+    amrex::Real t, amrex::MultiFab& ground_rho, amrex::Real inv_gap) {
+    WARPX_PROFILE("BackgroundMCCCollision::doBackgroundIonizationCouple()");
+
+    const SmartCopyFactory copy_factory_elec(species1, species1);
+    const SmartCopyFactory copy_factory_ion(species1, species2);
+    const auto CopyElec = copy_factory_elec.getSmartCopy();
+    const auto CopyIon = copy_factory_ion.getSmartCopy();
+
+    const auto Filter = ImpactIonizationFilterFunc(
+        m_ionization_processes[0], m_mass1, m_total_collision_prob_ioniz,
+        m_nu_max_ioniz, m_background_density_func, t);
+
+    const amrex::ParticleReal sqrt_kb_m =
+        std::sqrt(PhysConst::kb / m_background_mass);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+    auto& pc = warpx_instance.GetPartContainer().GetParticleContainerFromName(
+        m_ground_species);
+
+    for (WarpXParIter pti(species1, lev); pti.isValid(); ++pti) {
+
+        if (cost && WarpX::load_balance_costs_update_algo ==
+                        LoadBalanceCostsUpdateAlgo::Timers) {
+            amrex::Gpu::synchronize();
+        }
+        auto wt = static_cast<amrex::Real>(amrex::second());
+
+        auto& elec_tile = species1.ParticlesAt(lev, pti);
+        auto& ion_tile = species2.ParticlesAt(lev, pti);
+
+        const auto np_elec = elec_tile.numParticles();
+        const auto np_ion = ion_tile.numParticles();
+
+        auto Transform = ImpactIonizationTransformFunc(
+            m_ionization_processes[0].getEnergyPenalty(), m_mass1, sqrt_kb_m,
+            m_background_temperature_func, t);
+
+        auto geo = warpx_instance.Geom(lev);
+        auto& ptile = pc.ParticlesAt(lev, pti);
+        auto bin = ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
+        const int* offsets = bin.offsetsPtr();
+        int* indices = bin.permutationPtr();
+
+        int numbins = bin.numBins();
+
+        amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
+        int* p_delete = num_delete.dataPtr();
+
+        // 记录每个cell中的原子数
+        amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0);
+        int* p_particle_num = particle_num_in_cell.dataPtr();
+        ParallelFor(numbins, [=] AMREX_GPU_DEVICE(int ibin) {
+            p_particle_num[ibin] = offsets[ibin + 1] - offsets[ibin];
+        });
+
+        auto const& rho_arr = ground_rho[pti].array();
+        amrex::Box box = pti.tilebox();
+        box.grow(ground_rho.nGrowVect());
+        const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, lev, 0._rt);
+        const Dim3 lo = lbound(box);
+
+        const auto num_added = filterCopyTransformParticles<1, depos_order>(
+            species1, species2, elec_tile, ion_tile, elec_tile, np_elec, np_ion,
+            Filter, CopyElec, CopyIon, Transform, p_delete, rho_arr,
+            p_particle_num, xyzmin, lo);
+
+        amrex::Gpu::DeviceScalar<int> all_deleted(0);
+        int* p_num = all_deleted.dataPtr();
+
+        auto& soa = ptile.GetStructOfArrays();
+        uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
+        auto& soa_arr = soa.GetRealData();
+        amrex::Real *px = soa_arr[PIdx::x].dataPtr(),
+                    *py = soa_arr[PIdx::y].dataPtr(),
+                    *pz = soa_arr[PIdx::z].dataPtr(),
+                    *pw = soa_arr[PIdx::w].dataPtr();
+
+        amrex::Box domain = geo.Domain();
+        domain.surroundingNodes();
+        amrex::Real invvol = inv_gap * inv_gap * inv_gap;
+
+        if (num_added > 0) {
+            amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
+                                               int ibin,
+                                               const RandomEngine& engine) {
+                int num = offsets[ibin + 1] - offsets[ibin],
+                    rest = amrex::min(p_delete[ibin], num);
+                amrex::Gpu::Atomic::Add(p_num, rest);
+                while (rest > 0) {
+                    int indices_pos =
+                        offsets[ibin] + amrex::Random_int(num, engine);
+                    int pos = indices[indices_pos];
+                    auto pidw = amrex::ParticleIDWrapper{idcpu[pos]};
+                    if (pidw.is_valid()) {
+                        pidw.make_invalid();
+                        rest--;
+                        // 处理密度变化
+                        ParticleReal x = px[pos], y = py[pos], z = pz[pos],
+                                     w = -pw[pos] * invvol;
+
+                        Compute_shape_factor<depos_order> const
+                            compute_shape_factor;
+
+                        amrex::Real sx[depos_order + 1] = {0._rt},
+                                    sy[depos_order + 1] = {0._rt},
+                                    sz[depos_order + 1] = {0._rt};
+
+                        int px =
+                            compute_shape_factor(sx, (x - xyzmin.x) * inv_gap);
+                        int py =
+                            compute_shape_factor(sy, (y - xyzmin.y) * inv_gap);
+                        int pz =
+                            compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
+
+                        for (int iz = 0; iz <= depos_order; iz++) {
+                            for (int iy = 0; iy <= depos_order; iy++) {
+                                for (int ix = 0; ix <= depos_order; ix++) {
+                                    amrex::Gpu::Atomic::AddNoRet(
+                                        &rho_arr(lo.x + px + ix, lo.y + py + iy,
+                                                 lo.z + pz + iz),
+                                        sx[ix] * sy[iy] * sz[iz] * w);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        amrex::Print() << "ionization: delete " << all_deleted.dataValue() << " particle"
+                       << pc.getSpeciesId() + 1 << "\n";
+
+        setNewParticleIDs(elec_tile, np_elec, num_added);
+        setNewParticleIDs(ion_tile, np_ion, num_added);
+
+        if (cost && WarpX::load_balance_costs_update_algo ==
+                        LoadBalanceCostsUpdateAlgo::Timers) {
+            amrex::Gpu::synchronize();
+            wt = static_cast<amrex::Real>(amrex::second()) - wt;
+            amrex::HostDevice::Atomic::Add(&(*cost)[pti.index()], wt);
         }
     }
 }

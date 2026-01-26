@@ -376,7 +376,6 @@ PhysicalParticleContainer::AddGaussianBeam (PlasmaInjector const& plasma_injecto
     const amrex::Real y_cut = plasma_injector.y_cut;
     const amrex::Real z_cut = plasma_injector.z_cut;
     const amrex::Real q_tot = plasma_injector.q_tot;
-    const amrex::Real N_tot = plasma_injector.N_tot;
     long npart = plasma_injector.npart;
     const int do_symmetrize = plasma_injector.do_symmetrize;
     const int symmetrization_order = plasma_injector.symmetrization_order;
@@ -400,28 +399,24 @@ PhysicalParticleContainer::AddGaussianBeam (PlasmaInjector const& plasma_injecto
         if (do_symmetrize){
             npart /= symmetrization_order;
         }
-        // compute the weight from N_tot if the user specified npart_real = N_tot
-        // compute the weight from q_tot if the user specified q_tot
-        // note that npart is the number of macroparticles
-        const amrex::Real weight_3d = (N_tot > 0._rt) ? (N_tot / npart) : (q_tot / (npart*charge));
         for (long i = 0; i < npart; ++i) {
 #if defined(WARPX_DIM_3D) || defined(WARPX_DIM_RZ)
-            const amrex::Real weight = weight_3d;
+            const amrex::Real weight = q_tot/(npart*charge);
             amrex::Real x = amrex::RandomNormal(x_m, x_rms);
             amrex::Real y = amrex::RandomNormal(y_m, y_rms);
             amrex::Real z = amrex::RandomNormal(z_m, z_rms);
 #elif defined(WARPX_DIM_XZ)
-            const amrex::Real weight = weight_3d/y_rms;
+            const amrex::Real weight = q_tot/(npart*charge*y_rms);
             amrex::Real x = amrex::RandomNormal(x_m, x_rms);
             constexpr amrex::Real y = 0._prt;
             amrex::Real z = amrex::RandomNormal(z_m, z_rms);
 #elif defined(WARPX_DIM_1D_Z)
-            const amrex::Real weight = weight_3d/(x_rms*y_rms);
+            const amrex::Real weight = q_tot/(npart*charge*x_rms*y_rms);
             constexpr amrex::Real x = 0._prt;
             constexpr amrex::Real y = 0._prt;
             amrex::Real z = amrex::RandomNormal(z_m, z_rms);
 #elif defined(WARPX_DIM_RCYLINDER) || defined(WARPX_DIM_RSPHERE)
-            const amrex::Real weight = weight_3d/(y_rms*z_rms);
+            const amrex::Real weight = q_tot/(npart*charge*y_rms*z_rms);
             amrex::Real x = amrex::RandomNormal(x_m, x_rms);
             constexpr amrex::Real y = 0._prt;
             constexpr amrex::Real z = 0._prt;
@@ -743,19 +738,13 @@ PhysicalParticleContainer::AddPlasmaFromFile(PlasmaInjector & plasma_injector,
 }
 
 void
-PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev, amrex::RealBox part_realbox)
+PhysicalParticleContainer::AddPlasma (PlasmaInjector const& plasma_injector, int lev, amrex::RealBox part_realbox)
 {
     WARPX_PROFILE("PhysicalParticleContainer::AddPlasma()");
 
     // If no part_realbox is provided, initialize particles in the whole domain
     const Geometry& geom = Geom(lev);
-    bool initial_injection;
-    if (!part_realbox.ok()) {
-        part_realbox = geom.ProbDomain();
-        initial_injection = true;
-    } else {
-        initial_injection = false;
-    }
+    if (!part_realbox.ok()) { part_realbox = geom.ProbDomain(); }
 
     const int num_ppc = plasma_injector.num_particles_per_cell;
 #if defined(WARPX_DIM_RZ) || defined(WARPX_DIM_RCYLINDER) || defined(WARPX_DIM_RSPHERE)
@@ -775,8 +764,8 @@ PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev, 
     const bool refine_injection = findRefinedInjectionBox(fine_injection_box, rrfac);
 
     InjectorPosition* inj_pos = plasma_injector.getInjectorPosition();
+    InjectorDensity*  inj_rho = plasma_injector.getInjectorDensity();
     InjectorMomentum* inj_mom = plasma_injector.getInjectorMomentumDevice();
-    InjectorMomentum* h_inj_mom = plasma_injector.getInjectorMomentumHost();
     const amrex::Real gamma_boost = WarpX::gamma_boost;
     const amrex::Real beta_boost = WarpX::beta_boost;
     const amrex::Real t = WarpX::GetInstance().gett_new(lev);
@@ -797,31 +786,13 @@ PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev, 
                                                      m_user_int_attrib_parser,
                                                      m_user_real_attrib_parser);
 
-    auto get_zlab = [=] (amrex::Real z) -> amrex::Real
-    {
-        return applyBallisticCorrection(amrex::XDim3{0._rt, 0._rt, z}, h_inj_mom,
-                                        gamma_boost, beta_boost, t);
-    };
-
-    if (initial_injection) {
-        // Initial particle injection
-        plasma_injector.prepare(this->ParticleBoxArray(lev),
-                                this->ParticleDistributionMap(lev), IntVect(0),
-                                get_zlab);
-    } else {
-        // Continuous particle injection due to moving window
-        int moving_dir = WarpX::moving_window_dir;
-        int moving_sign = (WarpX::moving_window_v > 0) ? 1 : -1;
-        plasma_injector.prepare(part_realbox, moving_dir, moving_sign, get_zlab);
-    }
-
     MFItInfo info;
     if (do_tiling && amrex::Gpu::notInLaunchRegion()) {
         info.EnableTiling(tile_size);
     }
-#if defined(AMREX_USE_OMP) && !defined(AMREX_USE_GPU)
+#ifdef AMREX_USE_OMP
     info.SetDynamic(true);
-#pragma omp parallel if (not WarpX::serialize_initial_conditions && amrex::Gpu::notInLaunchRegion())
+#pragma omp parallel if (not WarpX::serialize_initial_conditions)
 #endif
     for (MFIter mfi = MakeMFIter(lev, info); mfi.isValid(); ++mfi)
     {
@@ -843,8 +814,6 @@ PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev, 
         if (no_overlap) {
             continue; // Go to the next tile
         }
-
-        auto* inj_rho = plasma_injector.getInjectorDensity(mfi.LocalIndex());
 
         const int grid_id = mfi.index();
         const int tile_id = mfi.LocalTileIndex();
@@ -1754,7 +1723,7 @@ PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector,
             }
         });
 
-        amrex::Gpu::synchronize(); // If this is removed, we need to make sure inj_rho is async safe.
+        amrex::Gpu::synchronize();
 
         if (cost && WarpX::load_balance_costs_update_algo == LoadBalanceCostsUpdateAlgo::Timers)
         {
