@@ -19,7 +19,7 @@
 #include <memory>
 #include <string>
 
-#include "Insert/WarpXInsertConfig.h"
+#include "Insert/WarpXFunctionConfig.h"
 
 class BackgroundMCCCollision final : public CollisionBase {
   public:

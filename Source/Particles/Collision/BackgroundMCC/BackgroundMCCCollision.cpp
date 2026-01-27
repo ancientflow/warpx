@@ -20,15 +20,11 @@
 #include <AMReX_REAL.H>
 #include <AMReX_Vector.H>
 
-#include "Insert/WarpXInsertConfig.h"
+#include "Insert/WarpXFunctionConfig.h"
 #include "Insert/AtomDeposit.h"
 #include <string>
 
 #include "Insert/WarpXFunc.h"
-
-#ifdef PUSH_GAP
-extern std::vector<std::pair<int, int>> push_control;
-#endif
 
 #ifdef MCCDENSITY
 extern std::vector<amrex::MultiFab> global_rho;
@@ -320,7 +316,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
     // 计算密度
 #ifdef MCCDENSITY
     WarpX& warpx_instance = WarpX::GetInstance();
-
+    int step = warpx_instance.getistep(0);
     MultiFab& m_ground_rho = global_rho[m_ground_rho_index];
     MultiFab& m_excitation_rho = global_rho[m_excitation_rho_index];
     auto& ground_pc =
@@ -336,7 +332,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
     ParticleReal inv_gap = ncell / sim_L;
     // 计数修改发生在evolve步骤，碰撞发生该步之前，上一个循环push之后，计数归零，需要进行全局沉积
     // 设置三个新变量 m_ground_species m_excitation_product m_have_excitation
-    if (push_control[mypc->getSpeciesID(m_ground_species)].second == 0) {
+    if (step % ground_pc.getndt() == 0) {
         m_ground_rho.setVal(0.0);
         AtomDepostiAPI(ground_pc, m_ground_rho);
     }

@@ -41,7 +41,7 @@
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
-#include "WarpXInsertConfig.h"
+#include "WarpXFunctionConfig.h"
 #include <algorithm>
 #include <array>
 #include <memory>

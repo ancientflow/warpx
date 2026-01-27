@@ -46,7 +46,8 @@
 #include <memory>
 #include <ostream>
 #include <vector>
-#include "WarpXInsertConfig.h"
+#include "WarpXFunctionConfig.h"
+#include "WarpXSimulationConfig.h"
 
 using namespace amrex;
 
@@ -886,10 +887,7 @@ void ShowAndWriteIonzationNum(amrex::Vector<int> num)
 }
 #endif
 
-#ifdef PUSH_GAP
-
-std::vector<std::pair<int, int>> push_control;
-
+#ifndef PUSH_GAP
 /**
  * 初始化各粒子推进步长
  */

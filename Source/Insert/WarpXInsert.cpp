@@ -1,5 +1,6 @@
 #include "WarpXInsert.h"
 #include "WarpXInsertFunction.h"
+#include "WarpXSimulationConfig.h"
 #include "AMReX_Vector.H"
 
 /**
@@ -83,7 +84,7 @@ void DataExamine()
 void MyInit()
 {
 #ifdef PUSH_GAP
-    PushGapInit();
+    //PushGapInit();
 #endif
 #ifdef MCC_EXCITATION
     BackgroundRhoInit();

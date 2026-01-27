@@ -41,7 +41,7 @@
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
-#include <Insert/WarpXInsertConfig.h>
+#include <Insert/WarpXFunctionConfig.h>
 #include <BoundaryConditions/WarpX_PEC.H>
 #include <algorithm>
 #include <array>
