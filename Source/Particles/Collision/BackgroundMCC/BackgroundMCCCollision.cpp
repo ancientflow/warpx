@@ -325,10 +325,11 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
         mypc->GetParticleContainer(mypc->getSpeciesID(m_excitation_product));
 
     int ncell;
-    ParticleReal sim_L;
+    ParticleReal sim_L, elec_weight;
     amrex::ParmParse pp_mc("my_constants");
     pp_mc.getWithParser("sim_L", sim_L);
     pp_mc.getWithParser("n_cell", ncell);
+    pp_mc.getWithParser("elec_weight", elec_weight);
     ParticleReal inv_gap = ncell / sim_L;
     // 计数修改发生在evolve步骤，碰撞发生该步之前，上一个循环push之后，计数归零，需要进行全局沉积
     // 设置三个新变量 m_ground_species m_excitation_product m_have_excitation
@@ -421,6 +422,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             amrex::Gpu::DeviceVector<int> mask(np, 0);
             int* p_mask = mask.dataPtr();
             /*****************************************************************/
+
             if (depos_order == 1) {
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, m_ground_rho, p_delete, p_particle_num,
@@ -510,24 +512,24 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
 #else
             if (depos_order == 1) {
                 doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
-                                                cur_time, m_ground_rho,
-                                                inv_gap);
+                                                cur_time, m_ground_rho, inv_gap,
+                                                elec_weight);
             } else if (depos_order == 2) {
                 doBackgroundIonizationCouple<2>(lev, cost, species1, species2,
-                                                cur_time, m_ground_rho,
-                                                inv_gap);
+                                                cur_time, m_ground_rho, inv_gap,
+                                                elec_weight);
             } else if (depos_order == 3) {
                 doBackgroundIonizationCouple<3>(lev, cost, species1, species2,
-                                                cur_time, m_ground_rho,
-                                                inv_gap);
+                                                cur_time, m_ground_rho, inv_gap,
+                                                elec_weight);
             } else if (depos_order == 4) {
                 doBackgroundIonizationCouple<4>(lev, cost, species1, species2,
-                                                cur_time, m_ground_rho,
-                                                inv_gap);
+                                                cur_time, m_ground_rho, inv_gap,
+                                                elec_weight);
             } else {
                 doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
-                                                cur_time, m_ground_rho,
-                                                inv_gap);
+                                                cur_time, m_ground_rho, inv_gap,
+                                                elec_weight);
             }
 #endif
         }
@@ -765,26 +767,6 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     }
                 }
             }
-            // 修改点位 插值，使用高阶形函数
-            /*
-            amrex::Real pid = x / *pgap, pjd = y / *pgap, pkd = z / *pgap;
-
-            int pi = static_cast<int>(x / *pgap), pj = static_cast<int>(y /
-        *pgap), pk = static_cast<int>(z / *pgap);
-
-
-        amrex::Real dil = pid - pi, dih = 1 - dil, djl = pjd - pj,
-                    djh = 1 - djl, dkl = pkd - pk, dkh = 1 - dkl;
-
-            const amrex::ParticleReal n_a = xe_rho_arr(pi, pj, pk);
-            xe_rho_arr(pi, pj, pk) * dih * djh * dkh +
-            xe_rho_arr(pi + 1, pj, pk) * dil * djh * dkh +
-            xe_rho_arr(pi, pj + 1, pk) * dih * djl * dkh +
-            xe_rho_arr(pi + 1, pj + 1, pk) * dil * djl * dkh +
-            xe_rho_arr(pi, pj, pk + 1) * dih * djh * dkl +
-            xe_rho_arr(pi + 1, pj, pk + 1) * dil * djh * dkl +
-            xe_rho_arr(pi, pj + 1, pk + 1) * dih * djl * dkl +
-            xe_rho_arr(pi + 1, pj + 1, pk + 1) * dil * dil * dkl;*/
 
             const amrex::ParticleReal T_a = T_a_func(x, y, z, t);
 
@@ -978,7 +960,7 @@ template <int depos_order>
 void BackgroundMCCCollision::doBackgroundIonizationCouple (
     int lev, amrex::LayoutData<amrex::Real>* cost,
     WarpXParticleContainer& species1, WarpXParticleContainer& species2,
-    amrex::Real t, amrex::MultiFab& ground_rho, amrex::Real inv_gap) {
+    amrex::Real t, amrex::MultiFab& ground_rho, amrex::Real inv_gap, amrex::Real elec_weight) {
     WARPX_PROFILE("BackgroundMCCCollision::doBackgroundIonizationCouple()");
 
     const SmartCopyFactory copy_factory_elec(species1, species1);
@@ -1068,7 +1050,8 @@ void BackgroundMCCCollision::doBackgroundIonizationCouple (
                                                int ibin,
                                                const RandomEngine& engine) {
                 int num = offsets[ibin + 1] - offsets[ibin],
-                    rest = amrex::min(p_delete[ibin], num);
+                    // rest = amrex::min(p_delete[ibin], num);  不信能电离完，后续处理
+                    rest = p_delete[ibin];
                 amrex::Gpu::Atomic::Add(p_num, rest);
                 while (rest > 0) {
                     int indices_pos =
@@ -1076,11 +1059,16 @@ void BackgroundMCCCollision::doBackgroundIonizationCouple (
                     int pos = indices[indices_pos];
                     auto pidw = amrex::ParticleIDWrapper{idcpu[pos]};
                     if (pidw.is_valid()) {
-                        pidw.make_invalid();
+                        //减去权重，原则上在细胞内进行操作，每个线程处理完全不同的集合
+                        pw[pos] -= elec_weight;
+                        if(std::abs(pw[pos]) < 10){
+                            pidw.make_invalid();
+                        }
                         rest--;
-                        // 处理密度变化
+
+                        // 处理密度变化，使用电子权重
                         ParticleReal x = px[pos], y = py[pos], z = pz[pos],
-                                     w = -pw[pos] * invvol;
+                                     w = -elec_weight * invvol;
 
                         Compute_shape_factor<depos_order> const
                             compute_shape_factor;
