@@ -333,7 +333,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
     ParticleReal inv_gap = ncell / sim_L;
     // 计数修改发生在evolve步骤，碰撞发生该步之前，上一个循环push之后，计数归零，需要进行全局沉积
     // 设置三个新变量 m_ground_species m_excitation_product m_have_excitation
-    if (step % ground_pc.getndt() == 0) {
+    bool if_pushed = (step % ground_pc.getndt() == 1);
+    if (if_pushed) {
         m_ground_rho.setVal(0.0);
         AtomDepostiAPI(ground_pc, m_ground_rho);
     }
@@ -415,8 +416,20 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             // 记录每个cell中的原子数
             amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0);
             int* p_particle_num = particle_num_in_cell.dataPtr();
+
+            auto& soa = ptile.GetStructOfArrays();
+            auto& soa_arr = soa.GetRealData();
+            amrex::Real *pw = soa_arr[PIdx::w].dataPtr();
+
             ParallelFor(numbins, [=] AMREX_GPU_DEVICE(int ibin) {
-                p_particle_num[ibin] = offsets[ibin + 1] - offsets[ibin];
+                const int offset_start = offsets[ibin],
+                          offset_end = offsets[ibin + 1];
+                amrex::ParticleReal num_w = 0;
+                for (int i = offset_start; i < offset_end; i++) {
+                    num_w += pw[indices[i]];
+                }
+                p_particle_num[ibin] =
+                    static_cast<int>(num_w / elec_weight + 0.1);
             });
 
             amrex::Gpu::DeviceVector<int> mask(np, 0);
@@ -486,7 +499,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             }
 #ifdef MCC_EXCITATION
             if (m_have_excitation) {
-                auto& exc_ptile = excitation_pc.ParticlesAt(0, pti);
+                auto& exc_ptile = excitation_pc.ParticlesAt(lev, pti);
                 int np_exc = exc_ptile.numParticles();
 
                 const auto num_added = filterCopyTransformParticles<1>(
@@ -957,10 +970,12 @@ void BackgroundMCCCollision::doBackgroundIonization
 }
 
 template <int depos_order>
-void BackgroundMCCCollision::doBackgroundIonizationCouple (
+void
+BackgroundMCCCollision::doBackgroundIonizationCouple (
     int lev, amrex::LayoutData<amrex::Real>* cost,
     WarpXParticleContainer& species1, WarpXParticleContainer& species2,
-    amrex::Real t, amrex::MultiFab& ground_rho, amrex::Real inv_gap, amrex::Real elec_weight) {
+    amrex::Real t, amrex::MultiFab& ground_rho, amrex::Real inv_gap,
+    amrex::ParticleReal elec_weight) {
     WARPX_PROFILE("BackgroundMCCCollision::doBackgroundIonizationCouple()");
 
     const SmartCopyFactory copy_factory_elec(species1, species1);
@@ -1001,23 +1016,43 @@ void BackgroundMCCCollision::doBackgroundIonizationCouple (
             m_ionization_processes[0].getEnergyPenalty(), m_mass1, sqrt_kb_m,
             m_background_temperature_func, t);
 
+        //获取粒子网格信息
         auto geo = warpx_instance.Geom(lev);
         auto& ptile = pc.ParticlesAt(lev, pti);
         auto bin = ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
         const int* offsets = bin.offsetsPtr();
         int* indices = bin.permutationPtr();
-
         int numbins = bin.numBins();
+
+        auto& soa = ptile.GetStructOfArrays();
+        uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
+        auto& soa_arr = soa.GetRealData();
+        amrex::Real *px = soa_arr[PIdx::x].dataPtr(),
+                    *py = soa_arr[PIdx::y].dataPtr(),
+                    *pz = soa_arr[PIdx::z].dataPtr(),
+                    *pw = soa_arr[PIdx::w].dataPtr();
 
         amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
         int* p_delete = num_delete.dataPtr();
 
+        
         // 记录每个cell中的原子数
-        amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0);
-        int* p_particle_num = particle_num_in_cell.dataPtr();
+        amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0),
+            particle_num_in_cell_origin(numbins, 0);
+        int *p_particle_num = particle_num_in_cell.dataPtr(),
+            *p_particle_num_origin = particle_num_in_cell_origin.dataPtr();
         ParallelFor(numbins, [=] AMREX_GPU_DEVICE(int ibin) {
-            p_particle_num[ibin] = offsets[ibin + 1] - offsets[ibin];
+            const int offset_start = offsets[ibin],
+                      offset_end = offsets[ibin + 1];
+            amrex::ParticleReal num_w = 0;
+            for (int i = offset_start; i < offset_end; i++) {
+                num_w += pw[indices[i]];
+            }
+            p_particle_num[ibin] = static_cast<int>(num_w / elec_weight + 0.1);
         });
+        amrex::Gpu::copy(
+            amrex::Gpu::deviceToDevice, particle_num_in_cell.begin(),
+            particle_num_in_cell.end(), particle_num_in_cell_origin.begin());
 
         auto const& rho_arr = ground_rho[pti].array();
         amrex::Box box = pti.tilebox();
@@ -1033,14 +1068,6 @@ void BackgroundMCCCollision::doBackgroundIonizationCouple (
         amrex::Gpu::DeviceScalar<int> all_deleted(0);
         int* p_num = all_deleted.dataPtr();
 
-        auto& soa = ptile.GetStructOfArrays();
-        uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
-        auto& soa_arr = soa.GetRealData();
-        amrex::Real *px = soa_arr[PIdx::x].dataPtr(),
-                    *py = soa_arr[PIdx::y].dataPtr(),
-                    *pz = soa_arr[PIdx::z].dataPtr(),
-                    *pw = soa_arr[PIdx::w].dataPtr();
-
         amrex::Box domain = geo.Domain();
         domain.surroundingNodes();
         amrex::Real invvol = inv_gap * inv_gap * inv_gap;
@@ -1049,13 +1076,21 @@ void BackgroundMCCCollision::doBackgroundIonizationCouple (
             amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
                                                int ibin,
                                                const RandomEngine& engine) {
-                int num = offsets[ibin + 1] - offsets[ibin],
-                    // rest = amrex::min(p_delete[ibin], num);  不信能电离完，后续处理
-                    rest = p_delete[ibin];
+                const int offset_start = offsets[ibin];
+                /*
+      amrex::ParticleReal num_w = 0;
+      for (int i = offset_start; i < offset_end; i++) {
+          num_w += pw[indices[i]];
+      }*/
+                //考虑到为使用的权重均具有整倍数关系 加上0.1即可修正关系
+                //int num = static_cast<int>(num_w / elec_weight + 0.1);
+                int num = p_particle_num_origin[ibin];
+                int rest = amrex::min(p_delete[ibin], num);
                 amrex::Gpu::Atomic::Add(p_num, rest);
+
                 while (rest > 0) {
                     int indices_pos =
-                        offsets[ibin] + amrex::Random_int(num, engine);
+                        offset_start + amrex::Random_int(num, engine);
                     int pos = indices[indices_pos];
                     auto pidw = amrex::ParticleIDWrapper{idcpu[pos]};
                     if (pidw.is_valid()) {
