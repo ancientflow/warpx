@@ -1,10 +1,6 @@
 #include "WarpX.H"
 
 #include "BoundaryConditions/PML.H"
-#include "Diagnostics/MultiDiagnostics.H"
-#include "Diagnostics/ReducedDiags/MultiReducedDiags.H"
-#include "EmbeddedBoundary/Enabled.H"
-#include "FieldSolver/FiniteDifferenceSolver/HybridPICModel/HybridPICModel.H"
 #include "Fields.H"
 #ifdef WARPX_USE_FFT
 #ifdef WARPX_DIM_RZ
@@ -13,12 +9,9 @@
 #include "FieldSolver/SpectralSolver/SpectralSolver.H"
 #endif
 #endif
-#include "Fluids/MultiFluidContainer.H"
-#include "Fluids/WarpXFluidContainer.H"
 #include "Parallelization/GuardCellManager.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
-#include "Python/callbacks.H"
 #include "Utils/TextMsg.H"
 #include "Utils/WarpXAlgorithmSelection.H"
 #include "Utils/WarpXConst.H"
@@ -53,8 +46,8 @@ using namespace amrex;
 using ablastr::utils::SignalHandling;
 
 void
-AtomDepostiAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho) {
-    for (WarpXParIter pti(pc, 0); pti.isValid(); ++pti) {
+AtomDepostiAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho, const int lev) {
+    for (WarpXParIter pti(pc, lev); pti.isValid(); ++pti) {
         const Box& box = pti.validbox();
 
         auto np = pti.numParticles();
@@ -62,20 +55,20 @@ AtomDepostiAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho) {
         // Extract particle data
         auto& attribs = pti.GetAttribs();
         auto& wp = attribs[PIdx::w];
-        pc.DepositCharge(pti, wp, nullptr, &rho, 0, 0, np, 0, 0, 0);
+        pc.DepositCharge(pti, wp, nullptr, &rho, 0, 0, np, 0, lev, lev);
     }
     // 处理边界密度
     // 尝试使用内置函数进行修改，便于进行高阶插值
+    // 考虑到更多的层级，必须采用这种内置函数
     WarpX& warpx_instance = WarpX::GetInstance();
-/*
-    PEC::ApplyReflectiveBoundarytoRhofield(
+
+/*    PEC::ApplyReflectiveBoundarytoRhofield(
         &rho, warpx_instance.field_boundary_lo,
         warpx_instance.field_boundary_hi, warpx_instance.particle_boundary_lo,
-        warpx_instance.particle_boundary_hi, warpx_instance.Geom(0), 0,
+        warpx_instance.particle_boundary_hi, warpx_instance.Geom(lev), lev,
         PatchType::fine, warpx_instance.refRatio());*/
 
-    
-    amrex::Box domain = warpx_instance.Geom(0).Domain();
+    amrex::Box domain = warpx_instance.Geom(lev).Domain();
     domain.surroundingNodes();
     for (MFIter mfi(rho, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& box = mfi.validbox();

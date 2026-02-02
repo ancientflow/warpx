@@ -1,8 +1,6 @@
 #include "WarpX.H"
 
 #include "BoundaryConditions/PML.H"
-#include "Diagnostics/MultiDiagnostics.H"
-#include "Diagnostics/ReducedDiags/MultiReducedDiags.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "FieldSolver/FiniteDifferenceSolver/HybridPICModel/HybridPICModel.H"
 #include "Fields.H"
