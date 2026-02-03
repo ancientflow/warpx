@@ -488,10 +488,19 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
 
             if (p_mask[i]) {
                 int pos = pi * ncell * ncell + pj * ncell + pk;
-                if (p_particle_num[pos] > 0) {
-                    amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
-                    amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
-                } else {
+                Index np_old = p_particle_num[pos];
+                while (np_old > 0) {
+                    auto returned = amrex::Gpu::Atomic::CAS(&p_particle_num[pos], np_old,
+                                            np_old - 1);
+                    if (returned == np_old) {
+                        amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
+                        break;
+                    }
+                    np_old = p_particle_num[pos];
+                    // amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
+                    // amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
+                }
+                if (np_old <= 0) {
                     p_mask[i] = false;
                 }
             }

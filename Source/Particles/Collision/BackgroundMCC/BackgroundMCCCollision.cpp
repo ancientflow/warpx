@@ -266,9 +266,6 @@ BackgroundMCCCollision::backgroundDensityUpdate (
             npIter++;
         }
     }
-    amrex::Print() << m_background_density_fabs.size() << "\n"
-                   << m_background_bins.size() << "\n"
-                   << m_background_bins[0].size();
 }
 
 /**
@@ -458,6 +455,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
         m_ground_rho.setVal(0.0);
         AtomDepostiAPI(ground_pc, m_ground_rho,0);*/
         backgroundDensityUpdate(mypc, elec_weight);
+    } else if (get_ndt() != 1 && step % ground_pc.getndt() == 0) {
+        backgroundDensityUpdate(mypc, elec_weight);
     }
 
 #ifdef MCC_EXCITATION
@@ -567,7 +566,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             });*/
 
 #ifdef MCC_EXCITATION
-            amrex::Gpu::DeviceVector<int> mask(np,0)
+            amrex::Gpu::DeviceVector<int> mask(np,0);
             int* p_mask = mask.dataPtr();
 #endif
             /*****************************************************************/
@@ -1229,7 +1228,8 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
             amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
                                                int ibin,
                                                const RandomEngine& engine) {
-                const int offset_start = offsets[ibin];
+                const int offset_start = offsets[ibin],
+                          offset_end = offsets[ibin + 1];
                 /*
       amrex::ParticleReal num_w = 0;
       for (int i = offset_start; i < offset_end; i++) {
@@ -1237,21 +1237,22 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
       }*/
                 //考虑到为使用的权重均具有整倍数关系 加上0.1即可修正关系
                 //int num = static_cast<int>(num_w / elec_weight + 0.1);
-                int num = p_particle_num_origin[ibin];
-                int rest = amrex::min(p_delete[ibin], num);
+                const int num_in_cell = offset_end - offset_start;
+                int num_by_weight = p_particle_num_origin[ibin];
+                int rest = amrex::min(p_delete[ibin], num_by_weight);
                 amrex::Gpu::Atomic::Add(p_num, rest);
 
                 while (rest > 0) {
                     int indices_pos =
-                        offset_start + amrex::Random_int(num, engine);
+                        offset_start + amrex::Random_int(num_in_cell, engine);
                     int pos = indices[indices_pos];
                     auto pidw = amrex::ParticleIDWrapper{idcpu[pos]};
                     if (pidw.is_valid() && pw[pos] > 10.0_prt) {
                         //减去权重，原则上在细胞内进行操作，每个线程处理完全不同的集合
                         pw[pos] -= elec_weight;
-                        if(std::abs(pw[pos]) < 10.0_prt){
-                            pidw.make_invalid();
-                        }
+                        //if(std::abs(pw[pos]) < 10.0_prt){
+                        //    pidw.make_invalid();
+                        //}
                         rest--;
 
                         // 处理密度变化，使用电子权重
