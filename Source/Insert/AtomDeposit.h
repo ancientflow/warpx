@@ -45,7 +45,7 @@
 using namespace amrex;
 using ablastr::utils::SignalHandling;
 
-void
+inline void
 AtomDepostiAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho, const int lev) {
     for (WarpXParIter pti(pc, lev); pti.isValid(); ++pti) {
         const Box& box = pti.validbox();

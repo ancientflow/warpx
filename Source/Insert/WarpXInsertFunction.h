@@ -48,6 +48,7 @@
 #include <vector>
 #include "WarpXFunctionConfig.h"
 #include "WarpXSimulationConfig.h"
+#include "BackgroundCoupledDensity.h"
 
 using namespace amrex;
 
@@ -963,18 +964,62 @@ DirichletPhiGuardSet () {
     }
 }
 
-std::vector<amrex::MultiFab> global_rho;
-void BackgroundRhoInit()
+#ifdef MCC_DENSITY
+amrex::Vector<BackgroundCoupledDensity> global_background_density;
+void GlobalBackgroundDensityInit()
 {
     ParmParse pp_coll("collisions");
-    int rho_num = 0;
-    pp_coll.query("different_rho", rho_num);
+    amrex::Vector<std::string> species_names;
+    pp_coll.getarr("background_species", species_names);
 
-    WarpX& warpx_instance = WarpX::GetInstance();
-    auto rho = warpx_instance.m_fields.get(FieldType::rho_fp, 0);
-    for (int i = 0; i < rho_num;i++)
-    {
-        global_rho.push_back(MultiFab(rho->boxArray(), rho->DistributionMap(),
-                                      rho->nComp(), rho->nGrow()));
+    global_background_density.resize(species_names.size());
+    for (int i = 0; i < species_names.size(); i++) {
+        global_background_density[i].m_ground_species = species_names[i];
+        global_background_density[i].backgroundDensityInit();
     }
 }
+
+void
+GlobalBackgroundDensityUpdate (int step) {
+    amrex::ParmParse pp_mc("my_constants");
+    amrex::ParticleReal elec_weight;
+    pp_mc.getWithParser("elec_weight", elec_weight);
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+    MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
+
+    for (int i = 0; i < global_background_density.size(); i++) {
+        int ndt = mypc.GetParticleContainerFromName(
+                          global_background_density[i].m_ground_species)
+                      .getndt();
+        if (step % ndt == 1) {
+            global_background_density[i].backgroundDensityUpdate(mypc,
+                                                                 elec_weight);
+        }
+    }
+}
+
+void
+GlobalBackgroundDensityClean (int step) {
+    amrex::ParmParse pp_mc("my_constants");
+    amrex::ParticleReal elec_weight;
+    pp_mc.getWithParser("elec_weight", elec_weight);
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+    MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
+    /**
+     * deleteInvalidParticles在处理边界条件之后被调用，push会在当前
+     * 时步的碰撞之后进行，下一时步将进行背景密度的重新计算，因此这一
+     * 时步的所有碰撞完成之后，进行粒子清理
+     */
+    for (int i = 0; i < global_background_density.size(); i++) {
+        int ndt = mypc.GetParticleContainerFromName(
+                          global_background_density[i].m_ground_species)
+                      .getndt();
+        if (step % ndt == 0) {
+            global_background_density[i].backgroudnSpeciesClean(mypc);
+        }
+    }
+}
+
+#endif

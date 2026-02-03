@@ -86,8 +86,8 @@ void MyInit()
 #ifdef PUSH_GAP
     //PushGapInit();
 #endif
-#ifdef MCC_EXCITATION
-    BackgroundRhoInit();
+#ifdef MCC_DENSITY
+    GlobalBackgroundDensityInit();
 #endif
 }
 
@@ -97,4 +97,24 @@ void MyInit()
 void PhiGuardSetEntrance()
 {
     DirichletPhiGuardSet();
+}
+
+/**
+ * 碰撞前
+ */
+void BeforeCollision(int step)
+{
+#ifdef MCC_DENSITY
+    GlobalBackgroundDensityUpdate(step);
+#endif
+}
+
+/**
+ * 碰撞前
+ */
+void AfterCollision(int step)
+{
+#ifdef MCC_DENSITY
+    GlobalBackgroundDensityClean(step);
+#endif
 }
