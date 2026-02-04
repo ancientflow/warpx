@@ -129,7 +129,6 @@ class BackgroundMCCCollision final : public CollisionBase {
 
     //添加变量
 #ifdef MCC_DENSITY
-    std::string m_ground_species;
     std::string m_excitation_product;
     bool m_have_excitation;
     int m_ground_rho_index;

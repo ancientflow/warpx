@@ -175,7 +175,6 @@ BackgroundMCCCollision::BackgroundMCCCollision (std::string const& collision_nam
 #endif
 
 #ifdef MCC_DENSITY
-    pp_collision_name.get("ground_species", m_ground_species);
     pp_collision_name.get("ground_rho_index", m_ground_rho_index);
 #ifdef MCC_EXCITATION
     m_have_excitation = false;
@@ -264,11 +263,6 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
         global_background_density[m_ground_rho_index];
 #endif
     if (!init_flag) {
-        /*
-#ifdef MCC_DENSITY
-        backgroundDensityInit();
-        backgroundDensityUpdate(mypc, elec_weight);
-#endif*/
         m_mass1 = species1.getMass();
 
         // calculate maximum collision frequency without ionization
@@ -330,31 +324,19 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
 
         init_flag = true;
     }
-    // 计算密度
+
 #ifdef MCC_DENSITY
     WarpX& warpx_instance = WarpX::GetInstance();
     int step = warpx_instance.getistep(0);
 
-    auto& ground_pc =
-        mypc->GetParticleContainer(mypc->getSpeciesID(m_ground_species));
+    auto& ground_pc = mypc->GetParticleContainer(mypc->getSpeciesID(
+        global_background_density[m_ground_rho_index].m_ground_species));
 
 #ifdef MCC_EXCITATION
     auto& excitation_pc =
         mypc->GetParticleContainer(mypc->getSpeciesID(m_excitation_product));
     MultiFab& m_excitation_rho = global_rho[m_excitation_rho_index];
-#endif
-    // 计数修改发生在evolve步骤，碰撞发生该步之前，上一个循环push之后，计数归零，需要进行全局沉积
-    // 设置三个新变量 m_ground_species m_excitation_product m_have_excitation
-   /* if (step % ground_pc.getndt() == 1) {
-        
-        m_ground_rho.setVal(0.0);
-        AtomDepostiAPI(ground_pc, m_ground_rho,0);
-        backgroundDensityUpdate(mypc, elec_weight);
-    } else if (get_ndt() != 1 && step % ground_pc.getndt() == 0) {
-        backgroundDensityUpdate(mypc, elec_weight);
-    }*/
 
-#ifdef MCC_EXCITATION
     const SmartCopyFactory copy_factory_exc(ground_pc, excitation_pc);
     const auto CopyExc = copy_factory_exc.getSmartCopy();
 #endif
@@ -426,10 +408,6 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             doBackgroundCollisionsWithinTile(pti, cur_time);
 #else
             /**********************准备需要用到的数组***************************/
-            /*
-            auto geo = warpx_instance.Geom(lev);
-            auto& ptile = ground_pc.ParticlesAt(lev, pti);
-            auto bin = ParticleUtils::findParticlesInEachCell(geo, pti, ptile);*/
             auto& bin = (*binIter);
             auto& ptile = ground_pc.ParticlesAt(lev, pti);
             const int* offsets = bin.offsetsPtr();
@@ -442,24 +420,6 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             int* p_particle_num = (*npIter).dataPtr();
             npIter++;
             binIter++;
-            /*
-            amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0);
-            int* p_particle_num = particle_num_in_cell.dataPtr();
-
-            auto& soa = ptile.GetStructOfArrays();
-            auto& soa_arr = soa.GetRealData();
-            amrex::Real *pw = soa_arr[PIdx::w].dataPtr();
-
-            ParallelFor(numbins, [=] AMREX_GPU_DEVICE(int ibin) {
-                const int offset_start = offsets[ibin],
-                          offset_end = offsets[ibin + 1];
-                amrex::ParticleReal num_w = 0;
-                for (int i = offset_start; i < offset_end; i++) {
-                    num_w += pw[indices[i]];
-                }
-                p_particle_num[ibin] =
-                    static_cast<int>(num_w / elec_weight + 0.1);
-            });*/
 
 #ifdef MCC_EXCITATION
             amrex::Gpu::DeviceVector<int> mask(np,0);
@@ -1040,7 +1000,7 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
 
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& pc = warpx_instance.GetPartContainer().GetParticleContainerFromName(
-        m_ground_species);
+        m_background_density.m_ground_species);
 
     auto binIter = m_background_density.m_background_bins[lev].begin();
     auto npIter = m_background_density.m_n_particle_in_each_cell[lev].begin();
@@ -1069,11 +1029,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         const int* offsets = bin.offsetsPtr();
         int* indices = bin.permutationPtr();
         int numbins = bin.numBins();
-        /*
-        auto bin = ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
-        const int* offsets = bin.offsetsPtr();
-        int* indices = bin.permutationPtr();
-        int numbins = bin.numBins();*/
 
         auto& soa = ptile.GetStructOfArrays();
         uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
@@ -1087,20 +1042,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         int* p_delete = num_delete.dataPtr();
 
         // 记录每个cell中的原子数
-        /*
-        amrex::Gpu::DeviceVector<int> particle_num_in_cell(numbins, 0),
-            particle_num_in_cell_origin(numbins, 0);
-        int *p_particle_num = particle_num_in_cell.dataPtr(),
-            *p_particle_num_origin = particle_num_in_cell_origin.dataPtr();
-        ParallelFor(numbins, [=] AMREX_GPU_DEVICE(int ibin) {
-            const int offset_start = offsets[ibin],
-                      offset_end = offsets[ibin + 1];
-            amrex::ParticleReal num_w = 0;
-            for (int i = offset_start; i < offset_end; i++) {
-                num_w += pw[indices[i]];
-            }
-            p_particle_num[ibin] = static_cast<int>(num_w / elec_weight + 0.1);
-        });*/
         amrex::Gpu::DeviceVector<int> particle_num_in_cell_origin(numbins, 0);
         int *p_particle_num = (*npIter).dataPtr(),
             *p_particle_num_origin = particle_num_in_cell_origin.dataPtr();
@@ -1122,38 +1063,27 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         amrex::Gpu::DeviceScalar<int> all_deleted(0);
         int* p_num = all_deleted.dataPtr();
 
-        amrex::Box domain = geo.Domain();
-        domain.surroundingNodes();
         amrex::Real invvol = inv_gap * inv_gap * inv_gap;
         if (num_added > 0) {
             amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
                                                int ibin,
-                                               const amrex::RandomEngine& engine) {
+                                               const amrex::RandomEngine&
+                                                   engine) {
                 const int offset_start = offsets[ibin],
-                          offset_end = offsets[ibin + 1];
-                /*
-      amrex::ParticleReal num_w = 0;
-      for (int i = offset_start; i < offset_end; i++) {
-          num_w += pw[indices[i]];
-      }*/
-                //考虑到为使用的权重均具有整倍数关系 加上0.1即可修正关系
-                //int num = static_cast<int>(num_w / elec_weight + 0.1);
-                const int num_in_cell = offset_end - offset_start;
-                int num_by_weight = p_particle_num_origin[ibin];
-                int rest = amrex::min(p_delete[ibin], num_by_weight);
+                          offset_end = offsets[ibin + 1],
+                          np_in_cell = offset_end - offset_start,
+                          np_by_weight = p_particle_num_origin[ibin];
+                int rest = amrex::min(p_delete[ibin], np_by_weight);
                 amrex::Gpu::Atomic::Add(p_num, rest);
 
                 while (rest > 0) {
                     int indices_pos =
-                        offset_start + amrex::Random_int(num_in_cell, engine);
+                        offset_start + amrex::Random_int(np_in_cell, engine);
                     int pos = indices[indices_pos];
                     auto pidw = amrex::ParticleIDWrapper{idcpu[pos]};
                     if (pidw.is_valid() && pw[pos] > 10.0_prt) {
                         //减去权重，原则上在细胞内进行操作，每个线程处理完全不同的集合
                         pw[pos] -= elec_weight;
-                        //if(std::abs(pw[pos]) < 10.0_prt){
-                        //    pidw.make_invalid();
-                        //}
                         rest--;
 
                         // 处理密度变化，使用电子权重
