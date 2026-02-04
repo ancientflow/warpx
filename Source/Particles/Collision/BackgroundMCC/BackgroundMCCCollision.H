@@ -128,14 +128,14 @@ class BackgroundMCCCollision final : public CollisionBase {
     amrex::ParserExecutor<4> m_background_temperature_func;
 
     //添加变量
-#ifdef MCCDENSITY
-    std::string m_ground_species;
+#ifdef MCC_DENSITY
     std::string m_excitation_product;
     bool m_have_excitation;
     int m_ground_rho_index;
     int m_excitation_rho_index;
     amrex::ParticleReal m_sigma_max;
     amrex::ParticleReal m_ioni_sigma_max;
+
 #endif
 };
 
