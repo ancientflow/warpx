@@ -19,7 +19,6 @@ void BackgroundCoupledDensity::backgroundDensityInit() {
         m_background_density_fabs[lev] =
             amrex::MultiFab(rho->boxArray(), rho->DistributionMap(), rho->nComp(),
                      rho->nGrow());
-
         auto geo = warpx_instance.Geom(lev);
         for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
             auto& ptile = background_species.ParticlesAt(lev, pti);
@@ -79,6 +78,7 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
             npIter++;
         }
     }
+    amrex::Print() << "Update background species: " << m_ground_species << "\n";
 }
 
 /**

@@ -759,6 +759,9 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                 return;
             }
 
+            // 1D 物理坐标z方向，实际用到x
+            // 2D 物理xz，实际xy
+
             amrex::ParticleReal x, y, z;
             GetPosition.AsStored(ip, x, y, z);
             Compute_shape_factor<depos_order> const compute_shape_factor;
@@ -772,6 +775,18 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
             int pz = compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
             amrex::ParticleReal n_a = 0;
 
+#if defined(WARPX_DIM_1D_Z)
+            for (int ix = 0; ix <= depos_order; ix++) {
+                n_a += sx[ix] * ground_rho_arr(lo.x + px + ix, 0, 0);
+            }
+#elif defined(WARPX_DIM_XZ)
+            for (int iy = 0; iy <= depos_order; iy++) {
+                for (int ix = 0; ix <= depos_order; ix++) {
+                    n_a += sx[ix] * sy[iy] *
+                           ground_rho_arr(lo.x + px + ix, lo.y + py + iy, 0);
+                }
+            }
+#elif defined(WARPX_DIM_3D)
             for (int iz = 0; iz <= depos_order; iz++) {
                 for (int iy = 0; iy <= depos_order; iy++) {
                     for (int ix = 0; ix <= depos_order; ix++) {
@@ -781,6 +796,7 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     }
                 }
             }
+#endif
 
             const amrex::ParticleReal T_a = T_a_func(x, y, z, t);
 
@@ -1033,10 +1049,8 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         auto& soa = ptile.GetStructOfArrays();
         uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
         auto& soa_arr = soa.GetRealData();
-        amrex::Real *px = soa_arr[PIdx::x].dataPtr(),
-                    *py = soa_arr[PIdx::y].dataPtr(),
-                    *pz = soa_arr[PIdx::z].dataPtr(),
-                    *pw = soa_arr[PIdx::w].dataPtr();
+        amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
+        auto GetPosition = GetParticlePosition<PIdx>(pti);
 
         amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
         int* p_delete = num_delete.dataPtr();
@@ -1087,16 +1101,15 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                         rest--;
 
                         // 处理密度变化，使用电子权重
-                        amrex::ParticleReal x = px[pos], y = py[pos], z = pz[pos],
-                                     w = -elec_weight * invvol;
 
+                        amrex::ParticleReal x, y, z, w = -elec_weight * invvol;
+                        GetPosition(pos, x, y, z);
                         Compute_shape_factor<depos_order> const
                             compute_shape_factor;
 
                         amrex::Real sx[depos_order + 1] = {0._rt},
                                     sy[depos_order + 1] = {0._rt},
                                     sz[depos_order + 1] = {0._rt};
-
                         int px =
                             compute_shape_factor(sx, (x - xyzmin.x) * inv_gap);
                         int py =
@@ -1104,6 +1117,20 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                         int pz =
                             compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
 
+#if defined(WARPX_DIM_1D_Z)
+                        for (int ix = 0; ix <= depos_order; ix++) {
+                            amrex::Gpu::Atomic::AddNoRet(
+                                &rho_arr(lo.x + px + ix, 0, 0), sx[ix] * w);
+                        }
+#elif defined(WARPX_DIM_XZ)
+                        for (int iy = 0; iy <= depos_order; iy++) {
+                            for (int ix = 0; ix <= depos_order; ix++) {
+                                amrex::Gpu::Atomic::AddNoRet(
+                                    &rho_arr(lo.x + px + ix, lo.y + py + iy, 0),
+                                    sx[ix] * sy[iy] * w);
+                            }
+                        }
+#elif defined(WARPX_DIM_3D)
                         for (int iz = 0; iz <= depos_order; iz++) {
                             for (int iy = 0; iy <= depos_order; iy++) {
                                 for (int ix = 0; ix <= depos_order; ix++) {
@@ -1114,6 +1141,7 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                                 }
                             }
                         }
+#endif
                     }
                 }
             });

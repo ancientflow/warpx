@@ -79,6 +79,7 @@ ReplaceParticlesEachCell (
 
     amrex::Gpu::DeviceScalar<int> all_deleted(0);
     int* p_num = all_deleted.dataPtr();
+    auto GetPosition = GetParticlePosition<PIdx>(pti);
 
     amrex::Real invvol = inv_gap * inv_gap * inv_gap;
     auto& ptile = src_pc.ParticlesAt(0, pti);
@@ -86,10 +87,7 @@ ReplaceParticlesEachCell (
 
     uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
     auto& soa_arr = soa.GetRealData();
-    amrex::Real *px = soa_arr[PIdx::x].dataPtr(),
-                *py = soa_arr[PIdx::y].dataPtr(),
-                *pz = soa_arr[PIdx::z].dataPtr(),
-                *pw = soa_arr[PIdx::w].dataPtr();
+    amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
 
     amrex::Box box = pti.tilebox();
     box.grow(ground_rho.nGrowVect());
@@ -113,8 +111,8 @@ ReplaceParticlesEachCell (
                 rest--;
                 amrex::Gpu::Atomic::AddNoRet(p_num, 1);
 
-                amrex::ParticleReal x = px[pos], y = py[pos], z = pz[pos],
-                                    w = pw[pos];
+                amrex::ParticleReal x, y, z, w = pw[pos];
+                GetPosition(pos, x, y, z);
                 // 添加新粒子
                 if (if_replace) {
                     p_mask[pos] = true;

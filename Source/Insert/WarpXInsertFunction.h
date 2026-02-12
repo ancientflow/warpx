@@ -425,6 +425,154 @@ void AnodeVoltage ()
     phi_field->FillBoundary(warpx_instance.Geom(0).periodicity());
 }
 
+// 阳极电流及全场电子计算
+void
+AnodeCurrentCalc () {
+    static int times = 0;
+    static const int gap = 10;
+    times++;
+
+    static bool ifinit = false;
+    if (times == gap) {
+        // 打开输出文件
+        std::fstream fileout;
+        if (!ifinit) {
+            fileout.open("anode_current.dat", std::ios::out);
+            fileout
+                << "time\txmin_electron\txmax_electron\t"
+                   "ymin_electron\tymax_electron\t"
+                   "zmin_electron\tzmax_electron\tzmin_ion\tanode_electron\t"
+                   "anode_electron_cut\n";
+            ifinit = true;
+        } else {
+            fileout.open("anode_current.dat", std::ios::app);
+        }
+        times = 0;
+
+        // 获取粒子容器信息
+        WarpX& warpx_instance = WarpX::GetInstance();
+        auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
+
+        auto pepc_xmin = mybpc.getParticleBufferPointer("electrons", 0);
+        auto pepc_xmax = mybpc.getParticleBufferPointer("electrons", 1);
+        auto pepc_ymin = mybpc.getParticleBufferPointer("electrons", 2);
+        auto pepc_ymax = mybpc.getParticleBufferPointer("electrons", 3);
+        auto pepc_zmin = mybpc.getParticleBufferPointer("electrons", 4);
+        auto pepc_zmax = mybpc.getParticleBufferPointer("electrons", 5);
+        auto pxepec_zmin = mybpc.getParticleBufferPointer("xe_ions", 4);
+
+        Vector<PinnedMemoryParticleContainer*> buffers = {
+            pepc_xmin, pepc_xmax, pepc_ymin,  pepc_ymax,
+            pepc_zmin, pepc_zmax, pxepec_zmin};
+
+        int data_size = buffers.size() + 2;
+        amrex::Gpu::DeviceVector<ParticleReal> device_charge(data_size, 0);
+        amrex::Vector<ParticleReal> host_charge(data_size, 0);
+
+        ParticleReal* device_ptr = device_charge.dataPtr();
+
+        ParticleReal l_factor, half_L, L, rn1, rn2;
+        amrex::ParmParse pp_mc("my_constants");
+        pp_mc.get("l_factor", l_factor);
+        pp_mc.get("L", L);
+
+        half_L = L / l_factor / 2;
+        rn1 = 0.021 / 2 / l_factor;
+        rn2 = 0.031 / 2 / l_factor;
+
+        // 统计zmin电子权重
+        for (auto pti =
+                 PinnedMemoryParticleContainer::ParIterType(*buffers[4], 0);
+             pti.isValid(); ++pti) {
+            auto& arr = pti.GetStructOfArrays().GetRealData();
+            auto px = arr[PIdx::x].dataPtr();
+            auto py = arr[PIdx::y].dataPtr();
+            auto pw = arr[PIdx::w].dataPtr();
+            auto pz = arr[PIdx::z].dataPtr();
+            auto pvx = arr[PIdx::ux].dataPtr();
+            auto pvy = arr[PIdx::uy].dataPtr();
+            auto pvz = arr[PIdx::uz].dataPtr();
+            int np = pti.numParticles();
+
+            ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
+                ParticleReal x = px[ip], y = py[ip], w = pw[ip], z = pz[ip],
+                             vx = pvx[ip], vy = pvy[ip], vz = pvz[ip];
+                ParticleReal dt = z / vz;
+                x -= half_L;
+                y -= half_L;
+                ParticleReal r = sqrt(x * x + y * y);
+                if (r >= rn1 && r <= rn2) {
+                    amrex::Gpu::Atomic::Add(&device_ptr[data_size - 2], w);
+                }
+                x -= dt * vx;
+                y -= dt * vy;
+                r = sqrt(x * x + y * y);
+                if (r >= rn1 && r <= rn2) {
+                    amrex::Gpu::Atomic::Add(&device_ptr[data_size - 1], w);
+                }
+                amrex::Gpu::Atomic::Add(&device_ptr[4], w);
+            });
+        }
+
+        // 统计zmin 氙离子权重
+        for (auto pti =
+                 PinnedMemoryParticleContainer::ParIterType(*buffers[6], 0);
+             pti.isValid(); ++pti) {
+            auto& arr = pti.GetStructOfArrays().GetRealData();
+            auto px = arr[PIdx::x].dataPtr();
+            auto py = arr[PIdx::y].dataPtr();
+            auto pw = arr[PIdx::w].dataPtr();
+            auto pz = arr[PIdx::z].dataPtr();
+            auto pvx = arr[PIdx::ux].dataPtr();
+            auto pvy = arr[PIdx::uy].dataPtr();
+            auto pvz = arr[PIdx::uz].dataPtr();
+            int np = pti.numParticles();
+
+            ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
+                ParticleReal x = px[ip], y = py[ip], w = pw[ip], z = pz[ip],
+                             vx = pvx[ip], vy = pvy[ip], vz = pvz[ip];
+                ParticleReal dt = z / vz;
+                x -= half_L;
+                y -= half_L;
+                x -= dt * vx;
+                y -= dt * vy;
+                ParticleReal r = sqrt(x * x + y * y);
+                if (r >= rn1 && r <= rn2) {
+                    amrex::Gpu::Atomic::Add(&device_ptr[6], w);
+                }
+            });
+        }
+
+        // 统计其余权重
+        Vector<int> buffer_index = {0, 1, 2, 3, 5};
+        for (int index : buffer_index) {
+            for (auto pti = PinnedMemoryParticleContainer::ParIterType(
+                     *buffers[index], 0);
+                 pti.isValid(); ++pti) {
+                auto& arr = pti.GetStructOfArrays().GetRealData();
+                auto pw = arr[PIdx::w].dataPtr();
+                int np = pti.numParticles();
+                ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
+                    ParticleReal w = pw[ip];
+                    amrex::Gpu::Atomic::Add(&device_ptr[index], w);
+                });
+            }
+        }
+
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_charge.begin(),
+                         device_charge.end(), host_charge.begin());
+        // 写入文件 清理缓存
+        fileout << warpx_instance.gett_new(0);
+        for (int i = 0; i < host_charge.size(); i++) {
+            fileout << "\t" << host_charge[i];
+        }
+        fileout << "\n";
+        fileout.close();
+
+        mybpc.clearParticles();
+    }
+}
+
 //叠加阳极电势
 void GetPhiFromFile()
 {
@@ -483,169 +631,14 @@ void ParticleNumber()
 {
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& mypc = warpx_instance.GetPartContainer();
-    auto& xen_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_netural"));
-#if defined(HALL3D)
-    auto& e_pc = mypc.GetParticleContainer(mypc.getSpeciesID("electrons"));
-    auto& xe_ions_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_ions"));
-    //auto& xens_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_netural_s"));
-#endif
 
-    amrex::Print() << "xe atom number: " << xen_pc.TotalNumberOfParticles()
-                   << "\n";
-#if defined(HALL3D)
-    amrex::Print() << "electron number: " << e_pc.TotalNumberOfParticles()
-                   << "\n";
-    amrex::Print() << "xe ion number: " << xe_ions_pc.TotalNumberOfParticles()
-                   << "\n";
-    //amrex::Print() << "xes number: " << xens_pc.TotalNumberOfParticles()
-    //               << "\n";
-#endif
-}
+    auto species_names = mypc.GetSpeciesNames();
 
-//阳极电流及全场电子计算
-void AnodeCurrentCalc () 
-{
-    static int times = 0;
-    static const int gap = 10;
-    times++;
-
-    static bool ifinit = false;
-    if (times == gap) {
-        // 打开输出文件
-        std::fstream fileout;
-        if (!ifinit) {
-            fileout.open("anode_current.dat", std::ios::out);
-            fileout
-                << "time\txmin_electron\txmax_electron\t"
-                   "ymin_electron\tymax_electron\t"
-                   "zmin_electron\tzmax_electron\tzmin_ion\tanode_electron\t"
-                   "anode_electron_cut\n";
-            ifinit = true;
-        } else {
-            fileout.open("anode_current.dat", std::ios::app);
-        }
-        times = 0;
-
-        // 获取粒子容器信息
-        WarpX& warpx_instance = WarpX::GetInstance();
-        auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
-
-        auto pepc_xmin = mybpc.getParticleBufferPointer("electrons", 0);
-        auto pepc_xmax = mybpc.getParticleBufferPointer("electrons", 1);
-        auto pepc_ymin = mybpc.getParticleBufferPointer("electrons", 2);
-        auto pepc_ymax = mybpc.getParticleBufferPointer("electrons", 3);
-        auto pepc_zmin = mybpc.getParticleBufferPointer("electrons", 4);
-        auto pepc_zmax = mybpc.getParticleBufferPointer("electrons", 5);
-        auto pxepec_zmin = mybpc.getParticleBufferPointer("xe_ions", 4);
-
-        Vector<PinnedMemoryParticleContainer*> buffers = {
-            pepc_xmin, pepc_xmax, pepc_ymin,  pepc_ymax,
-            pepc_zmin, pepc_zmax, pxepec_zmin};
-
-        int data_size = buffers.size() + 2;
-        amrex::Gpu::DeviceVector<ParticleReal> device_charge(data_size, 0);
-        amrex::Vector<ParticleReal> host_charge(data_size, 0);
-
-        ParticleReal* device_ptr = device_charge.dataPtr();
-
-        ParticleReal l_factor, half_L, L, rn1, rn2;
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.get("l_factor", l_factor);
-        pp_mc.get("L", L);
-
-        half_L = L / l_factor / 2;
-        rn1 = 0.021 / 2 / l_factor;
-        rn2 = 0.031 / 2 / l_factor;
-
-        // 统计zmin电子权重
-        for (auto pti = PinnedMemoryParticleContainer::ParIterType(*buffers[4], 0);
-             pti.isValid(); ++pti) {
-            auto& arr = pti.GetStructOfArrays().GetRealData();
-            auto px = arr[PIdx::x].dataPtr();
-            auto py = arr[PIdx::y].dataPtr();
-            auto pw = arr[PIdx::w].dataPtr();
-            auto pz = arr[PIdx::z].dataPtr();
-            auto pvx = arr[PIdx::ux].dataPtr();
-            auto pvy = arr[PIdx::uy].dataPtr();
-            auto pvz = arr[PIdx::uz].dataPtr();
-            int np = pti.numParticles();
-
-            ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                ParticleReal x = px[ip], y = py[ip], w = pw[ip], z = pz[ip],
-                             vx = pvx[ip], vy = pvy[ip], vz = pvz[ip];
-                ParticleReal dt = z / vz;
-                x -= half_L;
-                y -= half_L;
-                ParticleReal r = sqrt(x * x + y * y);
-                if (r >= rn1 && r <= rn2) {
-                    amrex::Gpu::Atomic::Add(&device_ptr[data_size - 2], w);
-                }
-                x -= dt * vx;
-                y -= dt * vy;
-                r = sqrt(x * x + y * y);
-                if (r >= rn1 && r <= rn2) {
-                    amrex::Gpu::Atomic::Add(&device_ptr[data_size - 1], w);
-                }
-                amrex::Gpu::Atomic::Add(&device_ptr[4], w);
-            });
-        }
-
-        //统计zmin 氙离子权重
-        for (auto pti =
-                 PinnedMemoryParticleContainer::ParIterType(*buffers[6], 0);
-             pti.isValid(); ++pti) {
-            auto& arr = pti.GetStructOfArrays().GetRealData();
-            auto px = arr[PIdx::x].dataPtr();
-            auto py = arr[PIdx::y].dataPtr();
-            auto pw = arr[PIdx::w].dataPtr();
-            auto pz = arr[PIdx::z].dataPtr();
-            auto pvx = arr[PIdx::ux].dataPtr();
-            auto pvy = arr[PIdx::uy].dataPtr();
-            auto pvz = arr[PIdx::uz].dataPtr();
-            int np = pti.numParticles();
-
-            ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                ParticleReal x = px[ip], y = py[ip], w = pw[ip], z = pz[ip],
-                             vx = pvx[ip], vy = pvy[ip], vz = pvz[ip];
-                ParticleReal dt = z / vz;
-                x -= half_L;
-                y -= half_L;
-                x -= dt * vx;
-                y -= dt * vy;
-                ParticleReal r = sqrt(x * x + y * y);
-                if (r >= rn1 && r <= rn2) {
-                    amrex::Gpu::Atomic::Add(&device_ptr[6], w);
-                }
-            });
-        }
-
-        // 统计其余权重
-        Vector<int> buffer_index = {0, 1, 2, 3, 5};
-        for (int index : buffer_index) {
-            for (auto pti =
-                     PinnedMemoryParticleContainer::ParIterType(*buffers[index], 0);
-                 pti.isValid(); ++pti) {
-                auto& arr = pti.GetStructOfArrays().GetRealData();
-                auto pw = arr[PIdx::w].dataPtr();
-                int np = pti.numParticles();
-                ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                    ParticleReal w = pw[ip];
-                    amrex::Gpu::Atomic::Add(&device_ptr[index], w);
-                });
-            }
-        }
-
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_charge.begin(),
-                         device_charge.end(), host_charge.begin());
-        // 写入文件 清理缓存
-        fileout << warpx_instance.gett_new(0);
-        for (int i = 0; i < host_charge.size(); i++) {
-            fileout << "\t" << host_charge[i];
-        }
-        fileout << "\n";
-        fileout.close();
-
-        mybpc.clearParticles();
+    for(auto name:species_names)
+    {
+        auto& pc = mypc.GetParticleContainerFromName(name);
+        amrex::Print() << name << " number: " << pc.TotalNumberOfParticles()
+                       << "\n";
     }
 }
 #endif
@@ -938,6 +931,7 @@ DirichletPhiGuardSet () {
                     2.0_rt * phi_arr(i, j, k) - phi_arr(i - 1, j, k) -
                     rho_arr(i, j, k) * dx[0] * dx[0] / PhysConst::epsilon_0;
             }
+#if defined(WARPX_DIM_XZ)
             // y direction
             if (j == domain.smallEnd(1)) {
                 phi_arr(i, j - 1, k) =
@@ -949,6 +943,8 @@ DirichletPhiGuardSet () {
                     2.0_rt * phi_arr(i, j, k) - phi_arr(i, j - 1, k) -
                     rho_arr(i, j, k) * dx[1] * dx[1] / PhysConst::epsilon_0;
             }
+#endif
+#if defined(WARPX_DIM_3D)
             // z direction
             if (k == domain.smallEnd(2)) {
                 phi_arr(i, j, k - 1) =
@@ -960,6 +956,7 @@ DirichletPhiGuardSet () {
                     2.0_rt * phi_arr(i, j, k) - phi_arr(i, j, k - 1) -
                     rho_arr(i, j, k) * dx[2] * dx[2] / PhysConst::epsilon_0;
             }
+#endif
         });
     }
 }
@@ -970,7 +967,7 @@ void GlobalBackgroundDensityInit()
 {
     ParmParse pp_coll("collisions");
     amrex::Vector<std::string> species_names;
-    pp_coll.getarr("background_species", species_names);
+    pp_coll.queryarr("background_species", species_names);
 
     global_background_density.resize(species_names.size());
     for (int i = 0; i < species_names.size(); i++) {
@@ -981,6 +978,9 @@ void GlobalBackgroundDensityInit()
 
 void
 GlobalBackgroundDensityUpdate (int step) {
+    if (global_background_density.size() == 0) {
+        return;
+    }
     amrex::ParmParse pp_mc("my_constants");
     amrex::ParticleReal elec_weight;
     pp_mc.getWithParser("elec_weight", elec_weight);
@@ -1001,6 +1001,9 @@ GlobalBackgroundDensityUpdate (int step) {
 
 void
 GlobalBackgroundDensityClean (int step) {
+    if (global_background_density.size() == 0) {
+        return;
+    }
     amrex::ParmParse pp_mc("my_constants");
     amrex::ParticleReal elec_weight;
     pp_mc.getWithParser("elec_weight", elec_weight);
@@ -1021,5 +1024,34 @@ GlobalBackgroundDensityClean (int step) {
         }
     }
 }
+#endif
 
+#define WAVE1D
+#ifdef WAVE1D
+void InitDisturbance()
+{
+    WarpX& warpx_instance = WarpX::GetInstance();
+    MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
+
+    amrex::ParmParse pp_mc("my_constants");
+    double n0, l, mode = 1, Ti, Te;
+    int ncell, nppc;
+    pp_mc.getWithParser("n0", n0);
+    pp_mc.getWithParser("l", l);
+    pp_mc.query("mode", mode);
+    pp_mc.getWithParser("ncell", ncell);
+    pp_mc.get("nppc", nppc);
+    pp_mc.get("Te", Te);
+    pp_mc.get("Ti", Ti);
+
+    double ratio = 0.01, nd = n0 * ratio, weight = nd * l / nppc, eVToK = 11605;
+
+    int np = ncell * nppc;
+
+    Vector<ParticleReal> pz(np, 0), px(np), py(np, 0),
+        vx(np), vy(np), vz(np, 0), pw(np, weight);
+    for (int i = 0; i < np; i++) {
+        
+    }
+}
 #endif

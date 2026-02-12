@@ -474,6 +474,18 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
             int pz = compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
             amrex::ParticleReal n_a = 0;
 
+#if defined(WARPX_DIM_1D_Z)
+            for (int ix = 0; ix <= depos_order; ix++) {
+                n_a += sx[ix] * rho_array(lo.x + px + ix, 0, 0);
+            }
+#elif defined(WARPX_DIM_XZ)
+            for (int iy = 0; iy <= depos_order; iy++) {
+                for (int ix = 0; ix <= depos_order; ix++) {
+                    n_a += sx[ix] * sy[iy] *
+                           rho_array(lo.x + px + ix, lo.y + py + iy, 0);
+                }
+            }
+#elif defined(WARPX_DIM_3D)
             for (int iz = 0; iz <= depos_order; iz++) {
                 for (int iy = 0; iy <= depos_order; iy++) {
                     for (int ix = 0; ix <= depos_order; ix++) {
@@ -483,6 +495,7 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                     }
                 }
             }
+#endif
 
             p_mask[i] = filter(src_data, i, engine, n_a);
 

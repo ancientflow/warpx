@@ -3,6 +3,7 @@
 #include "WarpXSimulationConfig.h"
 #include "AMReX_Vector.H"
 
+
 /**
  * 粒子注入入口
  */
@@ -20,7 +21,7 @@ void ParticleInjectionEntrance () {
  * 电势修正入口
  */
 void PhiAdjustmentEntrance () {
-#ifdef BENCHMARK_2D
+#ifdef BENCHMAKR2D
     VoltageAdjustment(warpx_instance);
 #endif
 #ifdef HALL3D
@@ -96,7 +97,7 @@ void MyInit()
  */
 void PhiGuardSetEntrance()
 {
-    DirichletPhiGuardSet();
+    //DirichletPhiGuardSet();
 }
 
 /**
