@@ -61,7 +61,7 @@ cmake-build-*/
 # VsCode #
 ##########
 .vscode
-
+.cache
 #################
 # Warp terminal #
 #################

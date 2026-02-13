@@ -420,13 +420,11 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             int* p_particle_num = (*npIter).dataPtr();
             npIter++;
             binIter++;
-
 #ifdef MCC_EXCITATION
             amrex::Gpu::DeviceVector<int> mask(np,0);
             int* p_mask = mask.dataPtr();
 #endif
             /*****************************************************************/
-
             if (depos_order == 1) {
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time,
@@ -704,7 +702,7 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTile
 template <int depos_order>
 void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
     WarpXParIter& pti, amrex::Real t, amrex::MultiFab& ground_rho,
-    int* p_delete, int* p_particle_num, int ncell, amrex::Real inv_gap){
+    [[maybe_unused]] int* p_delete, [[maybe_unused]] int* p_particle_num, [[maybe_unused]] int ncell, [[maybe_unused]] amrex::Real inv_gap){
     using namespace amrex::literals;
 
     // So that CUDA code gets its intrinsic, not the host-only C++ library

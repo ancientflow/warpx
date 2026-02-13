@@ -58,14 +58,14 @@ class BackgroundMCCCollision final : public CollisionBase {
      * @param pti particle iterator
      * @param t current time
      * @param ground_rho local background density
-     * @param p_delete pointer of particles to be delete
+     * @param p_delete pointer of particles to be deleted
      * @param p_particle_num pointer of particles in each cell
      * @param ncell number of cell at an axis
      */
     template <int depos_order>
     void doBackgroundCollisionsWithinTileCouple (
         WarpXParIter& pti, amrex::Real t, amrex::MultiFab& ground_rho,
-        int* p_delete, int* p_particle_num, int ncell, amrex::Real inv_gap);
+        int* p_delete, int* p_particle_num,int ncell, amrex::Real inv_gap);
 
     /** Perform MCC ionization interactions
      *
@@ -82,7 +82,7 @@ class BackgroundMCCCollision final : public CollisionBase {
                                  WarpXParticleContainer& species2,
                                  amrex::Real t);
 
-    /** Perform MCC ionization interactions with loacl density
+    /** Perform MCC ionization interactions with local density
      *
      * @param[in] lev the mesh-refinement level
      * @param[in,out] cost pointer to (load balancing) cost corresponding to box

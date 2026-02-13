@@ -1,39 +1,21 @@
 #include "WarpX.H"
 
 #include "BoundaryConditions/PML.H"
-#include "Diagnostics/MultiDiagnostics.H"
-#include "Diagnostics/ReducedDiags/MultiReducedDiags.H"
-#include "EmbeddedBoundary/Enabled.H"
-#include "Fields.H"
 #include "FieldSolver/FiniteDifferenceSolver/HybridPICModel/HybridPICModel.H"
+#include "Fields.H"
 #ifdef WARPX_USE_FFT
-#   ifdef WARPX_DIM_RZ
-#       include "FieldSolver/SpectralSolver/SpectralSolverRZ.H"
-#   else
-#       include "FieldSolver/SpectralSolver/SpectralSolver.H"
-#   endif
+#ifdef WARPX_DIM_RZ
+#include "FieldSolver/SpectralSolver/SpectralSolverRZ.H"
+#else
+#include "FieldSolver/SpectralSolver/SpectralSolver.H"
 #endif
-#include "Parallelization/GuardCellManager.H"
+#endif
 #include "Particles/MultiParticleContainer.H"
-#include "Fluids/MultiFluidContainer.H"
-#include "Fluids/WarpXFluidContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
-#include "Python/callbacks.H"
-#include "Utils/TextMsg.H"
-#include "Utils/WarpXAlgorithmSelection.H"
-#include "Utils/WarpXUtil.H"
 #include "Utils/WarpXConst.H"
-#include "Utils/WarpXProfilerWrapper.H"
-
-#include <ablastr/utils/SignalHandling.H>
-#include <ablastr/warn_manager/WarnManager.H>
-
-#include <AMReX.H>
-#include <AMReX_Array.H>
-#include <AMReX_BLassert.H>
+#include "Utils/WarpXUtil.H"
 #include <AMReX_Geometry.H>
 #include <AMReX_IntVect.H>
-#include <AMReX_LayoutData.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
@@ -41,14 +23,13 @@
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
-#include <algorithm>
-#include <array>
-#include <memory>
-#include <ostream>
-#include <vector>
+#include "BackgroundCoupledDensity.h"
 #include "WarpXFunctionConfig.h"
 #include "WarpXSimulationConfig.h"
-#include "BackgroundCoupledDensity.h"
+#include <algorithm>
+#include <array>
+#include <ostream>
+#include <vector>
 
 using namespace amrex;
 
@@ -199,23 +180,22 @@ VoltageAdjustment (WarpX& warpx_instance) {
 }
 #endif
 
-
 #ifdef HALL3D
 // 3D阴极发射
-void CathodeInjection3D ()
-{
+void
+CathodeInjection3D () {
     static const double L = 0.05; // 未缩比边长
     static double Ic, dt, l_factor, elec_weight;
 
     static bool ifinit = false;
 
-    if(!ifinit)
-    {
+    if (!ifinit) {
         amrex::ParmParse pp_mc("my_constants");
         pp_mc.get("dt", dt);
         pp_mc.get("Ic", Ic);
         pp_mc.get("l_factor", l_factor);
         pp_mc.getWithParser("elec_weight", elec_weight);
+        ifinit = true;
     }
 
     const double num_of_real_electrons =
@@ -225,21 +205,22 @@ void CathodeInjection3D ()
     WarpX& warpx_instance = WarpX::GetInstance();
 
     static double electron_rest = 0;
-    const int one_step_injection = int(num_of_marco_particle) + 1;
+    const int one_step_injection = static_cast<int>(num_of_marco_particle) + 1;
 
     electron_rest += num_of_marco_particle;
 
-    static const double r1 = 0.016 / l_factor, r2 = 0.02 / l_factor, dr = r2 - r1,
-                  sumr = r1 + r2, multr = r1 * r2, z1 = 0.042 / l_factor,
-                  z2 = 0.046 / l_factor, dz = z2 - z1, Pi2 = 3.1415926 * 2,
-                  sigma = 592982, half_l = L / 2 / l_factor;
+    static const double r1 = 0.016 / l_factor, r2 = 0.02 / l_factor,
+                        dr = r2 - r1, sumr = r1 + r2, multr = r1 * r2,
+                        z1 = 0.042 / l_factor, z2 = 0.046 / l_factor,
+                        dz = z2 - z1, Pi2 = 3.1415926 * 2, sigma = 592982,
+                        half_l = L / 2 / l_factor;
 
     double r, theta;
     static Vector<Vector<int>> nattr;
     if (electron_rest > one_step_injection) {
 
         electron_rest -= one_step_injection;
-        //std::cout << "electron inject: " << one_step_injection << std::endl;
+        // std::cout << "electron inject: " << one_step_injection << std::endl;
 
         Vector<ParticleReal> pz(one_step_injection), px(one_step_injection),
             py(one_step_injection), vx(one_step_injection),
@@ -274,11 +255,11 @@ void CathodeInjection3D ()
 }
 
 // 氙气注入
-void XeInjection () 
-{
+void
+XeInjection () {
     static const double L = 0.05, // 未缩比边长
-        NA = 6.03e23,              // 阿伏伽德罗常数
-        vz0 = 250;                 // 气流整体速度
+        NA = 6.03e23,             // 阿伏伽德罗常数
+        vz0 = 250;                // 气流整体速度
     static bool ifinit = false, ifhole = false;
     static int hole_num = 48;
     static double dt, l_factor, atom_weight, m_dot;
@@ -294,23 +275,23 @@ void XeInjection ()
         ifinit = true;
     }
     static const double V_per_sec = 0.06 / 60. / 1e6,
-                 n_per_sec = V_per_sec * 101325 / 8.314 / 273.15 * NA,
-                 n_per_step = n_per_sec * dt, mxe = 2.179e-25,
-                 n_marco_per_step = n_per_step / atom_weight, // 每时步应当注入宏粒子
+                        n_per_sec = V_per_sec * 101325 / 8.314 / 273.15 * NA,
+                        n_per_step = n_per_sec * dt, mxe = 2.179e-25,
+                        n_marco_per_step =
+                            n_per_step / atom_weight, // 每时步应当注入宏粒子
         Pi2 = 3.1415926 * 2;
 
     const double n_marco_per_step_m =
         m_dot * dt / l_factor / l_factor / mxe / atom_weight;
 
-    const double one_times_inject_particle =
-        static_cast<int>(n_marco_per_step_m * 100 + 1); // 一次注入粒子数 100时步一次
+    const double one_times_inject_particle = static_cast<int>(
+        n_marco_per_step_m * 100 + 1); // 一次注入粒子数 100时步一次
     static double xe_rest = 0;
 
     const double rmid = (0.021 + 0.031) / 4 / l_factor,
                  rwidth = 0.001 / l_factor, r1 = rmid - rwidth,
                  r2 = rmid + rwidth, sqdr = r2 * r2 - r1 * r1, sqr1 = r1 * r1,
-                 kb = 1.38064852e-23, 
-                 sigmax = std::sqrt(kb * 150 / mxe),
+                 kb = 1.38064852e-23, sigmax = std::sqrt(kb * 150 / mxe),
                  sigmay = std::sqrt(kb * 150 / mxe),
                  sigmaz = std::sqrt(kb * 150 / mxe), half_L = L / 2 / l_factor,
                  sqdr_hole = rwidth * rwidth;
@@ -318,8 +299,7 @@ void XeInjection ()
     static const Vector<Vector<int>> nattr;
 
     static bool if_hole_init = false;
-    if(!if_hole_init)
-    {
+    if (!if_hole_init) {
         double per_angle = Pi2 / hole_num, angle = 0;
         for (int i = 0; i < hole_num; i++) {
             hole_x.push_back(rmid * cos(angle));
@@ -350,17 +330,17 @@ void XeInjection ()
             // 柱坐标空间均匀分布
             // 转化到直角坐标空间均匀分布
             if (!ifhole) {
-                //非小孔进气
+                // 非小孔进气
                 theta = Random(uniform_engine) * Pi2;
                 r = sqrt(sqdr * Random(uniform_engine) + sqr1);
                 px[i] = r * cos(theta) + half_L;
                 py[i] = r * sin(theta) + half_L;
-            }
-            else
-            {
-                //小孔进气
+            } else {
+                // 小孔进气
                 theta = Random(uniform_engine) * Pi2;
-                r = rwidth * sqrt(Random(uniform_engine)); // 小孔进气是r1 = 0, r2 = rwidth, 化简后得到该式
+                r = rwidth *
+                    sqrt(Random(uniform_engine)); // 小孔进气是r1 = 0, r2 =
+                                                  // rwidth, 化简后得到该式
                 px[i] = r * cos(theta) + half_L +
                         hole_x[(i + hole_start) % hole_num];
                 py[i] = r * sin(theta) + half_L +
@@ -370,23 +350,23 @@ void XeInjection ()
             // 速度
             vx[i] = RandomNormal(0, sigmax, normal_engine);
             vy[i] = RandomNormal(0, sigmay, normal_engine);
-            do
-            {
+            do {
                 vz[i] = RandomNormal(0, sigmaz, normal_engine) + vz0;
             } while (vz[i] < 0);
         }
 
         auto& mypc = warpx_instance.GetPartContainer();
-        auto& xe_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_netural"));
-        xe_pc.AddNParticles(0, one_times_inject_particle, px, py, pz, vx, vy, vz,
-                           1, {pw}, 0, nattr, 0);
+        auto& xe_pc =
+            mypc.GetParticleContainer(mypc.getSpeciesID("xe_netural"));
+        xe_pc.AddNParticles(0, one_times_inject_particle, px, py, pz, vx, vy,
+                            vz, 1, {pw}, 0, nattr, 0);
         amrex::Print() << "Injection Xe Atom\n";
     }
 }
 
 // 阳极电压修正
-void AnodeVoltage () 
-{
+void
+AnodeVoltage () {
     WarpX& warpx_instance = WarpX::GetInstance();
     amrex::ParmParse pp_mc("my_constants");
     double ncell, voltage, L, l_factor;
@@ -395,7 +375,8 @@ void AnodeVoltage ()
     pp_mc.get("l_factor", l_factor);
     pp_mc.query("voltage", voltage);
     double halfncell = ncell / 2;
-    double sim_L = L / l_factor,gap = sim_L / ncell,
+
+    double sim_L = L / l_factor, gap = sim_L / ncell,
            index_sq_min =
                (0.021 / 2 / l_factor / gap) * (0.021 / 2 / l_factor / gap),
            index_sq_max =
@@ -406,10 +387,8 @@ void AnodeVoltage ()
     domain.surroundingNodes();
     for (MFIter mfi(*phi_field, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& box = mfi.tilebox();
-
         Array4<Real> const& phi = phi_field->array(mfi);
-        if (!domain.strictly_contains(box))
-        {
+        if (!domain.strictly_contains(box)) {
             ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
                 if (k == domain.smallEnd(2)) {
                     double i_ex = i - halfncell, j_ex = j - halfncell;
@@ -573,16 +552,15 @@ AnodeCurrentCalc () {
     }
 }
 
-//叠加阳极电势
-void GetPhiFromFile()
-{
+// 叠加阳极电势
+void
+GetPhiFromFile () {
     static bool ifinit = false;
     WarpX& warpx_instance = WarpX::GetInstance();
     auto phi = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
     static MultiFab phi_ext(phi->boxArray(), phi->DistributionMap(),
                             phi->nComp(), phi->nGrow());
-    if(!ifinit)
-    {
+    if (!ifinit) {
         ifinit = true;
         std::fstream filein("phiField3D.dat", std::ios::in);
         static const int ncell = 128, ndata = ncell + 1, ngap = 2;
@@ -608,10 +586,11 @@ void GetPhiFromFile()
             auto const& phi_arr = phi_ext.array(mfi);
             const Box& box = mfi.validbox();
 
-            //auto lb = lbound(box);
-            //auto hi = ubound(box);
+            // auto lb = lbound(box);
+            // auto hi = ubound(box);
 
-            //amrex::Print() << lb.x << " " << hi.x << " " << phi_ext.nGrow() << "\n";
+            // amrex::Print() << lb.x << " " << hi.x << " " << phi_ext.nGrow()
+            // << "\n";
 
             amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
                 phi_arr(i, j, k) = pdevice[i * ndata * ndata * ngap +
@@ -626,16 +605,15 @@ void GetPhiFromFile()
 #endif
 
 #ifdef NUMP
-//粒子数监测
-void ParticleNumber()
-{
+// 粒子数监测
+void
+ParticleNumber () {
     WarpX& warpx_instance = WarpX::GetInstance();
-    auto& mypc = warpx_instance.GetPartContainer();
+    MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
 
     auto species_names = mypc.GetSpeciesNames();
 
-    for(auto name:species_names)
-    {
+    for (const auto& name : species_names) {
         auto& pc = mypc.GetParticleContainerFromName(name);
         amrex::Print() << name << " number: " << pc.TotalNumberOfParticles()
                        << "\n";
@@ -644,12 +622,12 @@ void ParticleNumber()
 #endif
 
 #ifdef EXAMINE
-void PhiExamine()
-{
+void
+PhiExamine () {
     WarpX& warpx_instance = WarpX::GetInstance();
     auto phi = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
     auto step = warpx_instance.getistep(0);
-    if(step!=1)
+    if (step != 1)
         return;
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
@@ -681,12 +659,9 @@ void PhiExamine()
                      phi3d_device.end(), phi3d.begin());
     std::fstream fileout("phiexam.dat", std::ios::out);
 
-    for (int i = 0; i < sizex; i++)
-    {
-        for(int j = 0; j < sizey; j++)
-        {
-            for (int k = 0; k < sizez; k++)
-            {
+    for (int i = 0; i < sizex; i++) {
+        for (int j = 0; j < sizey; j++) {
+            for (int k = 0; k < sizez; k++) {
                 fileout << i << "\t" << j << "\t" << k << "\t"
                         << phi3d[i * sizey * sizez + j * sizez + k] << "\n";
             }
@@ -695,8 +670,8 @@ void PhiExamine()
     fileout.close();
 }
 
-void XeRhoExamine()
-{
+void
+XeRhoExamine () {
     WarpX& warpx_instance = WarpX::GetInstance();
     auto rho = warpx_instance.m_fields.get(FieldType::rho_fp, 0);
     MultiFab xe_rho(rho->boxArray(), rho->DistributionMap(), rho->nComp(),
@@ -704,9 +679,9 @@ void XeRhoExamine()
     xe_rho.setVal(0.0);
     auto& xe_pc = mypc->GetParticleContainer(mypc->getSpeciesID("xe_netural"));
     AtomDepostiAPI(xe_pc, xe_rho);
-    
+
     auto step = warpx_instance.getistep(0);
-    if(step!=1)
+    if (step != 1)
         return;
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
@@ -738,12 +713,9 @@ void XeRhoExamine()
                      phi3d_device.end(), phi3d.begin());
     std::fstream fileout("phiexam.dat", std::ios::out);
 
-    for (int i = 0; i < sizex; i++)
-    {
-        for(int j = 0; j < sizey; j++)
-        {
-            for (int k = 0; k < sizez; k++)
-            {
+    for (int i = 0; i < sizex; i++) {
+        for (int j = 0; j < sizey; j++) {
+            for (int k = 0; k < sizez; k++) {
                 fileout << i << "\t" << j << "\t" << k << "\t"
                         << phi3d[i * sizey * sizez + j * sizez + k] << "\n";
             }
@@ -755,7 +727,8 @@ void XeRhoExamine()
 
 #ifdef HALL3D_INIT
 // 初始化氙气注入
-void XeFastInjection () {
+void
+XeFastInjection () {
     double atom_weight, l_factor, m_dot;
     bool ifhole = false;
     static amrex::Vector<double> hole_x, hole_y;
@@ -769,7 +742,7 @@ void XeFastInjection () {
 
     static const double L = 0.05, // 未缩比边长
         NA = 6.03e23,             // 阿伏伽德罗常数
-        vz0 = 250;                  // 气流整体速度
+        vz0 = 250;                // 气流整体速度
     const double V_per_sec = 0.06 / 60. / 1e6, dt = 5.6e-10,
                  n_per_sec = V_per_sec * 101325 / 8.314 / 273.15 * NA,
                  n_per_step = n_per_sec * dt,
@@ -780,7 +753,8 @@ void XeFastInjection () {
     const double n_marco_per_step_m =
         m_dot * dt / mxe / l_factor / l_factor / atom_weight;
 
-    const double one_times_inject_particle = static_cast<int>(n_marco_per_step_m + 1); // 一次注入粒子数
+    const double one_times_inject_particle =
+        static_cast<int>(n_marco_per_step_m + 1); // 一次注入粒子数
     static double xe_rest = 0;
     static const double rmid = (0.021 + 0.031) / 4 / l_factor,
                         rwidth = 0.001 / l_factor, r1 = rmid - rwidth,
@@ -813,17 +787,17 @@ void XeFastInjection () {
         Vector<ParticleReal> pz(one_times_inject_particle, 0),
             px(one_times_inject_particle), py(one_times_inject_particle),
             vx(one_times_inject_particle), vy(one_times_inject_particle),
-            vz(one_times_inject_particle,vz0),
+            vz(one_times_inject_particle, vz0),
             pw(one_times_inject_particle, atom_weight);
 
         RandomEngine uniform_engine(getRandState()),
             normal_engine(getRandState());
-            
+
         int hole_start = rand() % hole_num;
         for (int i = 0; i < one_times_inject_particle; i++) {
             // 柱坐标空间均匀分布
             // 转化到直角坐标空间均匀分布
-            
+
             theta = Random(uniform_engine) * Pi2;
             r = sqrt(sqdr * Random(uniform_engine) + sqr1);
 
@@ -836,7 +810,9 @@ void XeFastInjection () {
             } else {
                 // 小孔进气
                 theta = Random(uniform_engine) * Pi2;
-                r = rwidth * sqrt(Random(uniform_engine)); // 小孔进气是r1 = 0, r2 = rwidth, 化简后得到该式
+                r = rwidth *
+                    sqrt(Random(uniform_engine)); // 小孔进气是r1 = 0, r2 =
+                                                  // rwidth, 化简后得到该式
                 px[i] = r * cos(theta) + half_L +
                         hole_x[(i + hole_start) % hole_num];
                 py[i] = r * sin(theta) + half_L +
@@ -846,8 +822,7 @@ void XeFastInjection () {
             // 速度
             vx[i] = RandomNormal(0, sigmax, normal_engine);
             vy[i] = RandomNormal(0, sigmay, normal_engine);
-            do
-            {
+            do {
                 vz[i] = RandomNormal(0, sigmaz, normal_engine) + vz0;
             } while (vz[i] < 0);
         }
@@ -863,11 +838,11 @@ void XeFastInjection () {
 #endif
 
 #ifdef COLLISION_RECORD
-
-void ShowAndWriteIonzationNum(amrex::Vector<int> num)
-{
+void
+ShowAndWriteIonzationNum (amrex::Vector<int> num) {
     amrex::Print() << "produce macro electron: " << num[0]
                    << "\nproduce macro xe ions: " << num[1] << "\n";
+
     static bool ifinit = false;
     std::fstream fileout;
     if (!ifinit) {
@@ -885,8 +860,8 @@ void ShowAndWriteIonzationNum(amrex::Vector<int> num)
 /**
  * 初始化各粒子推进步长
  */
-void PushGapInit()
-{
+void
+PushGapInit () {
     const ParmParse pp_particles("particles");
     std::vector<std::string> species_names;
     pp_particles.queryarr("species_names", species_names);
@@ -895,7 +870,7 @@ void PushGapInit()
     for (auto i : species_names) {
         ParmParse pp_species(i);
         pp_species.get("ndt", gap);
-        AMREX_ASSERT_WITH_MESSAGE(gap>0,"The gap should larger than 1.");
+        AMREX_ASSERT_WITH_MESSAGE(gap > 0, "The gap should larger than 1.");
         push_control.push_back(std::make_pair(gap, 0));
     }
 }
@@ -908,7 +883,6 @@ DirichletPhiGuardSet () {
     auto phi = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
-
     const Real* dx_host = warpx_instance.Geom(0).CellSize();
     amrex::Gpu::DeviceVector<Real> dx_device(3);
     amrex::Gpu::copy(amrex::Gpu::hostToDevice, dx_host, dx_host + 3,
@@ -963,8 +937,8 @@ DirichletPhiGuardSet () {
 
 #ifdef MCC_DENSITY
 amrex::Vector<BackgroundCoupledDensity> global_background_density;
-void GlobalBackgroundDensityInit()
-{
+void
+GlobalBackgroundDensityInit () {
     ParmParse pp_coll("collisions");
     amrex::Vector<std::string> species_names;
     pp_coll.queryarr("background_species", species_names);
@@ -1020,7 +994,7 @@ GlobalBackgroundDensityClean (int step) {
                           global_background_density[i].m_ground_species)
                       .getndt();
         if (step % ndt == 0) {
-            global_background_density[i].backgroudnSpeciesClean(mypc);
+            global_background_density[i].backgroundSpeciesClean(mypc);
         }
     }
 }
@@ -1028,8 +1002,8 @@ GlobalBackgroundDensityClean (int step) {
 
 #define WAVE1D
 #ifdef WAVE1D
-void InitDisturbance()
-{
+void
+InitDisturbance () {
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
 
@@ -1048,10 +1022,9 @@ void InitDisturbance()
 
     int np = ncell * nppc;
 
-    Vector<ParticleReal> pz(np, 0), px(np), py(np, 0),
-        vx(np), vy(np), vz(np, 0), pw(np, weight);
+    Vector<ParticleReal> pz(np, 0), px(np), py(np, 0), vx(np), vy(np),
+        vz(np, 0), pw(np, weight);
     for (int i = 0; i < np; i++) {
-        
     }
 }
 #endif

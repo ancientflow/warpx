@@ -1,37 +1,8 @@
 #include "WarpX.H"
 
-#include "BoundaryConditions/PML.H"
-#include "Fields.H"
-#ifdef WARPX_USE_FFT
-#ifdef WARPX_DIM_RZ
-#include "FieldSolver/SpectralSolver/SpectralSolverRZ.H"
-#else
-#include "FieldSolver/SpectralSolver/SpectralSolver.H"
-#endif
-#endif
-#include "Parallelization/GuardCellManager.H"
 #include "Particles/MultiParticleContainer.H"
-#include "Particles/ParticleBoundaryBuffer.H"
-#include "Utils/TextMsg.H"
-#include "Utils/WarpXAlgorithmSelection.H"
-#include "Utils/WarpXConst.H"
-#include "Utils/WarpXProfilerWrapper.H"
-#include "Utils/WarpXUtil.H"
-
-#include <ablastr/utils/SignalHandling.H>
-#include <ablastr/warn_manager/WarnManager.H>
-
-#include <AMReX.H>
-#include <AMReX_Array.H>
-#include <AMReX_BLassert.H>
-#include <AMReX_Geometry.H>
-#include <AMReX_IntVect.H>
-#include <AMReX_LayoutData.H>
 #include <AMReX_MultiFab.H>
-#include <AMReX_ParmParse.H>
-#include <AMReX_Print.H>
 #include <AMReX_REAL.H>
-#include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
 class BackgroundCoupledDensity
@@ -57,7 +28,6 @@ public:
     amrex::Vector<amrex::Vector<amrex::Gpu::DeviceVector<int>>>
         m_n_particle_in_each_cell;
 
-public:
     /**
      * @brief init the vector of background density species
      */
@@ -72,5 +42,5 @@ public:
     /**
      * @brief delete the particles with zero weight
      */
-    void backgroudnSpeciesClean (MultiParticleContainer& mypc);
+    void backgroundSpeciesClean (MultiParticleContainer& mypc) const;
 };

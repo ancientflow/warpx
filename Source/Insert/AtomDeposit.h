@@ -60,20 +60,19 @@ AtomDepostiAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho, const int lev)
     // 处理边界密度
     // 尝试使用内置函数进行修改，便于进行高阶插值
     // 考虑到更多的层级，必须采用这种内置函数
-    WarpX& warpx_instance = WarpX::GetInstance();
-
-/*    PEC::ApplyReflectiveBoundarytoRhofield(
-        &rho, warpx_instance.field_boundary_lo,
-        warpx_instance.field_boundary_hi, warpx_instance.particle_boundary_lo,
-        warpx_instance.particle_boundary_hi, warpx_instance.Geom(lev), lev,
-        PatchType::fine, warpx_instance.refRatio());*/
+    auto& warpx_instance = WarpX::GetInstance();
+    /*    PEC::ApplyReflectiveBoundarytoRhofield(
+            &rho, warpx_instance.field_boundary_lo,
+            warpx_instance.field_boundary_hi,
+       warpx_instance.particle_boundary_lo, warpx_instance.particle_boundary_hi,
+       warpx_instance.Geom(lev), lev, PatchType::fine,
+       warpx_instance.refRatio());*/
 
     amrex::Box domain = warpx_instance.Geom(lev).Domain();
     domain.surroundingNodes();
     for (MFIter mfi(rho, TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         const Box& box = mfi.validbox();
         const auto& rho_arr = rho[mfi].array();
-
         ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
             // x direction
             if (i == domain.smallEnd(0)) {
