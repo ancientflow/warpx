@@ -1,13 +1,13 @@
 #include "WarpX.H"
 
 #include "Particles/MultiParticleContainer.H"
+#include "WarpXFunctionConfig.h"
 #include <AMReX_MultiFab.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Vector.H>
 
-class BackgroundCoupledDensity
-{
-public:
+class BackgroundCoupledDensity {
+  public:
     /*原则上，不需要每一个碰撞步都进行背景粒子的排列，这是
     因为背景粒子被考虑为了每一定步计算一次运动，在这没有运
     动的时间步中，背景粒子仅有权重的变化，因此所有的索引都
@@ -21,7 +21,11 @@ public:
     */
 
     std::string m_ground_species;
+#ifndef MCC_DENSITY_MID
     amrex::Vector<amrex::MultiFab> m_background_density_fabs;
+#else
+    amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_background_density_fabs;
+#endif
     amrex::Vector<
         amrex::Vector<amrex::DenseBins<ParticleUtils::ParticleTileDataType>>>
         m_background_bins;

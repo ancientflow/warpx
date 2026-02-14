@@ -12,7 +12,7 @@
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_TypeTraits.H>
-
+#include <Insert/WarpXFunctionConfig.h>
 /**
  * \brief Apply a filter, copy, and transform operation to the particles
  * in src, in that order, writing the result to dst, starting at dst_index.
@@ -460,19 +460,21 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
 
             ParticleReal x, y, z;
             get_particle_position(p, x, y, z);
-            int pi = static_cast<int>(x * inv_gap), pj = static_cast<int>(y * inv_gap),
-                pk = static_cast<int>(z * inv_gap);
-
-            Compute_shape_factor<depos_order> const compute_shape_factor;
-
-            amrex::Real sx[depos_order + 1] = {0._rt},
-                        sy[depos_order + 1] = {0._rt},
-                        sz[depos_order + 1] = {0._rt};
-
-            int px = compute_shape_factor(sx, (x - xyzmin.x) * inv_gap);
-            int py = compute_shape_factor(sy, (y - xyzmin.y) * inv_gap);
-            int pz = compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
+            const amrex::ParticleReal rpx = (x - xyzmin.x) * inv_gap,
+                                      rpy = (y - xyzmin.y) * inv_gap,
+                                      rpz = (z - xyzmin.z) * inv_gap;
             amrex::ParticleReal n_a = 0;
+            const int pi = static_cast<int>(rpx), pj = static_cast<int>(rpy),
+                      pk = static_cast<int>(rpz);
+#ifndef MCC_DENSITY_MID
+            Compute_shape_factor<depos_order> const compute_shape_factor;
+            amrex::Real sx[depos_order + 1] = {0._rt},
+                                         sy[depos_order + 1] = {0._rt},
+                                         sz[depos_order + 1] = {0._rt};
+
+            int px = compute_shape_factor(sx, rpx),
+                py = compute_shape_factor(sy, rpy),
+                pz = compute_shape_factor(sz, rpz);
 
 #if defined(WARPX_DIM_1D_Z)
             for (int ix = 0; ix <= depos_order; ix++) {
@@ -496,7 +498,9 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                 }
             }
 #endif
-
+#else
+            n_a = rho_array(pi, pj, pk);
+#endif
             p_mask[i] = filter(src_data, i, engine, n_a);
 
             if (p_mask[i]) {

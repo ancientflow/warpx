@@ -284,14 +284,15 @@ XeInjection () {
     const double n_marco_per_step_m =
         m_dot * dt / l_factor / l_factor / mxe / atom_weight;
 
-    const double one_times_inject_particle = static_cast<int>(
-        n_marco_per_step_m * 100 + 1); // 一次注入粒子数 100时步一次
+    const unsigned one_times_inject_particle = static_cast<int>(
+        (n_marco_per_step_m * 100) + 1); // 一次注入粒子数 100时步一次
     static double xe_rest = 0;
 
     const double rmid = (0.021 + 0.031) / 4 / l_factor,
                  rwidth = 0.001 / l_factor, r1 = rmid - rwidth,
-                 r2 = rmid + rwidth, sqdr = r2 * r2 - r1 * r1, sqr1 = r1 * r1,
-                 kb = 1.38064852e-23, sigmax = std::sqrt(kb * 150 / mxe),
+                 r2 = rmid + rwidth, sqdr = (r2 * r2) - (r1 * r1),
+                 sqr1 = r1 * r1, kb = 1.38064852e-23,
+                 sigmax = std::sqrt(kb * 150 / mxe),
                  sigmay = std::sqrt(kb * 150 / mxe),
                  sigmaz = std::sqrt(kb * 150 / mxe), half_L = L / 2 / l_factor,
                  sqdr_hole = rwidth * rwidth;
@@ -300,7 +301,8 @@ XeInjection () {
 
     static bool if_hole_init = false;
     if (!if_hole_init) {
-        double per_angle = Pi2 / hole_num, angle = 0;
+        const double per_angle = Pi2 / hole_num;
+        double angle = 0;
         for (int i = 0; i < hole_num; i++) {
             hole_x.push_back(rmid * cos(angle));
             hole_y.push_back(rmid * sin(angle));
@@ -338,9 +340,8 @@ XeInjection () {
             } else {
                 // 小孔进气
                 theta = Random(uniform_engine) * Pi2;
-                r = rwidth *
-                    sqrt(Random(uniform_engine)); // 小孔进气是r1 = 0, r2 =
-                                                  // rwidth, 化简后得到该式
+                r = rwidth * sqrt(Random(uniform_engine));
+                // 小孔进气是r1 = 0, r2 = rwidth, 化简后得到该式
                 px[i] = r * cos(theta) + half_L +
                         hole_x[(i + hole_start) % hole_num];
                 py[i] = r * sin(theta) + half_L +

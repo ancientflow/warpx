@@ -341,7 +341,13 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
     const auto CopyExc = copy_factory_exc.getSmartCopy();
 #endif
 
-    m_max_background_density = m_background_density.m_background_density_fabs[0].max(0);
+#ifndef MCC_DENSITY_MID
+    m_max_background_density =
+        m_background_density.m_background_density_fabs[0].max(0);
+#else
+    m_max_background_density =
+        m_background_density.m_background_density_fabs[0]->max(0);
+#endif
 
     //  calculate maximum collision frequency without ionization
     m_nu_max = m_sigma_max * m_max_background_density;
@@ -395,6 +401,14 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
         auto binIter = m_background_density.m_background_bins[lev].begin();
         auto npIter =
             m_background_density.m_n_particle_in_each_cell[lev].begin();
+
+#ifndef MCC_DENSITY_MID
+        amrex::MultiFab& ground_density =
+            m_background_density.m_background_density_fabs[lev];
+#else
+        amrex::MultiFab& ground_density =
+            *(m_background_density.m_background_density_fabs[lev].get());
+#endif
 #endif
         for (WarpXParIter pti(species1, lev); pti.isValid(); ++pti) {
             if (cost && WarpX::load_balance_costs_update_algo ==
@@ -427,9 +441,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             /*****************************************************************/
             if (depos_order == 1) {
                 doBackgroundCollisionsWithinTileCouple<1>(
-                    pti, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    p_delete, p_particle_num, ncell, inv_gap);
+                    pti, cur_time, ground_density, p_delete, p_particle_num,
+                    ncell, inv_gap);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
@@ -440,9 +453,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
 #endif
             } else if (depos_order == 2) {
                 doBackgroundCollisionsWithinTileCouple<2>(
-                    pti, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    p_delete, p_particle_num, ncell, inv_gap);
+                    pti, cur_time, ground_density, p_delete, p_particle_num,
+                    ncell, inv_gap);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<2>(p_delete, offsets, indices,
@@ -453,9 +465,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
 #endif
             } else if (depos_order == 3) {
                 doBackgroundCollisionsWithinTileCouple<3>(
-                    pti, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    p_delete, p_particle_num, ncell, inv_gap);
+                    pti, cur_time, ground_density, p_delete, p_particle_num,
+                    ncell, inv_gap);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<3>(p_delete, offsets, indices,
@@ -466,9 +477,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
 #endif
             } else if (depos_order == 4) {
                 doBackgroundCollisionsWithinTileCouple<4>(
-                    pti, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    p_delete, p_particle_num, ncell, inv_gap);
+                    pti, cur_time, ground_density, p_delete, p_particle_num,
+                    ncell, inv_gap);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<4>(p_delete, offsets, indices,
@@ -479,9 +489,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
 #endif
             } else {
                 doBackgroundCollisionsWithinTileCouple<1>(
-                    pti, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    p_delete, p_particle_num, ncell, inv_gap);
+                    pti, cur_time, ground_density, p_delete, p_particle_num,
+                    ncell, inv_gap);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
@@ -518,30 +527,25 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             doBackgroundIonization(lev, cost, species1, species2, cur_time);
 #else
             if (depos_order == 1) {
-                doBackgroundIonizationCouple<1>(
-                    lev, cost, species1, species2, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    inv_gap, elec_weight);
+                doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
+                                                cur_time, ground_density,
+                                                inv_gap, elec_weight);
             } else if (depos_order == 2) {
-                doBackgroundIonizationCouple<2>(
-                    lev, cost, species1, species2, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    inv_gap, elec_weight);
+                doBackgroundIonizationCouple<2>(lev, cost, species1, species2,
+                                                cur_time, ground_density,
+                                                inv_gap, elec_weight);
             } else if (depos_order == 3) {
-                doBackgroundIonizationCouple<3>(
-                    lev, cost, species1, species2, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    inv_gap, elec_weight);
+                doBackgroundIonizationCouple<3>(lev, cost, species1, species2,
+                                                cur_time, ground_density,
+                                                inv_gap, elec_weight);
             } else if (depos_order == 4) {
-                doBackgroundIonizationCouple<4>(
-                    lev, cost, species1, species2, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    inv_gap, elec_weight);
+                doBackgroundIonizationCouple<4>(lev, cost, species1, species2,
+                                                cur_time, ground_density,
+                                                inv_gap, elec_weight);
             } else {
-                doBackgroundIonizationCouple<1>(
-                    lev, cost, species1, species2, cur_time,
-                    m_background_density.m_background_density_fabs[lev],
-                    inv_gap, elec_weight);
+                doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
+                                                cur_time, ground_density,
+                                                inv_gap, elec_weight);
             }
 #endif
         }
@@ -759,19 +763,21 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
 
             // 1D 物理坐标z方向，实际用到x
             // 2D 物理xz，实际xy
-
             amrex::ParticleReal x, y, z;
             GetPosition.AsStored(ip, x, y, z);
-            Compute_shape_factor<depos_order> const compute_shape_factor;
-
-            amrex::Real sx[depos_order + 1] = {0._rt},
-                        sy[depos_order + 1] = {0._rt},
-                        sz[depos_order + 1] = {0._rt};
-
-            int px = compute_shape_factor(sx, (x - xyzmin.x) * inv_gap);
-            int py = compute_shape_factor(sy, (y - xyzmin.y) * inv_gap);
-            int pz = compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
+            const amrex::Real rpx = (x - xyzmin.x) * inv_gap,
+                              rpy = (y - xyzmin.y) * inv_gap,
+                              rpz = (z - xyzmin.z) * inv_gap;
             amrex::ParticleReal n_a = 0;
+#ifndef MCC_DENSITY_MID
+            Compute_shape_factor<depos_order> const compute_shape_factor;
+            amrex::Real sx[depos_order + 1] = {0._rt},
+                                         sy[depos_order + 1] = {0._rt},
+                                         sz[depos_order + 1] = {0._rt};
+
+            int px = compute_shape_factor(sx, rpx),
+                py = compute_shape_factor(sy, rpy),
+                pz = compute_shape_factor(sz, rpz);
 
 #if defined(WARPX_DIM_1D_Z)
             for (int ix = 0; ix <= depos_order; ix++) {
@@ -794,6 +800,11 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     }
                 }
             }
+#endif
+#else
+            const int px = static_cast<int>(rpx), py = static_cast<int>(rpy),
+                      pz = static_cast<int>(rpz);
+            n_a = ground_rho_arr(px, py, pz);
 #endif
 
             const amrex::ParticleReal T_a = T_a_func(x, y, z, t);
@@ -893,16 +904,14 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     ParticleUtils::RandomizeVelocity(
                         vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
 #else
-                    int pi = static_cast<int>(x * inv_gap),
-                        pj = static_cast<int>(y * inv_gap),
-                        pk = static_cast<int>(z * inv_gap);
-                    int pos = pi * ncell * ncell + pj * ncell + pk;
+                    int pos = px * ncell * ncell + py * ncell + pz;
                     if (p_particle_num[pos] > 0) {
                         ParticleUtils::RandomizeVelocity(
                             vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz),
                             engine);
                         amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
                         amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
+                        //需要CAS来解决冲突
                     }
 #endif
                 } else if (scattering_process.m_type ==
@@ -1075,7 +1084,7 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         amrex::Gpu::DeviceScalar<int> all_deleted(0);
         int* p_num = all_deleted.dataPtr();
 
-        amrex::Real invvol = inv_gap * inv_gap * inv_gap;
+        amrex::Real inv_vol = inv_gap * inv_gap * inv_gap;
         if (num_added > 0) {
             amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
                                                int ibin,
@@ -1099,21 +1108,28 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                         rest--;
 
                         // 处理密度变化，使用电子权重
-
-                        amrex::ParticleReal x, y, z, w = -elec_weight * invvol;
+                        amrex::ParticleReal x, y, z, w = -elec_weight * inv_vol;
                         GetPosition(pos, x, y, z);
+                        const amrex::ParticleReal rpx =
+                                                      (x - xyzmin.x) * inv_gap,
+                                                  rpy =
+                                                      (y - xyzmin.y) * inv_gap,
+                                                  rpz =
+                                                      (z - xyzmin.z) * inv_gap;
+                        const int pi = static_cast<int>(rpx),
+                                  pj = static_cast<int>(rpy),
+                                  pk = static_cast<int>(rpz);
+#ifndef MCC_DENSITY_MID
                         Compute_shape_factor<depos_order> const
                             compute_shape_factor;
 
-                        amrex::Real sx[depos_order + 1] = {0._rt},
-                                    sy[depos_order + 1] = {0._rt},
-                                    sz[depos_order + 1] = {0._rt};
-                        int px =
-                            compute_shape_factor(sx, (x - xyzmin.x) * inv_gap);
-                        int py =
-                            compute_shape_factor(sy, (y - xyzmin.y) * inv_gap);
-                        int pz =
-                            compute_shape_factor(sz, (z - xyzmin.z) * inv_gap);
+                        amrex::Real
+                            sx[depos_order + 1] = {0._rt},
+                                             sy[depos_order + 1] = {0._rt},
+                                             sz[depos_order + 1] = {0._rt};
+                        int px = compute_shape_factor(sx, rpx),
+                            py = compute_shape_factor(sy, rpy),
+                            pz = compute_shape_factor(sz, rpz);
 
 #if defined(WARPX_DIM_1D_Z)
                         for (int ix = 0; ix <= depos_order; ix++) {
@@ -1139,6 +1155,9 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                                 }
                             }
                         }
+#endif
+#else
+                        amrex::Gpu::Atomic::AddNoRet(&rho_arr(pi, pj, pk), w);
 #endif
                     }
                 }
