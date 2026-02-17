@@ -68,7 +68,6 @@ BackgroundCoupledDensity::backgroundDensityInit () {
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
     auto& background_species =
         mypc.GetParticleContainerFromName(m_ground_species);
-
     // resize the vector
     auto const flvl = background_species.finestLevel();
     m_background_density_fabs.resize(flvl + 1);
@@ -84,6 +83,10 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 #endif
 
         auto geo = warpx_instance.Geom(lev);
+        const size_t box_num = warpx_instance.boxArray(lev).size();
+        m_background_bins[lev].resize(box_num);
+        m_n_particle_in_each_cell[lev].resize(box_num);
+        /*
         for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
             auto& ptile = background_species.ParticlesAt(lev, pti);
             m_background_bins[lev].push_back(
@@ -91,7 +94,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
             long const numbins = (*m_background_bins[lev].rbegin()).numBins();
             m_n_particle_in_each_cell[lev].push_back(
                 amrex::Gpu::DeviceVector<int>(numbins, 0));
-        }
+        }*/
     }
 }
 
@@ -114,18 +117,28 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
             background_species.GetNumberDensity(lev);
 #endif
         auto geo = warpx_instance.Geom(lev);
-        auto binIter = m_background_bins[lev].begin();
-        auto npIter = m_n_particle_in_each_cell[lev].begin();
+        //auto binIter = m_background_bins[lev].begin();
+        //auto npIter = m_n_particle_in_each_cell[lev].begin();
+
+        auto& background_bin = m_background_bins[lev];
+        auto& background_np = m_n_particle_in_each_cell[lev];
+
         for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
+            const int box_index = pti.index();
             auto& ptile = background_species.ParticlesAt(lev, pti);
-            (*binIter) =
+            background_bin[box_index] =
                 ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
 
+            int const np = ptile.numParticles();
+            const int* offsets = background_bin[box_index].offsetsPtr();
+            int const* indices = background_bin[box_index].permutationPtr();
+            long const numbins = background_bin[box_index].numBins();
+            int* p_particle_num = background_np[box_index].dataPtr();
+            /*
             const int* offsets = (*binIter).offsetsPtr();
             int const* indices = (*binIter).permutationPtr();
-            int const np = ptile.numParticles();
             long const numbins = (*binIter).numBins();
-            int* p_particle_num = (*npIter).dataPtr();
+            int* p_particle_num = (*npIter).dataPtr();*/
             auto& soa = ptile.GetStructOfArrays();
             auto& soa_arr = soa.GetRealData();
             amrex::Real const* pw = soa_arr[PIdx::w].dataPtr();
@@ -141,8 +154,8 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
                     static_cast<int>((num_w / elec_weight) + 0.1);
             });
 
-            ++binIter;
-            ++npIter;
+            //++binIter;
+            //++npIter;
         }
     }
     amrex::Print() << "Update background species: " << m_ground_species << "\n";

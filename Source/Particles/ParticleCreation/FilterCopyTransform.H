@@ -433,8 +433,9 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                               CopyFunc1&& copy1, CopyFunc2&& copy2,
                               TransFunc&& transform, Index* p_delete,
                               const amrex::Array4<amrex::Real>& rho_array,
-                              Index* p_particle_num,const amrex::XDim3 xyzmin,
-                              const amrex::Dim3 lo) noexcept {
+                              Index* p_particle_num, const amrex::XDim3 xyzmin,
+                              amrex::Box& box,
+                              const amrex::XDim3& inv_cell_size) noexcept {
     using namespace amrex;
 
     auto np = src.numParticles();
@@ -447,12 +448,8 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
     auto* p_mask = mask.dataPtr();
     const auto src_data = src.getParticleTileData();
 
-    int ncell;
-    double inv_gap, sim_L;
-    amrex::ParmParse pp_mc("my_constants");
-    pp_mc.getWithParser("n_cell", ncell);
-    pp_mc.getWithParser("sim_L", sim_L);
-    inv_gap = ncell / sim_L;
+    const Dim3 lo = lbound(box), hi = ubound(box);
+    Dim3 const ncell{hi.x-lo.x,hi.y-lo.y,hi.z-lo.z};
 
     amrex::ParallelForRNG(
         np, [=] AMREX_GPU_DEVICE(int i, amrex::RandomEngine const& engine) {
@@ -460,9 +457,9 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
 
             ParticleReal x, y, z;
             get_particle_position(p, x, y, z);
-            const amrex::ParticleReal rpx = (x - xyzmin.x) * inv_gap,
-                                      rpy = (y - xyzmin.y) * inv_gap,
-                                      rpz = (z - xyzmin.z) * inv_gap;
+            const amrex::ParticleReal rpx = (x - xyzmin.x) * inv_cell_size.x,
+                                      rpy = (y - xyzmin.y) * inv_cell_size.y,
+                                      rpz = (z - xyzmin.z) * inv_cell_size.z;
             amrex::ParticleReal n_a = 0;
             const int pi = static_cast<int>(rpx), pj = static_cast<int>(rpy),
                       pk = static_cast<int>(rpz);
@@ -504,7 +501,7 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
             p_mask[i] = filter(src_data, i, engine, n_a);
 
             if (p_mask[i]) {
-                int pos = pi * ncell * ncell + pj * ncell + pk;
+                int pos = pi * ncell.z * ncell.y + pj * ncell.z + pk;
                 Index np_old = p_particle_num[pos];
                 while (np_old > 0) {
                     auto returned = amrex::Gpu::Atomic::CAS(&p_particle_num[pos], np_old,
@@ -514,8 +511,6 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                         break;
                     }
                     np_old = p_particle_num[pos];
-                    // amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
-                    // amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
                 }
                 if (np_old <= 0) {
                     p_mask[i] = false;

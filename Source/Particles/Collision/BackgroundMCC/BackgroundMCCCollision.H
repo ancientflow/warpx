@@ -91,15 +91,17 @@ class BackgroundMCCCollision final : public CollisionBase {
      * inject new particles
      * @param t current time
      * @param ground_rho local background density
-     * @param inv_gap the reciprocal of the gap
+     * @param inv_cell_size the reciprocal of the cell size
      * @param elec_weight the weight of electron
      */
     template <int depos_order>
-    void doBackgroundIonizationCouple (
-        int lev, amrex::LayoutData<amrex::Real>* cost,
-        WarpXParticleContainer& species1, WarpXParticleContainer& species2,
-        amrex::Real t, amrex::MultiFab& ground_rho, amrex::Real inv_gap,
-        amrex::ParticleReal elec_weight);
+    void
+    doBackgroundIonizationCouple (int lev, amrex::LayoutData<amrex::Real>* cost,
+                                  WarpXParticleContainer& species1,
+                                  WarpXParticleContainer& species2,
+                                  amrex::Real t, amrex::MultiFab& ground_rho,
+                                  const amrex::XDim3& inv_cell_size,
+                                  amrex::ParticleReal elec_weight);
 
   private:
     amrex::Vector<ScatteringProcess> m_scattering_processes;
