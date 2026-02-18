@@ -8,5 +8,5 @@ extern void MyOutput();
 extern void CollisionRecord(amrex::Vector<int>);
 extern void DataExamine();
 extern void PhiGuardSetEntrance ();
-extern void BeforeCollision (int step);
-extern void AfterCollision (int step);
+extern void BeforeCollision (int, bool);
+extern void AfterCollision (int, bool);

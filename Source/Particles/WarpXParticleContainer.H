@@ -585,7 +585,7 @@ public:
     void setDoNotPush (bool flag) { do_not_push = flag; }
     void setDoNotGather (int flag) { do_not_gather = flag; }
     void setDoNotDeposit (int flag) { do_not_deposit = flag; }
-    int getndt() { return ndt; }
+    int get_ndt() { return ndt; }
 
     bool HasiAttrib (const std::string& name)
     {

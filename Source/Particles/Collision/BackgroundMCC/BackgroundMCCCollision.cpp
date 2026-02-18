@@ -1115,9 +1115,9 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                 amrex::Gpu::Atomic::Add(p_num, rest);
 
                 while (rest > 0) {
-                    int indices_pos =
+                    int const indices_pos =
                         offset_start + amrex::Random_int(np_in_cell, engine);
-                    int pos = indices[indices_pos];
+                    int const pos = indices[indices_pos];
                     auto pidw = amrex::ParticleIDWrapper{idcpu[pos]};
                     if (pidw.is_valid() && pw[pos] > 10.0_prt) {
                         //减去权重，原则上在细胞内进行操作，每个线程处理完全不同的集合
@@ -1133,9 +1133,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                                                         inv_cell_size.y,
                                                   rpz = (z - xyzmin.z) *
                                                         inv_cell_size.z;
-                        const int pi = static_cast<int>(rpx),
-                                  pj = static_cast<int>(rpy),
-                                  pk = static_cast<int>(rpz);
 #ifndef MCC_DENSITY_MID
                         Compute_shape_factor<depos_order> const
                             compute_shape_factor;
@@ -1174,6 +1171,9 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                         }
 #endif
 #else
+                        const int pi = static_cast<int>(rpx),
+                                  pj = static_cast<int>(rpy),
+                                  pk = static_cast<int>(rpz);
                         amrex::Gpu::Atomic::AddNoRet(&rho_arr(pi, pj, pk), w);
 #endif
                     }

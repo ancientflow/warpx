@@ -103,19 +103,19 @@ void PhiGuardSetEntrance()
 /**
  * 碰撞前
  */
-void BeforeCollision(int step)
-{
+void
+BeforeCollision (int step, bool if_split) {
 #ifdef MCC_DENSITY
-    GlobalBackgroundDensityUpdate(step);
+    GlobalBackgroundDensityUpdate(step, if_split);
 #endif
 }
 
 /**
  * 碰撞前
  */
-void AfterCollision(int step)
-{
+void
+AfterCollision (int step, bool if_split) {
 #ifdef MCC_DENSITY
-    GlobalBackgroundDensityClean(step);
+    GlobalBackgroundDensityClean(step, if_split);
 #endif
 }

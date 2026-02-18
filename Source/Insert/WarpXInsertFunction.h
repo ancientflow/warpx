@@ -952,8 +952,8 @@ GlobalBackgroundDensityInit () {
 }
 
 void
-GlobalBackgroundDensityUpdate (int step) {
-    if (global_background_density.size() == 0) {
+GlobalBackgroundDensityUpdate (int step, const bool& if_split) {
+    if (global_background_density.empty()) {
         return;
     }
     amrex::ParmParse pp_mc("my_constants");
@@ -963,20 +963,22 @@ GlobalBackgroundDensityUpdate (int step) {
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
 
-    for (int i = 0; i < global_background_density.size(); i++) {
-        int ndt = mypc.GetParticleContainerFromName(
-                          global_background_density[i].m_ground_species)
-                      .getndt();
-        if (step % ndt == 1) {
-            global_background_density[i].backgroundDensityUpdate(mypc,
-                                                                 elec_weight);
+    for (auto & density : global_background_density) {
+        const int ndt =
+            mypc.GetParticleContainerFromName(density.m_ground_species)
+                .get_ndt();
+        const bool if_update =
+            ((if_split && ((step % ndt == 0) || (step % ndt == 1))) ||
+             (!if_split && (step % ndt == 1)));
+        if (if_update) {
+            density.backgroundDensityUpdate(mypc, elec_weight);
         }
     }
 }
 
 void
-GlobalBackgroundDensityClean (int step) {
-    if (global_background_density.size() == 0) {
+GlobalBackgroundDensityClean (int step, const bool& if_split) {
+    if (global_background_density.empty()) {
         return;
     }
     amrex::ParmParse pp_mc("my_constants");
@@ -990,12 +992,14 @@ GlobalBackgroundDensityClean (int step) {
      * 时步的碰撞之后进行，下一时步将进行背景密度的重新计算，因此这一
      * 时步的所有碰撞完成之后，进行粒子清理
      */
-    for (int i = 0; i < global_background_density.size(); i++) {
-        int ndt = mypc.GetParticleContainerFromName(
-                          global_background_density[i].m_ground_species)
-                      .getndt();
-        if (step % ndt == 0) {
-            global_background_density[i].backgroundSpeciesClean(mypc);
+    for (auto& density : global_background_density) {
+        int const ndt =
+            mypc.GetParticleContainerFromName(density.m_ground_species)
+                .get_ndt();
+        const bool if_clean = ((if_split && ((step + 1) % ndt == 0)) ||
+                               (!if_split && (step % ndt == 0)));
+        if (if_clean) {
+            density.backgroundSpeciesClean(mypc);
         }
     }
 }
@@ -1029,3 +1033,7 @@ InitDisturbance () {
     }
 }
 #endif
+
+void EmbededBoundaryParticleReflect() {
+    WarpX& warpx_instance = WarpX::GetInstance();
+}
