@@ -440,7 +440,6 @@ AnodeCurrentCalc () {
         auto pepc_zmin = mybpc.getParticleBufferPointer("electrons", 4);
         auto pepc_zmax = mybpc.getParticleBufferPointer("electrons", 5);
         auto pxepec_zmin = mybpc.getParticleBufferPointer("xe_ions", 4);
-
         Vector<PinnedMemoryParticleContainer*> buffers = {
             pepc_xmin, pepc_xmax, pepc_ymin,  pepc_ymax,
             pepc_zmin, pepc_zmax, pxepec_zmin};
@@ -962,15 +961,15 @@ GlobalBackgroundDensityUpdate (int step, const bool& if_split) {
 
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
-
-    for (auto & density : global_background_density) {
+    const bool if_update_sort = warpx_instance.sort_intervals.contains(step);
+    for (auto& density : global_background_density) {
         const int ndt =
             mypc.GetParticleContainerFromName(density.m_ground_species)
                 .get_ndt();
-        const bool if_update =
+        const bool if_update_push =
             ((if_split && ((step % ndt == 0) || (step % ndt == 1))) ||
              (!if_split && (step % ndt == 1)));
-        if (if_update) {
+        if (if_update_push || if_update_sort) {
             density.backgroundDensityUpdate(mypc, elec_weight);
         }
     }

@@ -357,7 +357,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
     m_total_collision_prob = 1.0_prt - std::exp(-coll_n);
 
     amrex::Print() << "max local atom density: " << m_max_background_density
-                   << " m^3; total collision probabilty: "
+                   << " m^3; total collision probability: "
                    << m_total_collision_prob << "\n";
 
     if (ionization_flag) {
@@ -451,7 +451,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             if (depos_order == 1) {
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
-                    ncell, inv_gap);
+                    ncell, inv_cell_size);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
@@ -463,7 +463,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             } else if (depos_order == 2) {
                 doBackgroundCollisionsWithinTileCouple<2>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
-                    ncell, inv_gap);
+                    ncell, inv_cell_size);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<2>(p_delete, offsets, indices,
@@ -475,7 +475,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             } else if (depos_order == 3) {
                 doBackgroundCollisionsWithinTileCouple<3>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
-                    ncell, inv_gap);
+                    ncell, inv_cell_size);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<3>(p_delete, offsets, indices,
@@ -487,7 +487,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             } else if (depos_order == 4) {
                 doBackgroundCollisionsWithinTileCouple<4>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
-                    ncell, inv_gap);
+                    ncell, inv_cell_size);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<4>(p_delete, offsets, indices,
@@ -499,7 +499,7 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt,
             } else {
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
-                    ncell, inv_gap);
+                    ncell, inv_cell_size);
 #ifdef MCC_EXCITATION
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
@@ -715,7 +715,7 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTile
 template <int depos_order>
 void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
     WarpXParIter& pti, amrex::Real t, amrex::MultiFab& ground_rho,
-    [[maybe_unused]] int* p_delete, [[maybe_unused]] int* p_particle_num, [[maybe_unused]] int ncell, [[maybe_unused]] amrex::Real inv_gap){
+    [[maybe_unused]] int* p_delete, [[maybe_unused]] int* p_particle_num, [[maybe_unused]] int ncell, [[maybe_unused]] amrex::XDim3 inv_cell_size){
     using namespace amrex::literals;
 
     // So that CUDA code gets its intrinsic, not the host-only C++ library
@@ -774,9 +774,9 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
             // 2D 物理xz，实际xy
             amrex::ParticleReal x, y, z;
             GetPosition.AsStored(ip, x, y, z);
-            const amrex::Real rpx = (x - xyzmin.x) * inv_gap,
-                              rpy = (y - xyzmin.y) * inv_gap,
-                              rpz = (z - xyzmin.z) * inv_gap;
+            const amrex::Real rpx = (x - xyzmin.x) * inv_cell_size.x,
+                              rpy = (y - xyzmin.y) * inv_cell_size.y,
+                              rpz = (z - xyzmin.z) * inv_cell_size.z;
             amrex::ParticleReal n_a = 0;
 #ifndef MCC_DENSITY_MID
             Compute_shape_factor<depos_order> const compute_shape_factor;
@@ -1057,22 +1057,23 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
             m_ionization_processes[0].getEnergyPenalty(), m_mass1, sqrt_kb_m,
             m_background_temperature_func, t);
 
-        //获取粒子网格信息
+        // 获取粒子网格信息
         const int box_index = pti.index();
         auto geo = warpx_instance.Geom(lev);
         auto& ptile = pc.ParticlesAt(lev, pti);
-        //auto& bin = (*binIter);
+        // auto& bin = (*binIter);
         auto& bin = background_bin[box_index];
         const int* offsets = bin.offsetsPtr();
         int* indices = bin.permutationPtr();
-        int numbins = bin.numBins();
+        long numbins = bin.numBins();
 
         auto& soa = ptile.GetStructOfArrays();
         uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
         auto& soa_arr = soa.GetRealData();
-        amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
-        auto GetPosition = GetParticlePosition<PIdx>(pti);
-
+        amrex::Real *pw = soa_arr[PIdx::w].dataPtr(),
+                    *ux = soa_arr[PIdx::x].dataPtr(),
+                    *uy = soa_arr[PIdx::y].dataPtr(),
+                    *uz = soa_arr[PIdx::z].dataPtr();
         amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
         int* p_delete = num_delete.dataPtr();
 
@@ -1084,8 +1085,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                          background_np[box_index].begin(),
                          background_np[box_index].end(),
                          particle_num_in_cell_origin.begin());
-        //npIter++;
-        //binIter++;
         auto const& rho_arr = ground_rho[pti].array();
         amrex::Box box = pti.tilebox();
         box.grow(ground_rho.nGrowVect());
@@ -1103,8 +1102,10 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         amrex::Real const inv_vol =
             inv_cell_size.x * inv_cell_size.y * inv_cell_size.z;
         if (num_added > 0) {
+            amrex::Print() << "Handle collision lost at lev " << lev << " box "
+                           << box_index << "\n";
             amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
-                                               int ibin,
+                                               long ibin,
                                                const amrex::RandomEngine&
                                                    engine) {
                 const int offset_start = offsets[ibin],
@@ -1125,8 +1126,10 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                         rest--;
 
                         // 处理密度变化，使用电子权重
-                        amrex::ParticleReal x, y, z, w = -elec_weight * inv_vol;
-                        GetPosition(pos, x, y, z);
+                        const amrex::ParticleReal x = ux[pos], y = uy[pos],
+                                            z = uz[pos],
+                                            w = -elec_weight * inv_vol;
+
                         const amrex::ParticleReal rpx = (x - xyzmin.x) *
                                                         inv_cell_size.x,
                                                   rpy = (y - xyzmin.y) *

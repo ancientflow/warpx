@@ -65,7 +65,7 @@ class BackgroundMCCCollision final : public CollisionBase {
     template <int depos_order>
     void doBackgroundCollisionsWithinTileCouple (
         WarpXParIter& pti, amrex::Real t, amrex::MultiFab& ground_rho,
-        int* p_delete, int* p_particle_num,int ncell, amrex::Real inv_gap);
+        int* p_delete, int* p_particle_num,int ncell, amrex::XDim3 inv_cell_size);
 
     /** Perform MCC ionization interactions
      *
