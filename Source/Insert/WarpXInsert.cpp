@@ -97,7 +97,7 @@ void MyInit()
  */
 void PhiGuardSetEntrance()
 {
-    //DirichletPhiGuardSet();
+    DirichletPhiGuardSet();
 }
 
 /**

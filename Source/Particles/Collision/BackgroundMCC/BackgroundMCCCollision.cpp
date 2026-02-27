@@ -755,11 +755,12 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
     amrex::ParticleReal* const AMREX_RESTRICT uz = attribs[PIdx::uz].dataPtr();
 
     // 统计原子数密度 仅单个box
-    auto const& ground_rho_arr = ground_rho.array(pti);
+    auto& fab = ground_rho[pti.index()];
+    auto const& ground_rho_arr = fab.array();
 
-    amrex::Box box = pti.tilebox();
-    box.grow(ground_rho.nGrowVect());
-    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0._rt);
+    //this box is after grow
+    amrex::Box const box = fab.box();
+    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0._rt);//待修改
     const amrex::Dim3 lo = lbound(box);
 
     amrex::ParallelForRNG(
@@ -781,8 +782,8 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
 #ifndef MCC_DENSITY_MID
             Compute_shape_factor<depos_order> const compute_shape_factor;
             amrex::Real sx[depos_order + 1] = {0._rt},
-                                         sy[depos_order + 1] = {0._rt},
-                                         sz[depos_order + 1] = {0._rt};
+                        sy[depos_order + 1] = {0._rt},
+                        sz[depos_order + 1] = {0._rt};
 
             int px = compute_shape_factor(sx, rpx),
                 py = compute_shape_factor(sy, rpy),
@@ -920,7 +921,7 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                             engine);
                         amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
                         amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
-                        //需要CAS来解决冲突
+                        //需要CAS来解决冲突，需要处理网格索引偏差
                     }
 #endif
                 } else if (scattering_process.m_type ==
@@ -1085,16 +1086,22 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                          background_np[box_index].begin(),
                          background_np[box_index].end(),
                          particle_num_in_cell_origin.begin());
-        auto const& rho_arr = ground_rho[pti].array();
-        amrex::Box box = pti.tilebox();
-        box.grow(ground_rho.nGrowVect());
+        auto& fab = ground_rho[box_index];
+        auto const& rho_arr = fab.array();
+        /*
+         * The box of ground[pti] is correct after verifying.
+         * Maybe it is gotten by the number index.
+         * Note that ground[pti].box() have ghost cell.
+         */
+
+        amrex::Box box = fab.box();
         const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, lev, 0._rt);
         const amrex::Dim3 lo = lbound(box);
 
         const auto num_added = filterCopyTransformParticles<1, depos_order>(
             species1, species2, elec_tile, ion_tile, elec_tile, np_elec, np_ion,
             Filter, CopyElec, CopyIon, Transform, p_delete, rho_arr,
-            p_particle_num, xyzmin, box, inv_cell_size);
+            p_particle_num, xyzmin, box, ground_rho.nGrowVect(), inv_cell_size);
 
         amrex::Gpu::DeviceScalar<int> all_deleted(0);
         int* p_num = all_deleted.dataPtr();

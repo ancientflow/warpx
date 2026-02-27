@@ -427,15 +427,13 @@ template <int N, int depos_order, typename DstPC, typename DstTile, typename Src
           typename Index, typename PredFunc, typename TransFunc,
           typename CopyFunc1, typename CopyFunc2>
 Index
-filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
-                              DstTile& dst2, SrcTile& src, Index dst1_index,
-                              Index dst2_index, PredFunc&& filter,
-                              CopyFunc1&& copy1, CopyFunc2&& copy2,
-                              TransFunc&& transform, Index* p_delete,
-                              const amrex::Array4<amrex::Real>& rho_array,
-                              Index* p_particle_num, const amrex::XDim3 xyzmin,
-                              amrex::Box& box,
-                              const amrex::XDim3& inv_cell_size) noexcept {
+filterCopyTransformParticles (
+    DstPC& pc1, DstPC& pc2, DstTile& dst1, DstTile& dst2, SrcTile& src,
+    Index dst1_index, Index dst2_index, PredFunc&& filter, CopyFunc1&& copy1,
+    CopyFunc2&& copy2, TransFunc&& transform, Index* p_delete,
+    const amrex::Array4<amrex::Real>& rho_array, Index* p_particle_num,
+    const amrex::XDim3 xyzmin, const amrex::Box& box,
+    const amrex::IntVect ngrow, const amrex::XDim3& inv_cell_size) noexcept {
     using namespace amrex;
 
     auto np = src.numParticles();
@@ -448,9 +446,15 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
     auto* p_mask = mask.dataPtr();
     const auto src_data = src.getParticleTileData();
 
-    const Dim3 lo = lbound(box), hi = ubound(box);
-    Dim3 const ncell{hi.x-lo.x,hi.y-lo.y,hi.z-lo.z};
-
+    const Dim3 lo = lbound(box), hi = ubound(box), grow_dim = ngrow.dim3();
+    Dim3 const ncell{hi.x - lo.x - (2 * grow_dim.x),
+                     hi.y - lo.y - (2 * grow_dim.y),
+                     hi.z - lo.z - (2 * grow_dim.z)};
+    /*
+    amrex::Print() << hi << "\n"
+                   << lo << "\n"
+                   << ncell << "\n"
+                   << xyzmin << "\n"<<ungrow_box<<"\n";*/
     amrex::ParallelForRNG(
         np, [=] AMREX_GPU_DEVICE(int i, amrex::RandomEngine const& engine) {
             const auto& p = src_data.getSuperParticle(i);
@@ -461,13 +465,15 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                                       rpy = (y - xyzmin.y) * inv_cell_size.y,
                                       rpz = (z - xyzmin.z) * inv_cell_size.z;
             amrex::ParticleReal n_a = 0;
-            const int pi = static_cast<int>(rpx), pj = static_cast<int>(rpy),
-                      pk = static_cast<int>(rpz);
+            // 此处修正ghost cell偏移
+            const int pi = static_cast<int>(rpx - grow_dim.x),
+                      pj = static_cast<int>(rpy - grow_dim.y),
+                      pk = static_cast<int>(rpz - grow_dim.z);
 #ifndef MCC_DENSITY_MID
             Compute_shape_factor<depos_order> const compute_shape_factor;
             amrex::Real sx[depos_order + 1] = {0._rt},
-                                         sy[depos_order + 1] = {0._rt},
-                                         sz[depos_order + 1] = {0._rt};
+                        sy[depos_order + 1] = {0._rt},
+                        sz[depos_order + 1] = {0._rt};
 
             int px = compute_shape_factor(sx, rpx),
                 py = compute_shape_factor(sy, rpy),
