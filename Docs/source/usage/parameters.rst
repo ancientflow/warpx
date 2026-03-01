@@ -9,7 +9,7 @@ Examples of inputs files can be found in the :ref:`Examples <usage-examples>` se
 
 .. note::
 
-   WarpX's input paramters are read via AMReX's `ParmParse <https://amrex-codes.github.io/amrex/docs_html/Basics.html#parmparse>`__.
+   WarpX's input parameters are read via AMReX's `ParmParse <https://amrex-codes.github.io/amrex/docs_html/Basics.html#parmparse>`__.
 
 .. note::
 
@@ -211,7 +211,7 @@ Overall simulation parameters
 
       - **Numerical stability:**
 
-        - Rhobust to finite-grid instability (does not require cells that resolve the plasma Debye length).
+        - Robust to finite-grid instability (does not require cells that resolve the plasma Debye length).
         - Numerically stable for large :math:`\Delta t` (does not require resolving the plasma period or satisfying the CFL condition for light waves).
         - Practical limits on :math:`\Delta t` set by solver efficiency, number of particle cell crossings, and physics resolution.
 
@@ -321,7 +321,7 @@ Overall simulation parameters
       In this version, the advance is Strang split, with a half advance of the source free Maxwell's equation (with a spectral solver), a full advance of the particles plus longitudinal E field, and a second half advance of the source free Maxwell's equations.
       The advantage of this method is that with the Spectral advance of the fields, it is dispersionless.
       Note that exact energy convergence is achieved only with one grid block and ``psatd.periodic_single_box_fft = 1``. Otherwise,
-      the energy convservation is spoiled because of the inconsistency of the periodic assumption of the spectral solver and the
+      the energy conservation is spoiled because of the inconsistency of the periodic assumption of the spectral solver and the
       non-periodic behavior of the individual blocks.
 
 .. _param-electrostatic-pic:
@@ -363,12 +363,12 @@ Overall simulation parameters
           * ``warpx.use_2d_slices_fft_solver`` (`bool`) optional (default: 0): Select the type of Integrated Green Function solver.
             If 0, solve Poisson equation in full 3D geometry.
             If 1, solve Poisson equation in a quasi 3D geometry, neglecting the :math:`z` derivatives in the Laplacian of the Poisson equation.
-            In practice, in this case, the code performes many 2D Poisson solves on all :math:`(x,y)` slices, each slice at a given :math:`z`.
+            In practice, in this case, the code performs many 2D Poisson solves on all :math:`(x,y)` slices, each slice at a given :math:`z`.
             This is often a good approximation for ultra-relativistic beams propagating along the :math:`z` direction, with the relativistic solver.
             As a consequence, this solver does not need to do an FFT along the :math:`z` direction,
             and instead uses only transverse FFTs (along :math:`x` and :math:`y`) at each :math:`z` position (or :math:`z` "slice").
 
-          * ``ablastr.nprocs_igf_fft`` (`int`) optional (default: number of MPI ranks): Number of MPI ranks used to parallalelize the FFT solver.
+          * ``ablastr.nprocs_igf_fft`` (`int`) optional (default: number of MPI ranks): Number of MPI ranks used to parallelize the FFT solver.
             This can be less or equal than then number of MPI ranks that are used to run the overall simulation.
             It can be useful if the auxiliary simulation boxes fit within a single process, so to avoid extra communications.
             The auxiliary boxes are extended boxes in real and spectral space that are used to perform the necessary FFTs.
@@ -380,7 +380,9 @@ Overall simulation parameters
     be calculated. More specifically, the space-charge fields are
     computed with an iterative Multi-Level Multi-Grid (MLMG) solver.
     This solver can fail to reach the default precision within a reasonable time.
-    This only applies when warpx.do_electrostatic = labframe.
+    This applies to the labframe electrostatic solvers (``labframe``, ``labframe-electromagnetostatic``,
+    ``labframe-effective-potential``). When using ``labframe-electromagnetostatic``, this value
+    is also used as the default for ``magnetostatic_solver_required_precision``.
 
 * ``warpx.self_fields_absolute_tolerance`` (`float`, default: 0.0)
     The absolute tolerance with which the space-charge fields should be
@@ -390,18 +392,45 @@ Overall simulation parameters
     changes very little between steps it can occur that the initial guess for
     the MLMG solver is so close to the converged value that it fails to improve
     that solution sufficiently to reach the ``self_fields_required_precision``
-    value.
+    value. When using ``labframe-electromagnetostatic``, this value
+    is also used as the default for ``magnetostatic_solver_absolute_tolerance``.
 
 * ``warpx.self_fields_max_iters`` (`integer`, default: 200)
     Maximum number of iterations used for MLMG solver for space-charge
     fields calculation. In case if MLMG converges but fails to reach the desired
     ``self_fields_required_precision``, this parameter may be increased.
-    This only applies when warpx.do_electrostatic = labframe.
+    This applies to the labframe electrostatic solvers (``labframe``, ``labframe-electromagnetostatic``,
+    ``labframe-effective-potential``). When using ``labframe-electromagnetostatic``, this value
+    is also used as the default for ``magnetostatic_solver_max_iters``.
 
 * ``warpx.self_fields_verbosity`` (`integer`, default: 2)
     The verbosity used for MLMG solver for space-charge fields calculation. Currently
     MLMG solver looks for verbosity levels from 0-5. A higher number results in more
-    verbose output.
+    verbose output. When using ``labframe-electromagnetostatic``, this value
+    is also used as the default for ``magnetostatic_solver_verbosity``.
+
+* ``warpx.magnetostatic_solver_required_precision`` (`float`, default: value of ``self_fields_required_precision``)
+    The relative precision with which the magnetostatic (vector Poisson) fields should
+    be calculated when using ``labframe-electromagnetostatic`` mode.
+    This allows setting a different precision for the magnetostatic solver
+    than for the electrostatic solver.
+
+* ``warpx.magnetostatic_solver_absolute_tolerance`` (`float`, default: value of ``self_fields_absolute_tolerance``)
+    The absolute tolerance with which the magnetostatic fields should be
+    calculated when using ``labframe-electromagnetostatic`` mode.
+    This allows setting a different tolerance for the magnetostatic solver
+    than for the electrostatic solver.
+
+* ``warpx.magnetostatic_solver_max_iters`` (`integer`, default: value of ``self_fields_max_iters``)
+    Maximum number of iterations used for the magnetostatic (vector Poisson) MLMG solver
+    when using ``labframe-electromagnetostatic`` mode.
+    This allows setting different iteration limits for the magnetostatic solver
+    than for the electrostatic solver.
+
+* ``warpx.magnetostatic_solver_verbosity`` (`integer`, default: value of ``self_fields_verbosity``)
+    The verbosity used for the magnetostatic MLMG solver when using
+    ``labframe-electromagnetostatic`` mode. Values range from 0-5, with higher
+    numbers producing more verbose output.
 
 * ``amrex.abort_on_out_of_gpu_memory``  (``0`` or ``1``; default is ``1`` for true)
     When running on GPUs, memory that does not fit on the device will be automatically swapped to host memory when this option is set to ``0``.
@@ -606,7 +635,7 @@ Domain Boundary Conditions
     * ``damped``: This is the recommended option in the moving direction when using the spectral solver with moving window (currently only supported along z). This boundary condition applies a damping factor to the electric and magnetic fields in the outer half of the guard cells, using a sine squared profile. As the spectral solver is by nature periodic, the damping prevents fields from wrapping around to the other end of the domain when the periodicity is not desired. This boundary condition is only valid when using the spectral solver.
 
     * ``pec``: This option can be used to set a Perfect Electric Conductor at the simulation boundary. Please see the :ref:`PEC theory section <theory-bc-pec>` for more details. Note that PEC boundary is invalid at `r=0` for RZ, RCYLINDER, and RSPHERE. Please use ``none`` option. This boundary condition does not work with the spectral solver.
-      There is the additional input parameter ``particles.crop_on_PEC_boundary`` which sets whethers particle trajectories are cropped when particles cross PEC boundaries, defaulting to false.
+      There is the additional input parameter ``particles.crop_on_PEC_boundary`` which sets whether particle trajectories are cropped when particles cross PEC boundaries, defaulting to false.
 
     * ``pmc``: This option can be used to set a Perfect Magnetic Conductor at the simulation boundary. Please see the :ref:`PEC theory section <theory-bc-pmc>` for more details. This is equivalent to ``Neumann``. This boundary condition does not work with the spectral solver.
 
@@ -616,7 +645,7 @@ Domain Boundary Conditions
       The expressions are given for the low and high boundary on each axis, as listed below. The tangential fields are specified as
       expressions that can depend on the location and time. The tangential fields are in two pairs, the electric fields and the
       magnetic fields. In each pair, if one is specified, the other will be set to zero if not also specified.
-      There is the additional input parameter ``particles.crop_on_PEC_boundary`` which sets whethers particle trajectories are cropped when particles cross pec_insulator boundaries, defaulting to false.
+      There is the additional input parameter ``particles.crop_on_PEC_boundary`` which sets whether particle trajectories are cropped when particles cross pec_insulator boundaries, defaulting to false.
 
       * ``insulator.area_x_lo(y,z)``: For the lower x (or r) boundary, expression specifying the insulator location
 
@@ -936,18 +965,19 @@ Particle initialization
 * ``<species_name>.species_type`` (`string`) optional (default `unspecified`)
     Type of physical species.
     Currently, the accepted species are
-    ``"electron"``, ``"positron"``, ``"muon"``, ``"antimuon"``, ``"photon"``, ``"neutron"``, ``"proton"`` , ``"alpha"``,
-    ``"hydrogen1"`` (a.k.a. ``"protium"``), ``"hydrogen2"`` (a.k.a. ``"deuterium"``), ``"hydrogen3"`` (a.k.a. ``"tritium"``),
-    ``"helium"``, ``"helium3"``, ``"helium4"``,
+    ``"electron"``, ``"positron"``, ``"muon"``, ``"antimuon"``, ``"photon"``, ``"neutron"``,
+    ``"hydrogen1"`` (a.k.a. ``"proton"``), ``"hydrogen2"`` (a.k.a. ``"deuterium"``), ``"hydrogen3"`` (a.k.a. ``"tritium"``),
+    ``"helium"``, ``"helium3"``, ``"helium4"`` (a.k.a. ``"alpha"``),
     ``"lithium"``, ``"lithium6"``, ``"lithium7"``, ``"beryllium"``, ``"beryllium9"``, ``"boron"``, ``"boron10"``, ``"boron11"``,
     ``"carbon"``, ``"carbon12"``, ``"carbon13"``, ``"carbon14"``, ``"nitrogen"``, ``"nitrogen14"``, ``"nitrogen15"``,
     ``"oxygen"``, ``"oxygen16"``, ``"oxygen17"``, ``"oxygen18"``, ``"fluorine"``, ``"fluorine19"``, ``"neon"``, ``"neon20"``,
     ``"neon21"``, ``"neon22"``, ``"aluminium"``, ``"argon"``, ``"copper"``, ``"xenon"`` and ``"gold"``.
-    The difference between ``"proton"`` and ``"hydrogen1"`` is that the mass of the latter includes also the mass
-    of the bound electron (same for ``"alpha"`` and ``"helium4"``). When only the name of an element is specified, the mass
-    is a weighted average of the masses of the stable isotopes. For all the elements with ``Z < 11`` we provide
-    also the stable isotopes as an option for ``species_type`` (e.g., ``"helium3"`` and ``"helium4"``).
-    Either ``species_type`` or both ``mass`` and ``charge`` have to be specified.
+    When an atomic element is specified (e.g. ``oxygen``), the species will be assumed to be fully ionized
+    (e.g., with charge :math:`+8 e` for ``oxygen``). When only the name of an element is specified
+    (e.g. ``oxygen`` instead of ``oxygen16``), the mass is a weighted average of the masses
+    of the stable isotopes. When ``species_type`` is specified, ``mass`` and ``charge`` do not need to be specified.
+    In that case, the mass will be taken from pre-defined values `here <https://physics.nist.gov/cgi-bin/Compositions/stand_alone.pl?ele=&ascii=ascii2&isotype=some>`__.
+    If ``mass`` and/or ``charge`` are nonetheless specified, they will override the pre-defined values for that ``species_type``.
 
 * ``<species_name>.charge`` (`float`) optional (default `NaN`)
     The charge of one `physical` particle of this species.
@@ -1066,7 +1096,7 @@ Particle initialization
 
           * ``<species_name>.gaussian_beam_rotation_angle``: (`double`) angle of rotation around the specified axis, in radians.
 
-      * ``<species_name>.do_gaussian_beam_rotation_momenta`` (`bool`, optional) the momenta of the beam particles are also rotated using the same transformation applied to their positions. The rotation is the same as that for the positions. Momentas cannot be rotated independently; position rotation must be enabled first.
+      * ``<species_name>.do_gaussian_beam_rotation_momenta`` (`bool`, optional) the momenta of the beam particles are also rotated using the same transformation applied to their positions. The rotation is the same as that for the positions. Momenta cannot be rotated independently; position rotation must be enabled first.
 
       Note that the other beam parameters (e.g. ``<species_name>.x/y/z_rms``, etc.) are used in the initialization process `before` performing the rotation.
       Therefore, the user should define the beam size, cuts, and focal distance for the beam pre-rotation, hence aligned to the Cartesian axes.
@@ -1534,7 +1564,7 @@ Particle initialization
     performed.
 
 * ``<species_name>.resampling_trigger_max_avg_ppc`` (`float`) optional (default `infinity`)
-    Resampling is performed everytime the number of macroparticles per cell of the species
+    Resampling is performed every time the number of macroparticles per cell of the species
     averaged over the whole simulation domain exceeds this parameter.
 
 * ``<species_name>.do_temperature_deposition`` (`boolean`) optional (default `false`)
@@ -1591,7 +1621,7 @@ Laser initialization
     and ``<laser_name>.direction``.
 
     ``<laser_name>.position`` also corresponds to the origin of the coordinates system
-    for the laser tranverse profile. For instance, for a Gaussian laser profile,
+    for the laser transverse profile. For instance, for a Gaussian laser profile,
     the peak of intensity will be at the position given by ``<laser_name>.position``.
     This variable can thus be used to shift the position of the laser pulse
     transversally.
@@ -1737,7 +1767,7 @@ Laser initialization
     The distance from ``laser_position`` to the focal plane.
     (where the distance is defined along the direction given by ``<laser_name>.direction``.)
 
-    Use a negative number for a defocussing laser instead of a focussing laser.
+    Use a negative number for a defocusing laser instead of a focusing laser.
 
     When running a **boosted-frame simulation**, provide the value of
     ``<laser_name>.profile_focal_distance`` in the laboratory frame, and use ``warpx.gamma_boost``
@@ -2438,7 +2468,7 @@ Filtering
     Whether to use filtering in the simulation.
     With the explicit evolve scheme, the filtering is turned on by default, except for RZ FDTD.
     With the implicit evolve schemes, the filtering is turned off by default.
-    The filtering smoothes the charge and currents on the mesh, after depositing them from the macro-particles.
+    The filtering smooths the charge and currents on the mesh, after depositing them from the macro-particles.
     With implicit schemes, the electric field is also filtered (to maintain consistency for energy conservation).
     This uses a bilinear filter (see the :ref:`filtering section <theory-filter>`).
     With the RZ PSATD solver, the filtering is done in :math:`k`-space.
@@ -2559,7 +2589,7 @@ Two families of Maxwell solvers are implemented in WarpX, based on the Finite-Di
 Maxwell solver: PSATD method
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-* ``psatd.nox``, ``psatd.noy``, ``pstad.noz`` (`integer`) optional (default `16` for all)
+* ``psatd.nox``, ``psatd.noy``, ``psatd.noz`` (`integer`) optional (default `16` for all)
     The order of accuracy of the spatial derivatives, when using the code compiled with a PSATD solver.
     If ``psatd.periodic_single_box_fft`` is used, these can be set to ``inf`` for infinite-order PSATD.
 
@@ -2680,7 +2710,7 @@ Maxwell solver: PSATD method
 
 * ``psatd.v_comoving`` (3 floating-point values, in units of the speed of light; default ``0. 0. 0.``)
     Defines the comoving velocity in the comoving PSATD scheme.
-    A non-zero comoving velocity selects the comoving PSATD algorithm, which suppresses the numerical Cherenkov instability (NCI) in boosted-frame simulations, under certain assumptions. This option requires that WarpX is compiled with ``USE_FFT = TRUE``. It also requires the use of direct current deposition (``algo.current_deposition = direct``) and has not been neither implemented nor tested with other current deposition schemes.
+    A non-zero comoving velocity selects the comoving PSATD algorithm, which suppresses the numerical Cherenkov instability (NCI) in boosted-frame simulations, under certain assumptions. This option requires that WarpX is compiled with ``USE_FFT = TRUE``. It also requires the use of direct current deposition (``algo.current_deposition = direct``) and has neither been implemented nor tested with other current deposition schemes.
 
 * ``psatd.do_time_averaging`` (`0` or `1`; default: 0)
     Whether to use an averaged Galilean PSATD algorithm or standard Galilean PSATD.
