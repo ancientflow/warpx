@@ -10,7 +10,8 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
         const amrex::Box& box = pti.validbox();
 
         auto np = pti.numParticles();
-        amrex::Print() << np << " API deposit \n";
+        amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
+                          << ": deposit " << np << " particles" << "\n";
         // Extract particle data
         auto& attribs = pti.GetAttribs();
         auto& wp = attribs[PIdx::w];
@@ -86,7 +87,6 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 
         auto geo = warpx_instance.Geom(lev);
         const size_t box_num = warpx_instance.boxArray(lev).size();
-        amrex::Print() << "lev " << lev << ": box " << box_num << "\n";
 
         auto& background_bin = m_background_bins[lev];
         auto& background_np = m_n_particle_in_each_cell[lev];
@@ -116,7 +116,8 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
     auto& background_species =
         mypc.GetParticleContainerFromName(m_ground_species);
     auto const flvl = background_species.finestLevel();
-    amrex::Print() << "Start updating background density\n";
+    amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
+                      << ":Start updating background density\n";
     for (int lev = 0; lev <= flvl; lev++) {
 #ifndef MCC_DENSITY_MID
         m_background_density_fabs[lev].setVal(0.0_prt);
@@ -126,16 +127,14 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
             background_species.GetNumberDensity(lev);
 #endif
         auto geo = warpx_instance.Geom(lev);
-        //auto binIter = m_background_bins[lev].begin();
-        //auto npIter = m_n_particle_in_each_cell[lev].begin();
-
         auto& background_bin = m_background_bins[lev];
         auto& background_np = m_n_particle_in_each_cell[lev];
 
         for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
             const int box_index = pti.index();
-            amrex::Print() << "Updating lev " << lev << ": box " << box_index
-                           << "\n";
+            amrex::AllPrint()
+                << "rank " << amrex::ParallelDescriptor::MyProc()
+                << ": Updating lev " << lev << ": box " << box_index << "\n";
 
             auto& ptile = background_species.ParticlesAt(lev, pti);
             background_bin[box_index] =
@@ -163,12 +162,11 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
                 p_particle_num[ibin] =
                     static_cast<int>((num_w / elec_weight) + 0.1);
             });
-
-            //++binIter;
-            //++npIter;
         }
     }
-    amrex::Print() << "Updated background species: " << m_ground_species << " end\n";
+    amrex::Print() << "rank " << amrex::ParallelDescriptor::MyProc()
+                   << ": Updated background species: " << m_ground_species
+                   << " end\n";
 }
 
 /**
@@ -182,6 +180,9 @@ BackgroundCoupledDensity::backgroundSpeciesClean (
     auto const flvl = background_species.finestLevel();
     for (int lev = 0; lev <= flvl; lev++) {
         for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
+            amrex::AllPrint()
+                << "rank " << amrex::ParallelDescriptor::MyProc()
+                << ": clean lev " << lev << ": box " << pti.index() << "\n";
             auto& ptile = background_species.ParticlesAt(lev, pti);
             long const np = ptile.numParticles();
             auto& soa = ptile.GetStructOfArrays();

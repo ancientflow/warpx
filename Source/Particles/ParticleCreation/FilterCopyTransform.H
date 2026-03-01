@@ -450,11 +450,6 @@ filterCopyTransformParticles (
     Dim3 const ncell{hi.x - lo.x - (2 * grow_dim.x),
                      hi.y - lo.y - (2 * grow_dim.y),
                      hi.z - lo.z - (2 * grow_dim.z)};
-    /*
-    amrex::Print() << hi << "\n"
-                   << lo << "\n"
-                   << ncell << "\n"
-                   << xyzmin << "\n"<<ungrow_box<<"\n";*/
     amrex::ParallelForRNG(
         np, [=] AMREX_GPU_DEVICE(int i, amrex::RandomEngine const& engine) {
             const auto& p = src_data.getSuperParticle(i);

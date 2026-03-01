@@ -1109,8 +1109,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         amrex::Real const inv_vol =
             inv_cell_size.x * inv_cell_size.y * inv_cell_size.z;
         if (num_added > 0) {
-            amrex::Print() << "Handle collision lost at lev " << lev << " box "
-                           << box_index << "\n";
             amrex::ParallelForRNG(numbins, [=] AMREX_GPU_DEVICE(
                                                long ibin,
                                                const amrex::RandomEngine&
@@ -1190,8 +1188,10 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                 }
             });
         }
-        amrex::Print() << "ionization: delete " << all_deleted.dataValue() << " particle"
-                       << pc.getSpeciesId() + 1 << "\n";
+        amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
+                          << ": lev " << lev << " box " << box_index
+                          << " ionization: delete " << all_deleted.dataValue()
+                          << " particle" << pc.getSpeciesId() + 1 << "\n";
 
         setNewParticleIDs(elec_tile, np_elec, num_added);
         setNewParticleIDs(ion_tile, np_ion, num_added);
