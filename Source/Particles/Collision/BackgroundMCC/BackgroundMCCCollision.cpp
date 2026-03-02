@@ -1069,12 +1069,11 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
         long numbins = bin.numBins();
 
         auto& soa = ptile.GetStructOfArrays();
+        auto get_atom_postion = GetParticlePosition<PIdx>(ptile);
         uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
         auto& soa_arr = soa.GetRealData();
-        amrex::Real *pw = soa_arr[PIdx::w].dataPtr(),
-                    *ux = soa_arr[PIdx::x].dataPtr(),
-                    *uy = soa_arr[PIdx::y].dataPtr(),
-                    *uz = soa_arr[PIdx::z].dataPtr();
+        amrex::Real *pw = soa_arr[PIdx::w].dataPtr();
+
         amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
         int* p_delete = num_delete.dataPtr();
 
@@ -1131,9 +1130,8 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                         rest--;
 
                         // 处理密度变化，使用电子权重
-                        const amrex::ParticleReal x = ux[pos], y = uy[pos],
-                                            z = uz[pos],
-                                            w = -elec_weight * inv_vol;
+                        amrex::ParticleReal x, y, z, w = -elec_weight * inv_vol;
+                        get_atom_postion(pos, x, y, z);
 
                         const amrex::ParticleReal rpx = (x - xyzmin.x) *
                                                         inv_cell_size.x,

@@ -149,7 +149,8 @@ VoltageAdjustment (WarpX& warpx_instance) {
     static bool DotInit = false;
     if (!DotInit) {
         mf.setVal(0);
-        for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid();
+             ++mfi) {
             const Box& box = mfi.tilebox();
             amrex::Array4<amrex::Real> const& arr = mf.array(mfi);
             amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j) {
@@ -167,7 +168,8 @@ VoltageAdjustment (WarpX& warpx_instance) {
 
     std::cout << "voltage adjustment: " << phisum << std::endl;
 
-    for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid();
+         ++mfi) {
         const Box& box = mfi.tilebox();
 
         amrex::Array4<amrex::Real> const& phi = phi_field->array(mfi);
@@ -220,10 +222,10 @@ CathodeInjection3D () {
         electron_rest -= one_step_injection;
         // std::cout << "electron inject: " << one_step_injection << std::endl;
 
-        amrex::Vector<amrex::ParticleReal> pz(one_step_injection), px(one_step_injection),
-            py(one_step_injection), vx(one_step_injection),
-            vy(one_step_injection), vz(one_step_injection),
-            pw(one_step_injection, elec_weight);
+        amrex::Vector<amrex::ParticleReal> pz(one_step_injection),
+            px(one_step_injection), py(one_step_injection),
+            vx(one_step_injection), vy(one_step_injection),
+            vz(one_step_injection), pw(one_step_injection, elec_weight);
 
         amrex::RandomEngine uniform_engine(amrex::getRandState()),
             normal_engine(amrex::getRandState());
@@ -387,7 +389,8 @@ AnodeVoltage () {
     auto phi_field = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
-    for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid();
+         ++mfi) {
         const amrex::Box& box = mfi.tilebox();
         amrex::Array4<amrex::Real> const& phi = phi_field->array(mfi);
         if (!domain.strictly_contains(box)) {
@@ -419,11 +422,9 @@ AnodeCurrentCalc () {
         std::fstream fileout;
         if (!ifinit) {
             fileout.open("anode_current.dat", std::ios::out);
-            fileout
-                << "time\txmin_electron\txmax_electron\t"
-                   "ymin_electron\tymax_electron\t"
-                   "zmin_electron\tzmax_electron\tzmin_ion\tanode_electron\t"
-                   "anode_electron_cut\n";
+            fileout << "time\t"
+                       "zmin_electron\tzmin_ion\tanode_electron\t"
+                       "anode_electron_cut\n";
             ifinit = true;
         } else {
             fileout.open("anode_current.dat", std::ios::app);
@@ -434,19 +435,12 @@ AnodeCurrentCalc () {
         WarpX& warpx_instance = WarpX::GetInstance();
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
 
-        auto pepc_xmin = mybpc.getParticleBufferPointer("electrons", 0);
-        auto pepc_xmax = mybpc.getParticleBufferPointer("electrons", 1);
-        auto pepc_ymin = mybpc.getParticleBufferPointer("electrons", 2);
-        auto pepc_ymax = mybpc.getParticleBufferPointer("electrons", 3);
-        auto pepc_zmin = mybpc.getParticleBufferPointer("electrons", 4);
-        auto pepc_zmax = mybpc.getParticleBufferPointer("electrons", 5);
-        auto pxepec_zmin = mybpc.getParticleBufferPointer("xe_ions", 4);
-        amrex::Vector<PinnedMemoryParticleContainer*> buffers = {
-            pepc_xmin, pepc_xmax, pepc_ymin,  pepc_ymax,
-            pepc_zmin, pepc_zmax, pxepec_zmin};
+        auto& elec_zmin = mybpc.getParticleBuffer("electrons", 4);
+        auto& xe_ion_zmin = mybpc.getParticleBuffer("xe_ions", 4);
 
-        int data_size = buffers.size() + 2;
-        amrex::Gpu::DeviceVector<amrex::ParticleReal> device_charge(data_size, 0);
+        const int data_size = 4;
+        amrex::Gpu::DeviceVector<amrex::ParticleReal> device_charge(data_size,
+                                                                    0);
         amrex::Vector<amrex::ParticleReal> host_charge(data_size, 0);
 
         amrex::ParticleReal* device_ptr = device_charge.dataPtr();
@@ -461,9 +455,7 @@ AnodeCurrentCalc () {
         rn2 = 0.031 / 2 / l_factor;
 
         // 统计zmin电子权重
-        for (auto pti =
-                 PinnedMemoryParticleContainer::ParIterType(*buffers[4], 0);
-             pti.isValid(); ++pti) {
+        for (auto pti = WarpXParIter(elec_zmin, 0); pti.isValid(); ++pti) {
             auto& arr = pti.GetStructOfArrays().GetRealData();
             auto px = arr[PIdx::x].dataPtr();
             auto py = arr[PIdx::y].dataPtr();
@@ -475,8 +467,9 @@ AnodeCurrentCalc () {
             int np = pti.numParticles();
 
             amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                amrex::ParticleReal x = px[ip], y = py[ip], w = pw[ip], z = pz[ip],
-                             vx = pvx[ip], vy = pvy[ip], vz = pvz[ip];
+                amrex::ParticleReal x = px[ip], y = py[ip], w = pw[ip],
+                                    z = pz[ip], vx = pvx[ip], vy = pvy[ip],
+                                    vz = pvz[ip];
                 amrex::ParticleReal dt = z / vz;
                 x -= half_L;
                 y -= half_L;
@@ -490,14 +483,12 @@ AnodeCurrentCalc () {
                 if (r >= rn1 && r <= rn2) {
                     amrex::Gpu::Atomic::Add(&device_ptr[data_size - 1], w);
                 }
-                amrex::Gpu::Atomic::Add(&device_ptr[4], w);
+                amrex::Gpu::Atomic::Add(&device_ptr[0], w);
             });
         }
 
         // 统计zmin 氙离子权重
-        for (auto pti =
-                 PinnedMemoryParticleContainer::ParIterType(*buffers[6], 0);
-             pti.isValid(); ++pti) {
+        for (auto pti = WarpXParIter(xe_ion_zmin, 0); pti.isValid(); ++pti) {
             auto& arr = pti.GetStructOfArrays().GetRealData();
             auto px = arr[PIdx::x].dataPtr();
             auto py = arr[PIdx::y].dataPtr();
@@ -509,8 +500,9 @@ AnodeCurrentCalc () {
             int np = pti.numParticles();
 
             amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                amrex::ParticleReal x = px[ip], y = py[ip], w = pw[ip], z = pz[ip],
-                             vx = pvx[ip], vy = pvy[ip], vz = pvz[ip];
+                amrex::ParticleReal x = px[ip], y = py[ip], w = pw[ip],
+                                    z = pz[ip], vx = pvx[ip], vy = pvy[ip],
+                                    vz = pvz[ip];
                 amrex::ParticleReal dt = z / vz;
                 x -= half_L;
                 y -= half_L;
@@ -518,25 +510,9 @@ AnodeCurrentCalc () {
                 y -= dt * vy;
                 amrex::ParticleReal r = sqrt(x * x + y * y);
                 if (r >= rn1 && r <= rn2) {
-                    amrex::Gpu::Atomic::Add(&device_ptr[6], w);
+                    amrex::Gpu::Atomic::Add(&device_ptr[1], w);
                 }
             });
-        }
-
-        // 统计其余权重
-        amrex::Vector<int> buffer_index = {0, 1, 2, 3, 5};
-        for (int index : buffer_index) {
-            for (auto pti = PinnedMemoryParticleContainer::ParIterType(
-                     *buffers[index], 0);
-                 pti.isValid(); ++pti) {
-                auto& arr = pti.GetStructOfArrays().GetRealData();
-                auto pw = arr[PIdx::w].dataPtr();
-                int np = pti.numParticles();
-                amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                    amrex::ParticleReal w = pw[ip];
-                    amrex::Gpu::Atomic::Add(&device_ptr[index], w);
-                });
-            }
         }
 
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_charge.begin(),
@@ -548,7 +524,6 @@ AnodeCurrentCalc () {
         }
         fileout << "\n";
         fileout.close();
-
         mybpc.clearParticles();
     }
 }
@@ -560,7 +535,7 @@ GetPhiFromFile () {
     WarpX& warpx_instance = WarpX::GetInstance();
     auto phi = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
     static amrex::MultiFab phi_ext(phi->boxArray(), phi->DistributionMap(),
-                            phi->nComp(), phi->nGrow());
+                                   phi->nComp(), phi->nGrow());
     if (!ifinit) {
         ifinit = true;
         std::fstream filein("phiField3D.dat", std::ios::in);
@@ -583,7 +558,8 @@ GetPhiFromFile () {
                          device_data.begin());
 
         amrex::Real* pdevice = device_data.dataPtr();
-        for (amrex::MFIter mfi(phi_ext, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        for (amrex::MFIter mfi(phi_ext, amrex::TilingIfNotGPU()); mfi.isValid();
+             ++mfi) {
             auto const& phi_arr = phi_ext.array(mfi);
             const amrex::Box& box = mfi.validbox();
 
@@ -814,9 +790,9 @@ XeFastInjection () {
             } else {
                 // 小孔进气
                 theta = amrex::Random(uniform_engine) * Pi2;
-                r = rwidth *
-                    sqrt(amrex::Random(uniform_engine)); // 小孔进气是r1 = 0, r2 =
-                                                  // rwidth, 化简后得到该式
+                r = rwidth * sqrt(amrex::Random(
+                                 uniform_engine)); // 小孔进气是r1 = 0, r2 =
+                                                   // rwidth, 化简后得到该式
                 px[i] = r * cos(theta) + half_L +
                         hole_x[(i + hole_start) % hole_num];
                 py[i] = r * sin(theta) + half_L +
@@ -893,7 +869,8 @@ DirichletPhiGuardSet () {
                      dx_device.begin());
     amrex::Real* dx = dx_device.dataPtr();
 
-    for (amrex::MFIter mfi(*phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+    for (amrex::MFIter mfi(*phi, amrex::TilingIfNotGPU()); mfi.isValid();
+         ++mfi) {
         const amrex::Box& box = mfi.validbox();
         const auto& phi_arr = phi->array(mfi);
         const auto& rho_arr = rho->array(mfi);
@@ -1030,13 +1007,14 @@ InitDisturbance () {
 
     int np = ncell * nppc;
 
-    amrex::Vector<amrex::ParticleReal> pz(np, 0), px(np), py(np, 0), vx(np), vy(np),
-        vz(np, 0), pw(np, weight);
+    amrex::Vector<amrex::ParticleReal> pz(np, 0), px(np), py(np, 0), vx(np),
+        vy(np), vz(np, 0), pw(np, weight);
     for (int i = 0; i < np; i++) {
     }
 }
 #endif
 
-void EmbededBoundaryParticleReflect() {
+void
+EmbededBoundaryParticleReflect () {
     WarpX& warpx_instance = WarpX::GetInstance();
 }
