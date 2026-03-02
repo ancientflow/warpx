@@ -1,8 +1,7 @@
 #include "WarpXInsert.h"
 #include "WarpXInsertFunction.h"
-#include "WarpXSimulationConfig.h"
 #include "AMReX_Vector.H"
-
+#include "WarpXSimulationFunction.h"
 
 /**
  * 粒子注入入口

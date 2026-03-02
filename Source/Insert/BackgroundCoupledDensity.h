@@ -1,7 +1,8 @@
+#pragma once
+
 #include "WarpX.H"
 
 #include "Particles/MultiParticleContainer.H"
-#include "WarpXFunctionConfig.h"
 #include <AMReX_MultiFab.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Vector.H>

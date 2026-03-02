@@ -1,6 +1,6 @@
 #include "BackgroundCoupledDensity.h"
 
-/*
+/**
  * @brief deposit the atom density by WarpXParticleContainer
  */
 void
