@@ -21,7 +21,6 @@
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/ParticleUtils.H"
 #include "Utils/WarpXConst.H"
-#include "Utils/WarpXProfilerWrapper.H"
 #ifdef AMREX_USE_EB
 #include "EmbeddedBoundary/ParticleBoundaryProcess.H"
 #include "EmbeddedBoundary/ParticleScraper.H"

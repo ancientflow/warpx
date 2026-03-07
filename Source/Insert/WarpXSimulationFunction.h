@@ -631,7 +631,7 @@ XeFastInjection () {
                         sigmaz = std::sqrt(kb * Tz / mxe),
                         half_L = L / 2 / l_factor;
     double r, theta;
-    static const Vector<Vector<int>> nattr;
+    static const amrex::Vector<amrex::Vector<int>> nattr;
 
     static bool if_hole_init = false;
     if (!if_hole_init) {
