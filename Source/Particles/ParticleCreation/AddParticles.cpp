@@ -28,6 +28,8 @@
 #endif
 #include "WarpX.H"
 
+#include <ablastr/profiler/ProfilerWrapper.H>
+#include <ablastr/warn_manager/WarnManager.H>
 #include <ablastr/utils/Communication.H>
 #include <ablastr/warn_manager/WarnManager.H>
 
@@ -199,8 +201,9 @@ ZeroInitializeAndSetNegativeID (
 } // namespace
 
 void
-PhysicalParticleContainer::AddParticles (int lev) {
-    WARPX_PROFILE("PhysicalParticleContainer::AddParticles()");
+PhysicalParticleContainer::AddParticles (int lev)
+{
+    ABLASTR_PROFILE("PhysicalParticleContainer::AddParticles()");
 
     for (auto const& plasma_injector : plasma_injectors) {
 
@@ -843,9 +846,9 @@ PhysicalParticleContainer::AddPlasmaFromFile (PlasmaInjector& plasma_injector,
 }
 
 void
-PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev,
-                                      amrex::RealBox part_realbox) {
-    WARPX_PROFILE("PhysicalParticleContainer::AddPlasma()");
+PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev, amrex::RealBox part_realbox)
+{
+    ABLASTR_PROFILE("PhysicalParticleContainer::AddPlasma()");
 
     // If no part_realbox is provided, initialize particles in the whole domain
     const Geometry& geom = Geom(lev);
@@ -1396,9 +1399,9 @@ PhysicalParticleContainer::AddPlasma (PlasmaInjector& plasma_injector, int lev,
 }
 
 void
-PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector,
-                                          amrex::Real dt) {
-    WARPX_PROFILE("PhysicalParticleContainer::AddPlasmaFlux()");
+PhysicalParticleContainer::AddPlasmaFlux (PlasmaInjector const& plasma_injector, amrex::Real dt)
+{
+    ABLASTR_PROFILE("PhysicalParticleContainer::AddPlasmaFlux()");
 
     const Geometry& geom = Geom(0);
     const amrex::RealBox& part_realbox = geom.ProbDomain();
