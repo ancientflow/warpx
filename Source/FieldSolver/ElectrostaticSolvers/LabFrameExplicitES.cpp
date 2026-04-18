@@ -235,10 +235,18 @@ void LabFrameExplicitES::computePhiTriDiagonal (
             // on both boundaries.
             phi1d_arr(nx_full_domain,0,0) = (rho1d_arr(0,0,0) - (-1._rt)*phi1d_arr(nx_full_domain-1,0,0))/diag;
 
+        /* loop from 1 to nx - 2 inclusive */
+        for (int ix = 1; ix + 1 < nx; ix++) {
+            const amrex::Real m = 1.0_rt / (2.0_rt - -1.0_rt * cmod(ix - 1,0,0));
+            cmod(ix,0,0) = -1.0_rt * m;
+            u(ix,0,0) = (0.0f  - -1.0_rt * u(ix - 1,0,0)) * m;
+            x(ix,0,0) = (x(ix,0,0) - -1.0_rt * x(ix - 1,0,0)) * m;
         }
 
-        // Loop downward to calculate the phi
-        if (field_boundary_lo0 == FieldBoundaryType::Periodic) {
+        /* handle nx - 1 */
+        const amrex::Real m = 1.0_rt / (2.0_rt - alpha * beta / gamma - -1.0_rt * cmod(nx - 2,0,0));
+        u(nx - 1,0,0) = (alpha    - -1.0_rt * u(nx - 2,0,0)) * m;
+        x(nx - 1,0,0) = (x(nx - 1,0,0) - -1.0_rt * x(nx - 2,0,0)) * m;
 
             // With periodic, the right hand column adds an extra term for all rows
             for (int i_down = nx_full_domain-1 ; i_down >= 0 ; i_down--) {
@@ -246,11 +254,12 @@ void LabFrameExplicitES::computePhiTriDiagonal (
                 phi1d_arr(i_down,0,0) = phi1d_arr(i_down,0,0) + zwork1d_arr(i_down+1,0,0)*phi1d_arr(i_down+1,0,0) + zwork_product*phi1d_arr(nx_full_domain,0,0);
             }
 
-        } else {
+        const amrex::Real fact = (x(0,0,0) + x(nx - 1,0,0) * alpha / gamma) / (1.0_rt + u(0,0,0) + u(nx - 1,0,0) * alpha / gamma);
 
-            for (int i_down = nx_solve_max-1 ; i_down >= nx_solve_min ; i_down--) {
-                phi1d_arr(i_down,0,0) = phi1d_arr(i_down,0,0) + zwork1d_arr(i_down+1,0,0)*phi1d_arr(i_down+1,0,0);
-            }
+        /* loop from 0 to nx - 1 inclusive */
+        for (int ix = 0; ix < nx; ix++) {
+            x(ix,0,0) -= fact * u(ix,0,0);
+        }
 
         }
 

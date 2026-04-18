@@ -18,12 +18,12 @@
 
 #include <memory>
 #include <string>
-
 #include "Insert/WarpXFunctionConfig.h"
-
-class BackgroundMCCCollision final : public CollisionBase {
-  public:
-    BackgroundMCCCollision (std::string const& collision_name);
+class BackgroundMCCCollision final
+    : public CollisionBase
+{
+public:
+    explicit BackgroundMCCCollision (std::string const& collision_name);
 
     ~BackgroundMCCCollision () override = default;
 
