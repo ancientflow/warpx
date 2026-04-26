@@ -1,4 +1,5 @@
 #include "BackgroundCoupledDensity.h"
+#include <BoundaryConditions/WarpX_PEC.H>
 
 /**
  * @brief deposit the atom density by WarpXParticleContainer
@@ -20,14 +21,15 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
     // 处理边界密度
     // 尝试使用内置函数进行修改，便于进行高阶插值
     // 考虑到更多的层级，必须采用这种内置函数
+    //考虑到PEC中的修改，这会导致边界密度被大大低估，但是一般来说这不会明细影响放电
     auto& warpx_instance = WarpX::GetInstance();
-    /*    PEC::ApplyReflectiveBoundarytoRhofield(
-            &rho, warpx_instance.field_boundary_lo,
-            warpx_instance.field_boundary_hi,
-       warpx_instance.particle_boundary_lo, warpx_instance.particle_boundary_hi,
-       warpx_instance.Geom(lev), lev, PatchType::fine,
-       warpx_instance.refRatio());*/
+    PEC::ApplyReflectiveBoundarytoRhofield(
+        &rho, WarpX::field_boundary_lo, WarpX::field_boundary_hi,
+        WarpX::particle_boundary_lo, WarpX::particle_boundary_hi,
+        warpx_instance.Geom(lev), lev, PatchType::fine,
+        warpx_instance.refRatio());
 
+    /*
     amrex::Box domain = warpx_instance.Geom(lev).Domain();
     domain.surroundingNodes();
     for (amrex::MFIter mfi(rho, amrex::TilingIfNotGPU()); mfi.isValid();
@@ -56,12 +58,14 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
             if (k == domain.bigEnd(2)) {
                 rho_arr(i, j, k) *= 2.0_prt;
             }
-        });
-    }
+        });*/
 }
 
 /**
  * @brief init the vector of background density species
+ * @attention if number of background species particles at begin is zero,
+ * this function will give wrong result, because findParticlesInEachCell
+ * will return vacuum container
  */
 void
 BackgroundCoupledDensity::backgroundDensityInit () {
@@ -79,7 +83,8 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 
     for (int lev = 0; lev <= flvl; lev++) {
 #ifndef MCC_DENSITY_MID
-        auto* rho = warpx_instance.m_fields.get(FieldType::rho_fp, lev);
+        auto* rho =
+            warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, lev);
         m_background_density_fabs[lev] =
             amrex::MultiFab(rho->boxArray(), rho->DistributionMap(),
                             rho->nComp(), rho->nGrow());
@@ -112,6 +117,8 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 void
 BackgroundCoupledDensity::backgroundDensityUpdate (
     MultiParticleContainer& mypc, amrex::ParticleReal elec_weight) {
+    using namespace amrex::literals;
+
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& background_species =
         mypc.GetParticleContainerFromName(m_ground_species);
@@ -175,6 +182,8 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
 void
 BackgroundCoupledDensity::backgroundSpeciesClean (
     MultiParticleContainer& mypc) const {
+    using namespace amrex::literals;
+
     auto& background_species =
         mypc.GetParticleContainerFromName(m_ground_species);
     auto const flvl = background_species.finestLevel();

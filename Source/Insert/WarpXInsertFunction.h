@@ -195,9 +195,11 @@ PushGapInit () {
 
 void
 DirichletPhiGuardSet () {
+    using namespace amrex::literals;
+
     WarpX& warpx_instance = WarpX::GetInstance();
-    auto rho = warpx_instance.m_fields.get(FieldType::rho_fp, 0);
-    auto phi = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
+    auto rho = warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, 0);
+    auto phi = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
     const amrex::Real* dx_host = warpx_instance.Geom(0).CellSize();

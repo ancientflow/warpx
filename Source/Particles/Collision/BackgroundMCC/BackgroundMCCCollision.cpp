@@ -950,6 +950,7 @@ void BackgroundMCCCollision::doBackgroundIonization
   WarpXParticleContainer& species1, WarpXParticleContainer& species2, amrex::Real t)
 {
     ABLASTR_PROFILE("BackgroundMCCCollision::doBackgroundIonization()");
+    using namespace amrex::literals;
 
     const SmartCopyFactory copy_factory_elec(species1, species1);
     const SmartCopyFactory copy_factory_ion(species1, species2);
@@ -1010,6 +1011,8 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
     WarpXParticleContainer& species1, WarpXParticleContainer& species2,
     amrex::Real t, amrex::MultiFab& ground_rho,
     const amrex::XDim3& inv_cell_size, amrex::ParticleReal elec_weight) {
+    using namespace amrex::literals;
+
     ABLASTR_PROFILE("BackgroundMCCCollision::doBackgroundIonizationCouple()");
 
     const SmartCopyFactory copy_factory_elec(species1, species1);

@@ -393,7 +393,7 @@ AnodeVoltage () {
            index_sq_max =
                (0.031 / 2 / l_factor / gap) * (0.031 / 2 / l_factor / gap);
 
-    auto phi_field = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
+    auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
     for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid();
@@ -540,7 +540,7 @@ void
 GetPhiFromFile () {
     static bool ifinit = false;
     WarpX& warpx_instance = WarpX::GetInstance();
-    auto phi = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
+    auto phi = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
     static amrex::MultiFab phi_ext(phi->boxArray(), phi->DistributionMap(),
                                    phi->nComp(), phi->nGrow());
     if (!ifinit) {

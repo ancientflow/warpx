@@ -45,12 +45,11 @@
 #include <ostream>
 #include <vector>
 
-
 /**
  * @brief 使用WarpX的沉积函数进行密度沉积
  * @param[in] pc 粒子容器
  * @param[in] rho 密度Multifab
- 
+
 extern void AtomDepostiAPI(WarpXParticleContainer& pc, amrex::MultiFab& rho);*/
 
 /**
@@ -69,13 +68,13 @@ extern void AtomDepostiAPI(WarpXParticleContainer& pc, amrex::MultiFab& rho);*/
  */
 template <int depos_order>
 void
-ReplaceParticlesEachCell (
-    int* p_delete, const int* p_offset, int* p_indices, int numbins,
-    WarpXParticleContainer& src_pc, WarpXParIter& pti,
-    amrex::MultiFab& ground_rho, amrex::MultiFab& excitation_rho,
-    WarpXParticleContainer& dst_pc, amrex::Real inv_gap,int* p_mask,
-    bool if_replace = true) {
-
+ReplaceParticlesEachCell (int* p_delete, const int* p_offset, int* p_indices,
+                          int numbins, WarpXParticleContainer& src_pc,
+                          WarpXParIter& pti, amrex::MultiFab& ground_rho,
+                          amrex::MultiFab& excitation_rho,
+                          WarpXParticleContainer& dst_pc, amrex::Real inv_gap,
+                          int* p_mask, bool if_replace = true) {
+    using namespace amrex::literals;
     amrex::Gpu::DeviceScalar<int> all_deleted(0);
     int* p_num = all_deleted.dataPtr();
     auto GetPosition = GetParticlePosition<PIdx>(pti);
@@ -87,10 +86,9 @@ ReplaceParticlesEachCell (
     uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
     auto& soa_arr = soa.GetRealData();
     amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
-
     amrex::Box box = pti.tilebox();
     box.grow(ground_rho.nGrowVect());
-    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0._rt);
+    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0.0_rt);
     const amrex::Dim3 lo = lbound(box);
 
     const auto& rho_arr_src = ground_rho.array(pti);
@@ -155,9 +153,9 @@ ReplaceParticlesEachCell (
     });
 
     if (if_replace) {
-        amrex::Print() << "excitation: replace " << all_deleted.dataValue() << " particle"
-                       << src_pc.getSpeciesId() + 1 << " to particle"
-                       << dst_pc.getSpeciesId() + 1 << "\n";
+        amrex::Print() << "excitation: replace " << all_deleted.dataValue()
+                       << " particle" << src_pc.getSpeciesId() + 1
+                       << " to particle" << dst_pc.getSpeciesId() + 1 << "\n";
     } else {
         amrex::Print() << "delete " << all_deleted.dataValue() << " particle"
                        << src_pc.getSpeciesId() + 1 << "\n";

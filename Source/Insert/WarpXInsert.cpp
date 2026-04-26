@@ -96,7 +96,9 @@ void MyInit()
  */
 void PhiGuardSetEntrance()
 {
+#ifndef WAVE1D
     DirichletPhiGuardSet();
+#endif
 }
 
 /**

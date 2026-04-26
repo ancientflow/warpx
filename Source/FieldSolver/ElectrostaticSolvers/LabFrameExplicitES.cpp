@@ -222,18 +222,95 @@ void LabFrameExplicitES::computePhiTriDiagonal (
                 phi1d_arr(nx_full_domain,0,0) = (rho1d_arr(nx_full_domain,0,0) - (-1._rt)*phi1d_arr(nx_full_domain-1,0,0))/diag;
             }
 
-        } else if (field_boundary_hi0 == FieldBoundaryType::Periodic) {
+        }
 
-            zwork1d_arr(nx_full_domain,0,0) = 1._rt/diag;
 
-            for (int i = 1 ; i <= nx_full_domain ; i++) {
-                zwork_product *= zwork1d_arr(i,0,0);
-            }
+        for (int i_down = nx_solve_max-1 ; i_down >= nx_solve_min ; i_down--) {
+            phi1d_arr(i_down,0,0) = phi1d_arr(i_down,0,0) + zwork1d_arr(i_down+1,0,0)*phi1d_arr(i_down+1,0,0);
+        }
 
-            diag = 2._rt - zwork1d_arr(nx_full_domain,0,0) - zwork_product;
-            // Note that rho1d_arr(0,0,0) is used to ensure that the same value is used
-            // on both boundaries.
-            phi1d_arr(nx_full_domain,0,0) = (rho1d_arr(0,0,0) - (-1._rt)*phi1d_arr(nx_full_domain-1,0,0))/diag;
+    }
+
+    // Copy phi1d to phi
+    phi[lev]->ParallelCopy(phi1d_mf, 0, 0, 1);
+}
+
+/* \brief Compute the potential by solving Poisson's equation
+ *        with periodic boundaries using
+          a 1D tridiagonal solve.
+          This makes use of the Sherman–Morrison formula.
+          The code is based on the code given in the Wikipedia page,
+          https://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm#Variants.
+
+   \param[in] rho The charge density a given species
+   \param[out] phi The potential to be computed by this function
+*/
+void LabFrameExplicitES::computePhiTriDiagonal_periodic (
+    const ablastr::fields::MultiLevelScalarField& rho,
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1,
+    "The tridiagonal solver cannot be used with mesh refinement");
+
+    const int lev = 0;
+    auto & warpx = WarpX::GetInstance();
+
+    const amrex::Real* dx = warpx.Geom(lev).CellSize();
+    const amrex::Real xmin = warpx.Geom(lev).ProbLo(0);
+    const amrex::Real xmax = warpx.Geom(lev).ProbHi(0);
+    const int nx = static_cast<int>( (xmax - xmin)/dx[0] + 0.5_rt );
+
+
+    // Create a 1-D MultiFab that covers all of x.
+    // The tridiag solve will be done in this MultiFab and then copied out afterwards.
+    const amrex::IntVect lo_full_domain(AMREX_D_DECL(0,0,0));
+    const amrex::IntVect hi_full_domain(AMREX_D_DECL(nx,0,0));
+    const amrex::Box box_full_domain_node(lo_full_domain, hi_full_domain, amrex::IntVect::TheNodeVector());
+    const BoxArray ba_full_domain_node(box_full_domain_node);
+    const amrex::Vector<int> pmap = {0}; // The data will only be on processor 0
+    const amrex::DistributionMapping dm_full_domain(pmap);
+
+    // Put the data in the pinned arena since the tridiag solver will be done on the CPU, but have
+    // the data readily accessible from the GPU.
+    auto phi1d_mf = MultiFab(ba_full_domain_node, dm_full_domain, 1, 0, MFInfo().SetArena(The_Pinned_Arena()));
+
+    // Work arrays
+    auto cmod_mf = MultiFab(ba_full_domain_node, dm_full_domain, 1, 0, MFInfo().SetArena(The_Pinned_Arena()));
+    auto u_mf = MultiFab(ba_full_domain_node, dm_full_domain, 1, 0, MFInfo().SetArena(The_Pinned_Arena()));
+
+    // Copy rho into phi1d_mf to start
+    phi1d_mf.ParallelCopy(*rho[lev], 0, 0, 1);
+
+    // Multiplier on the charge density
+    const amrex::Real norm = dx[0]*dx[0]/PhysConst::epsilon_0;
+    phi1d_mf.mult(norm);
+
+    // Use the MFIter loop since when parallel, only process zero has a FAB.
+    // This skips the loop on all other processors.
+    for (MFIter mfi(phi1d_mf); mfi.isValid(); ++mfi) {
+
+        const auto& x = phi1d_mf[mfi].array();
+        const auto& cmod = cmod_mf[mfi].array();
+        const auto& u = u_mf[mfi].array();
+
+        // The loops are always performed on the CPU
+
+        {
+
+        // This code is adapted from the Wikipedia page on the Tridiagonal matrix algorithm
+        // https://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm#Variants.
+        // Licensed under CC BY-SA 4.0
+        // Modifications: The a, b, and c inputs are replaced with the fixed values.
+
+        const amrex::Real alpha = -1.0_rt;
+        const amrex::Real beta = -1.0_rt;
+
+        /* arbitrary, but chosen such that division by zero is avoided */
+        const amrex::Real gamma = -2.0_rt;
+
+        cmod(0,0,0) = -1.0_rt / (2.0_rt - gamma);
+        u(0,0,0) = gamma / (2.0_rt - gamma);
+        x(0,0,0) /= (2.0_rt - gamma);
 
         /* loop from 1 to nx - 2 inclusive */
         for (int ix = 1; ix + 1 < nx; ix++) {
@@ -248,11 +325,11 @@ void LabFrameExplicitES::computePhiTriDiagonal (
         u(nx - 1,0,0) = (alpha    - -1.0_rt * u(nx - 2,0,0)) * m;
         x(nx - 1,0,0) = (x(nx - 1,0,0) - -1.0_rt * x(nx - 2,0,0)) * m;
 
-            // With periodic, the right hand column adds an extra term for all rows
-            for (int i_down = nx_full_domain-1 ; i_down >= 0 ; i_down--) {
-                zwork_product /= zwork1d_arr(i_down+1,0,0);
-                phi1d_arr(i_down,0,0) = phi1d_arr(i_down,0,0) + zwork1d_arr(i_down+1,0,0)*phi1d_arr(i_down+1,0,0) + zwork_product*phi1d_arr(nx_full_domain,0,0);
-            }
+        /* loop from nx - 2 to 0 inclusive */
+        for (int ix = nx - 2; ix >= 0; ix--) {
+            u(ix,0,0) -= cmod(ix,0,0) * u(ix + 1,0,0);
+            x(ix,0,0) -= cmod(ix,0,0) * x(ix + 1,0,0);
+        }
 
         const amrex::Real fact = (x(0,0,0) + x(nx - 1,0,0) * alpha / gamma) / (1.0_rt + u(0,0,0) + u(nx - 1,0,0) * alpha / gamma);
 
@@ -262,6 +339,12 @@ void LabFrameExplicitES::computePhiTriDiagonal (
         }
 
         }
+
+        x(nx,0,0) = x(0,0,0);
+
+        // In a test case, this was giving an relative residual of around 1.e-10.
+        // A dozen or so SOR iterations could improve that by a factor of 10.
+        // Is it worth it?
 
     }
 
