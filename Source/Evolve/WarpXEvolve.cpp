@@ -57,6 +57,7 @@
 #include <memory>
 #include <ostream>
 #include <vector>
+#include "Insert/WarpXInsert.h"
 
 using namespace amrex;
 using ablastr::utils::SignalHandling;
@@ -162,6 +163,10 @@ WarpX::Evolve (int numsteps)
     static Real evolve_time = 0;
 
     const int step_begin = istep[0];
+
+    // My Init
+    MyInit();
+
     for (int step = istep[0]; step < numsteps_max && cur_time < stop_time; ++step)
     {
         ABLASTR_PROFILE("WarpX::Evolve::step");
@@ -184,6 +189,8 @@ WarpX::Evolve (int numsteps)
 
         }
 
+        //自定义诊断（打印到屏幕） 
+        MyDiag();
         // Start loop on time steps
         if (verbose_step) {
             amrex::Print() << "STEP " << step+1 << " starts ...\n";
@@ -192,9 +199,10 @@ WarpX::Evolve (int numsteps)
 
         CheckLoadBalance(step);
 
-        // Update the timestep for solvers that support adaptive timestepping
-        // (electrostatic and theta-implicit EM), provided const_dt is not specified.
-        if (m_dt_update_interval.contains(step+1)) {
+        // Update timestep for electrostatic solver if a constant dt is not provided
+        // This first synchronizes the position and velocity before setting the new timestep
+        if (electromagnetic_solver_id == ElectromagneticSolverAlgo::None &&
+            !m_const_dt.has_value() && m_dt_update_interval.contains(step+1)) {
             if (verbose_step) {
                 amrex::Print() << Utils::TextMsg::Info("updating timestep");
             }
@@ -227,7 +235,7 @@ WarpX::Evolve (int numsteps)
 
         // perform particle injection
         ExecutePythonCallback("particleinjection");
-
+        ParticleInjectionEntrance();
         // perform collisions and advance fields and particles by one time step
         OneStep(cur_time, dt[0], step);
 
@@ -346,6 +354,10 @@ WarpX::Evolve (int numsteps)
         // execute afterdiagnostic callbacks
         ExecutePythonCallback("afterdiagnostics");
 
+        // 自定义输出
+        MyOutput();
+        DataExamine();
+
         // inputs: unused parameters (e.g. typos) check after step 1 has finished
         if (!early_params_checked) {
             ::checkEarlyUnusedParams();
@@ -396,6 +408,11 @@ void WarpX::OneStep (
 
     // implicit solver
     if (m_implicit_solver) {
+        // perform particle collisions
+        ExecutePythonCallback("beforecollisions");
+        mypc->doCollisions(a_step, a_cur_time, a_dt);
+        ExecutePythonCallback("aftercollisions");
+
         // advance fields and particles by one time step
         m_implicit_solver->OneStep(a_cur_time, a_dt, a_step);
     }
@@ -416,7 +433,9 @@ void WarpX::OneStep (
 
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
+                BeforeCollision(a_step, false);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
+                AfterCollision(a_step, false);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and half momentum)
@@ -431,7 +450,9 @@ void WarpX::OneStep (
             else {
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
+                BeforeCollision(a_step, false);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
+                AfterCollision(a_step, false);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and full momentum)

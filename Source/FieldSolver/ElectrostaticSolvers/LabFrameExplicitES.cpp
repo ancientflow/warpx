@@ -13,6 +13,7 @@
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
+#include "Insert/WarpXInsert.h"
 
 using namespace amrex;
 
@@ -61,7 +62,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
-
+    BoundaryPhiSetEntrance();//修正电势
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
 
@@ -81,7 +82,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 
     }
-
+    // 共置网格guard cell处理
+    PhiGuardSetEntrance();
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }
@@ -103,14 +105,6 @@ void LabFrameExplicitES::computePhiTriDiagonal (
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1,
     "The tridiagonal solver cannot be used with mesh refinement");
 
-    auto field_boundary_lo0 = WarpX::field_boundary_lo[0];
-    auto field_boundary_hi0 = WarpX::field_boundary_hi[0];
-
-    if (field_boundary_lo0 == FieldBoundaryType::Periodic) {
-        computePhiTriDiagonal_periodic(rho, phi);
-        return;
-    }
-
     const int lev = 0;
     auto & warpx = WarpX::GetInstance();
 
@@ -122,11 +116,15 @@ void LabFrameExplicitES::computePhiTriDiagonal (
     int nx_solve_min = 1;
     int nx_solve_max = nx_full_domain - 1;
 
-    if (field_boundary_lo0 == FieldBoundaryType::Neumann) {
+    auto field_boundary_lo0 = WarpX::field_boundary_lo[0];
+    auto field_boundary_hi0 = WarpX::field_boundary_hi[0];
+    if (field_boundary_lo0 == FieldBoundaryType::Neumann || field_boundary_lo0 == FieldBoundaryType::Periodic) {
+        // Neumann or periodic boundary condition
         // Solve for the point on the lower boundary
         nx_solve_min = 0;
     }
-    if (field_boundary_hi0 == FieldBoundaryType::Neumann) {
+    if (field_boundary_hi0 == FieldBoundaryType::Neumann || field_boundary_hi0 == FieldBoundaryType::Periodic) {
+        // Neumann or periodic boundary condition
         // Solve for the point on the upper boundary
         nx_solve_max = nx_full_domain;
     }
@@ -182,6 +180,14 @@ void LabFrameExplicitES::computePhiTriDiagonal (
             diag = 2._rt - zwork1d_arr(1,0,0);
             phi1d_arr(1,0,0) = (rho1d_arr(1,0,0) - (-1._rt)*phi1d_arr(1-1,0,0))/diag;
 
+        } else if (field_boundary_lo0 == FieldBoundaryType::Periodic) {
+
+            phi1d_arr(0,0,0) = rho1d_arr(0,0,0)/diag;
+
+            zwork1d_arr(1,0,0) = 1._rt/diag;
+            diag = 2._rt - zwork1d_arr(1,0,0);
+            phi1d_arr(1,0,0) = (rho1d_arr(1,0,0) - (-1._rt)*phi1d_arr(1-1,0,0))/diag;
+
         }
 
         // Loop upward, calculating the Gaussian elimination multipliers and right hand sides
@@ -194,6 +200,7 @@ void LabFrameExplicitES::computePhiTriDiagonal (
         }
 
         // The last value depend on the boundary condition
+        amrex::Real zwork_product = 1.; // Needed for parallel boundaries
         if (field_boundary_hi0 == FieldBoundaryType::PEC) {
 
             int const nxm1 = nx_full_domain - 1;
