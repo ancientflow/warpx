@@ -1,0 +1,4 @@
+CEXE_sources += WarpXInsert.cpp
+CEXE_sources += BackgroundCoupledDensity.cpp
+
+VPATH_LOCATIONS   += $(WARPX_HOME)/Source/Insert
