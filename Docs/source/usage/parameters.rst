@@ -3101,35 +3101,46 @@ Details about the collision models can be found in the :ref:`theory section <mul
     :default: 0
     :optional:
 
-    For pairwisecoulomb collisions, whether to correct the energy and momentum after the collisions so that they are conserved.
+    Only for ``pairwisecoulomb`` collisions, whether to correct the energy and momentum after the collisions so that they are conserved.
+    This can be set for each collision using :pp:param:`<collision_name>.correct_energy_momentum`.
     In binary collisions, if the weights of the colliding particles are not the same, the collision does not
     exactly conserve energy and momentum. When this option is on, after the collisions, small modifications are made to the
     particle momentum so that the energy and momentum are exactly conserved in each cell.
     This uses the algorithm described in https://doi.org/10.1016/j.jcp.2025.113927.
+
+.. pp:param:: collisions.np_warning_threshold
+    :type: ``int``
+    :default: 20.
+    :optional:
+
+    Only for ``pairwisecoulomb`` collisions, with :pp:param:`collisions.correct_energy_momentum` set, this parameter controls the minimum number of particles per cell for producing warning messages when the moment-correction method fails.
 
 .. pp:param:: collisions.energy_fraction
     :type: ``float``
     :default: 0.05
     :optional:
 
-    For pairwisecoulomb collisions, when correcting the energy and momentum conservation, the energy correction is applied to pairs of particles in their center of momentum frame.
-    This parameter is the fraction of the relative energy in the COM frame that is used in the correction.
-
-.. pp:param:: collisions.energy_fraction_max
-    :type: ``float``
-    :default: 0.5
-    :optional:
-
-    For pairwisecoulomb collisions, when correcting the energy and momentum conservation, the energy correction is applied to pairs of particles in their center of momentum frame.
-    This parameter is the fraction of the total relative energy in the COM frame of all pairs that is used in the correction.
+    Only for ``pairwisecoulomb`` collisions, with :pp:param:`collisions.correct_energy_momentum` set, the energy correction is applied to pairs of particles in their center of momentum frame.
+    This can be set for each collision using :pp:param:`<collision_name>.energy_fraction`.
+    This parameter is the fraction of the relative energy in the COM frame that is used in the correction. If residual energy error remains after 10 passes over all particle pairs in a cell, the correction is deemed to have failed and particle velocities in the cell are restored to their pre-collision values.
 
 .. pp:param:: collisions.beta_weight_exponent
     :type: ``float``
     :default: 1.
     :optional:
 
-    For pairwisecoulomb collisions, when correcting the energy and momentum conservation, this parameter controls the exponent used on the particle weight when distributing the momentum correction.
+    Only for ``pairwisecoulomb`` collisions, with :pp:param:`collisions.correct_energy_momentum` set, this parameter controls the exponent used on the particle weight when distributing the momentum correction.
+    This can be set for each collision using :pp:param:`<collision_name>.beta_weight_exponent`.
     With a value greater than 1, it will distribute more of the correction to particles with higher weights.
+
+.. pp:param:: collisions.energy_correction_sort_by_weight
+    :type: ``bool``
+    :default: 0
+    :optional:
+
+    Only for ``pairwisecoulomb`` collisions, with :pp:param:`collisions.correct_energy_momentum` set, specifies whether the particles are sorted by weight when the energy correction is applied.
+    This can be set for each collision using :pp:param:`<collision_name>.energy_correction_sort_by_weight`.
+    When the particles have a range of weights, sorting improves the correction by applying more of it to the heavier weighted particles, which has a proportionately smaller effect on their momenta, and typically reduces the number of particles that the correction is applied to.
 
 .. pp:param:: collisions.split_momentum_push
     :type: ``bool``
@@ -3140,30 +3151,6 @@ Details about the collision models can be found in the :ref:`theory section <mul
     This improves energy conservation, as demonstrated in (`Vay et al., Phys. Rev. E 111, 2025 <https://doi.org/10.1103/PhysRevE.111.025306>`__).
     This is only implemented for the explicit evolve scheme and is not available for the implicit evolve schemes, because the implicit
     formulation is intrinsically energy-conserving when combined with MCC collisions, as shown in `Angus et al., J. Comput. Phys. 456, 2022 <https://doi.org/10.1016/j.jcp.2022.111030>`__.
-
-.. pp:param:: <collision_name>.correct_energy_momentum
-    :type: ``bool``
-    :optional:
-
-    For pairwisecoulomb collisions, override the parameter :pp:param:`collisions.correct_energy_momentum` for the specific collision.
-
-.. pp:param:: <collision_name>.energy_fraction
-    :type: ``float``
-    :optional:
-
-    For pairwisecoulomb collisions, override the parameter :pp:param:`collisions.energy_fraction` for the specific collision.
-
-.. pp:param:: <collision_name>.energy_fraction_max
-    :type: ``float``
-    :optional:
-
-    For pairwisecoulomb collisions, override the parameter :pp:param:`collisions.energy_fraction_max` for the specific collision.
-
-.. pp:param:: <collision_name>.beta_weight_exponent
-    :type: ``float``
-    :optional:
-
-    For pairwisecoulomb collisions, override the parameter :pp:param:`collisions.beta_weight_exponent` for the specific collision.
 
 .. _running-cpp-parameters-numerics:
 
@@ -3197,17 +3184,40 @@ Time step
 
 .. pp:param:: warpx.dt_update_interval
     :type: ``string``
-    :default: ``-1``
     :optional:
 
-    How many iterations pass between timestep adaptations when using the electrostatic solver.
-    Must be greater than ``0`` to use adaptive timestepping, or else :pp:param:`warpx.const_dt` must be specified.
+    This controls adaptive timestepping, where the time step size is updated based on the conditions of the simulation, and only applies when using the explicit electrostatic or theta-implicit solvers.
+    This specifies time step intervals when the time step size is updated.
+    The value must be greater than ``0``.
+    When specified, :pp:param:`warpx.const_dt` must not also be specified.
+    The time step size is updated using the limits specified by :pp:param:`warpx.cfl`, :pp:param:`warpx.max_omegap_dt`, and :pp:param:`warpx.max_omegac_dt`.
+
+.. pp:param:: warpx.dt_update_diagnostic_file
+    :type: ``string``
+    :optional:
+
+    When adaptive timestepping is activated, information about the new time step and the simulation conditions are output to the file specified by this parameter.
+
+.. pp:param:: warpx.max_omegap_dt
+    :type: ``float``
+    :optional:
+
+    With adaptive timestepping, the time step size is limited to be less than or equal to the value specified divided by the global plasma frequency.
+    The application of this limit is controlled by :pp:param:`warpx.dt_update_interval`, and is only applied when using the explicit electrostatic or theta-implicit solver..
+
+.. pp:param:: warpx.max_omegac_dt
+    :type: ``float``
+    :optional:
+
+    With adaptive timestepping, the time step size is limited to be less than or equal to the value specified divided by the maximum cyclotron frequency.
+    Note that the maximum B-field is calculated from using only the constant applied B field (as set by :pp:param:`particles.B_external_particle`) and the B-field grid data.
+    The application of this limit is controlled by :pp:param:`warpx.dt_update_interval`, and is only applied when using the explicit electrostatic or theta-implicit solver..
 
 .. pp:param:: warpx.max_dt
     :type: ``float``
     :optional:
 
-    The maximum timestep permitted for the electrostatic solver, when using adaptive timestepping.
+    The maximum timestep permitted when using adaptive timestepping.
     If supplied, also sets the initial timestep for these simulations, before the first timestep update.
 
 Filtering
