@@ -423,11 +423,10 @@ PhysicalParticleContainer::AddGaussianBeam (
         if (do_symmetrize) {
             npart /= symmetrization_order;
         }
-        // compute the weight from N_tot if the user specified npart_real =
-        // N_tot compute the weight from q_tot if the user specified q_tot note
-        // that npart is the number of macroparticles
-        const amrex::Real weight_3d =
-            (N_tot > 0._rt) ? (N_tot / npart) : (q_tot / (npart * charge));
+        // compute the weight from N_tot if the user specified npart_real = N_tot
+        // compute the weight from q_tot if the user specified q_tot
+        // note that npart is the number of macroparticles
+        const amrex::Real weight_3d = (N_tot > 0._rt) ? (N_tot / npart) : (q_tot / (npart*m_charge));
         for (long i = 0; i < npart; ++i) {
 #if defined(WARPX_DIM_3D) || defined(WARPX_DIM_RZ)
             const amrex::Real weight = weight_3d;
