@@ -194,7 +194,7 @@ PushGapInit () {
 #endif
 
 void
-DirichletPhiGuardSet () {
+inline DirichletPhiGuardSet () {
     using namespace amrex::literals;
 
     WarpX& warpx_instance = WarpX::GetInstance();
@@ -258,8 +258,8 @@ DirichletPhiGuardSet () {
 #ifdef MCC_DENSITY
 amrex::Vector<BackgroundCoupledDensity> global_background_density;
 void
-GlobalBackgroundDensityInit () {
-    amrex::ParmParse pp_coll("collisions");
+inline GlobalBackgroundDensityInit () {
+    amrex::ParmParse const pp_coll("collisions");
     amrex::Vector<std::string> species_names;
     pp_coll.queryarr("background_species", species_names);
 
@@ -270,8 +270,8 @@ GlobalBackgroundDensityInit () {
     }
 }
 
-void
-GlobalBackgroundDensityUpdate (int step, const bool& if_split) {
+inline void
+GlobalBackgroundDensityUpdate (const int step, const bool& if_split) {
     if (global_background_density.empty()) {
         return;
     }
@@ -295,12 +295,12 @@ GlobalBackgroundDensityUpdate (int step, const bool& if_split) {
     }
 }
 
-void
-GlobalBackgroundDensityClean (int step, const bool& if_split) {
+inline void
+GlobalBackgroundDensityClean (const int step, const bool& if_split) {
     if (global_background_density.empty()) {
         return;
     }
-    amrex::ParmParse pp_mc("my_constants");
+    amrex::ParmParse const pp_mc("my_constants");
     amrex::ParticleReal elec_weight;
     pp_mc.getWithParser("elec_weight", elec_weight);
 
@@ -326,12 +326,12 @@ GlobalBackgroundDensityClean (int step, const bool& if_split) {
 
 #define WAVE1D
 #ifdef WAVE1D
-void
+inline void
 InitDisturbance () {
     WarpX& warpx_instance = WarpX::GetInstance();
-    MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
+    MultiParticleContainer const& mypc = warpx_instance.GetPartContainer();
 
-    amrex::ParmParse pp_mc("my_constants");
+    amrex::ParmParse const pp_mc("my_constants");
     double n0, l, mode = 1, Ti, Te;
     int ncell, nppc;
     pp_mc.getWithParser("n0", n0);
