@@ -166,7 +166,7 @@ WarpX::Evolve (int numsteps)
     const int step_begin = istep[0];
 
     // My Init
-    MyInit();
+    Insert::Initialize();
 
     for (int step = istep[0]; step < numsteps_max && cur_time < stop_time; ++step)
     {
@@ -191,7 +191,7 @@ WarpX::Evolve (int numsteps)
         }
 
         //自定义诊断（打印到屏幕） 
-        MyDiag();
+        Insert::BeforeStep();
         // Start loop on time steps
         if (verbose_step) {
             amrex::Print() << "STEP " << step+1 << " starts ...\n";
@@ -237,7 +237,7 @@ WarpX::Evolve (int numsteps)
 
         // perform particle injection
         ExecutePythonCallback("particleinjection");
-        ParticleInjectionEntrance();
+        Insert::ParticleInjection();
         // perform collisions and advance fields and particles by one time step
         OneStep(cur_time, dt[0], step);
 
@@ -357,8 +357,7 @@ WarpX::Evolve (int numsteps)
         ExecutePythonCallback("afterdiagnostics");
 
         // 自定义输出
-        MyOutput();
-        DataExamine();
+        Insert::AfterDiagnostics();
 
         // inputs: unused parameters (e.g. typos) check after step 1 has finished
         if (!early_params_checked) {
@@ -435,9 +434,9 @@ void WarpX::OneStep (
 
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
-                BeforeCollision(a_step);
+                Insert::BeforeCollision(a_step);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
-                AfterCollision(a_step);
+                Insert::AfterCollision(a_step);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and half momentum)
@@ -452,9 +451,9 @@ void WarpX::OneStep (
             else {
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
-                BeforeCollision(a_step);
+                Insert::BeforeCollision(a_step);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
-                AfterCollision(a_step);
+                Insert::AfterCollision(a_step);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and full momentum)

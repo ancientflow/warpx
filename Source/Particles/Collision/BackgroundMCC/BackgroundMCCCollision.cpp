@@ -6,6 +6,8 @@
  */
 #include "BackgroundMCCCollision.H"
 
+#include "Insert/WarpXFunctionConfig.h"
+
 #include "ImpactIonization.H"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/ParticleCreation/FilterCopyTransform.H"
@@ -19,9 +21,6 @@
 #include <AMReX_ParmParse.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Vector.H>
-
-#include "Insert/WarpXFunctionConfig.h"
-//#include "Insert/AtomDeposit.h"
 #include <string>
 
 #include "Insert/BackgroundCoupledDensity.h"

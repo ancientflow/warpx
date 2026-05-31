@@ -1,12 +1,15 @@
-#include "AMReX_Vector.H"
-extern void ParticleInjectionEntrance();
-extern void PhiAdjustmentEntrance();
-extern void BoundaryPhiSetEntrance();
-extern void MyDiag();
-extern void MyInit();
-extern void MyOutput();
-extern void CollisionRecord(amrex::Vector<int>);
-extern void DataExamine();
-extern void PhiGuardSetEntrance ();
-extern void BeforeCollision (int);
-extern void AfterCollision (int);
+#pragma once
+
+namespace Insert
+{
+
+void Initialize ();
+void BeforeStep ();
+void ParticleInjection ();
+void SetBoundaryPhi ();
+void SetPhiGuards ();
+void BeforeCollision (int step);
+void AfterCollision (int step);
+void AfterDiagnostics ();
+
+} // namespace Insert

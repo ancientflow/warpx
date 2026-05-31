@@ -10,8 +10,10 @@ amrex::Vector<BackgroundCoupledDensity> global_background_density;
 /**
  * 粒子注入入口
  */
+namespace Insert {
+
 void
-ParticleInjectionEntrance () {
+ParticleInjection () {
 #ifdef HALL3D
     CathodeInjection3D();
     XeInjection();
@@ -39,7 +41,7 @@ PhiAdjustmentEntrance () {
  * 边界电势设置入口
  */
 void
-BoundaryPhiSetEntrance () {
+SetBoundaryPhi () {
 #ifdef HALL3D
     AnodeVoltage();
 #endif
@@ -49,20 +51,25 @@ BoundaryPhiSetEntrance () {
  * 自定义诊断入口
  */
 void
-MyDiag () {
+BeforeStep () {
 #ifdef NUMP
     ParticleNumber();
 #endif
 }
 
 /**
- * 自定义输出入口
+ * 自定义初始化入口
  */
 void
-MyOutput () {
+Initialize () {
+#ifdef PUSH_GAP
+    // PushGapInit();
+#endif
+#ifdef MCC_DENSITY
+    GlobalBackgroundDensityInit();
+#endif
 #ifdef HALL3D
-    SecondaryEmission();
-    AnodeCurrentCalc();
+    PlasmaInit();
 #endif
 }
 
@@ -76,29 +83,14 @@ CollisionRecord (amrex::Vector<int> vec) {
 }
 #endif
 
-/**
- * 数据检验入口
- */
 void
-DataExamine () {
+AfterDiagnostics () {
+#ifdef HALL3D
+    SecondaryEmission();
+    AnodeCurrentCalc();
+#endif
 #ifdef PHIEXAMINE
     PhiBCExamine();
-#endif
-}
-
-/**
- * 自定义初始化入口
- */
-void
-MyInit () {
-#ifdef PUSH_GAP
-    // PushGapInit();
-#endif
-#ifdef MCC_DENSITY
-    GlobalBackgroundDensityInit();
-#endif
-#ifdef HALL3D
-    PlasmaInit();
 #endif
 }
 
@@ -106,7 +98,7 @@ MyInit () {
  * 共置网格下，对于第一类边界条件的guard cell设置
  */
 void
-PhiGuardSetEntrance () {
+SetPhiGuards () {
 #ifndef WAVE1D
     DirichletPhiGuardSet();
 #endif
@@ -131,3 +123,5 @@ AfterCollision (int step) {
     GlobalBackgroundDensityClean(step);
 #endif
 }
+
+} // namespace Insert

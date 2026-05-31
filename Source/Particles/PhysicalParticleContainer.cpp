@@ -114,8 +114,6 @@
 #include <utility>
 #include <vector>
 
-#include "Insert/WarpXFunctionConfig.h"
-
 using namespace amrex;
 
 PhysicalParticleContainer::PhysicalParticleContainer (AmrCore* amr_core, int ispecies,
@@ -494,17 +492,17 @@ PhysicalParticleContainer::Evolve (ablastr::fields::MultiFabRegister& fields,
     amrex::MultiFab & By = *fields.get(FieldType::Bfield_aux, Direction{1}, lev);
     amrex::MultiFab & Bz = *fields.get(FieldType::Bfield_aux, Direction{2}, lev);
 
-#ifdef PUSH_GAP
-    WarpX &warpx = WarpX::GetInstance();
-    int step = warpx.getistep(lev);
-    if (step % ndt == 0) {
-        amrex::Print() << "push species: " << species_name << "\n";
-        dt *= ndt;
-        do_not_push = false;
-    } else {
-        do_not_push = true;
+    {
+        WarpX &warpx = WarpX::GetInstance();
+        int step = warpx.getistep(lev);
+        if (step % ndt == 0) {
+            amrex::Print() << "push species: " << species_name << "\n";
+            dt *= ndt;
+            do_not_push = false;
+        } else {
+            do_not_push = true;
+        }
     }
-#endif
 
     // Auxiliary booleans
     bool const deposit_charge = (
