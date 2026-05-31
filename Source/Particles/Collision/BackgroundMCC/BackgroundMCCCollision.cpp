@@ -23,12 +23,8 @@
 #include <AMReX_Vector.H>
 #include <string>
 
-#include "Insert/BackgroundCoupledDensity.h"
+#include "Insert/InsertBackgroundDensity.h"
 #include "Insert/WarpXFunc.h"
-
-#ifdef MCC_DENSITY
-extern amrex::Vector<BackgroundCoupledDensity> global_background_density;
-#endif
 BackgroundMCCCollision::BackgroundMCCCollision (std::string const& collision_name)
     : CollisionBase(collision_name)
 {

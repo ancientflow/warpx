@@ -1,11 +1,12 @@
 #include "WarpXInsert.h"
-#include "AMReX_Vector.H"
-#include "WarpXInsertFunction.h"
-#include "WarpXSimulationFunction.h"
 
-#ifdef MCC_DENSITY
-amrex::Vector<BackgroundCoupledDensity> global_background_density;
-#endif
+#include "InsertBackgroundDensity.h"
+#include "InsertBoundaryParticles.h"
+#include "InsertBoundaryPhi.h"
+#include "InsertInjection.h"
+#include "InsertRuntimeDiagnostics.h"
+#include "WarpXFunctionConfig.h"
+#include "WarpXSimulationConfig.h"
 
 /**
  * 粒子注入入口
@@ -29,8 +30,7 @@ ParticleInjection () {
 void
 PhiAdjustmentEntrance () {
 #ifdef BENCHMARK_2D
-    WarpX& warpx_instance = WarpX::GetInstance();
-    VoltageAdjustment(warpx_instance);
+    VoltageAdjustment();
 #endif
 #ifdef HALL3D
     // GetPhiFromFile();
@@ -88,9 +88,6 @@ AfterDiagnostics () {
 #ifdef HALL3D
     SecondaryEmission();
     AnodeCurrentCalc();
-#endif
-#ifdef PHIEXAMINE
-    PhiBCExamine();
 #endif
 }
 

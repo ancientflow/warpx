@@ -4,5 +4,10 @@ foreach(D IN LISTS WarpX_DIMS)
       PRIVATE
         WarpXInsert.cpp
         BackgroundCoupledDensity.cpp
+        InsertBackgroundDensity.cpp
+        InsertBoundaryParticles.cpp
+        InsertBoundaryPhi.cpp
+        InsertInjection.cpp
+        InsertRuntimeDiagnostics.cpp
     )
 endforeach()

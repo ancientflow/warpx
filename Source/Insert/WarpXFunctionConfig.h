@@ -7,5 +7,4 @@
 #define PUSH_GAP
 #define NUMP
 //#define COLLISION_RECORD
-// #define EXAMINE
 // #define BENCHMARK_2D
