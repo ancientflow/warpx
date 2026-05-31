@@ -256,7 +256,7 @@ inline DirichletPhiGuardSet () {
 }
 
 #ifdef MCC_DENSITY
-amrex::Vector<BackgroundCoupledDensity> global_background_density;
+extern amrex::Vector<BackgroundCoupledDensity> global_background_density;
 void
 inline GlobalBackgroundDensityInit () {
     amrex::ParmParse const pp_coll("collisions");
@@ -271,7 +271,7 @@ inline GlobalBackgroundDensityInit () {
 }
 
 inline void
-GlobalBackgroundDensityUpdate (const int step, const bool& if_split) {
+GlobalBackgroundDensityUpdate (const int step) {
     if (global_background_density.empty()) {
         return;
     }
@@ -286,9 +286,7 @@ GlobalBackgroundDensityUpdate (const int step, const bool& if_split) {
         const int ndt =
             mypc.GetParticleContainerFromName(density.m_ground_species)
                 .get_ndt();
-        const bool if_update_push =
-            ((if_split && ((step % ndt == 0) || (step % ndt == 1))) ||
-             (!if_split && (step % ndt == 1)));
+        const bool if_update_push = (step % ndt == 1);
         if (if_update_push || if_update_sort) {
             density.backgroundDensityUpdate(mypc, elec_weight);
         }
@@ -296,7 +294,7 @@ GlobalBackgroundDensityUpdate (const int step, const bool& if_split) {
 }
 
 inline void
-GlobalBackgroundDensityClean (const int step, const bool& if_split) {
+GlobalBackgroundDensityClean (const int step) {
     if (global_background_density.empty()) {
         return;
     }
@@ -315,8 +313,7 @@ GlobalBackgroundDensityClean (const int step, const bool& if_split) {
         int const ndt =
             mypc.GetParticleContainerFromName(density.m_ground_species)
                 .get_ndt();
-        const bool if_clean = ((if_split && ((step + 1) % ndt == 0)) ||
-                               (!if_split && (step % ndt == 0)));
+        const bool if_clean = (step % ndt == 0);
         if (if_clean) {
             density.backgroundSpeciesClean(mypc);
         }
@@ -324,7 +321,6 @@ GlobalBackgroundDensityClean (const int step, const bool& if_split) {
 }
 #endif
 
-#define WAVE1D
 #ifdef WAVE1D
 inline void
 InitDisturbance () {

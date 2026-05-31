@@ -3,6 +3,10 @@
 #include "WarpXInsertFunction.h"
 #include "WarpXSimulationFunction.h"
 
+#ifdef MCC_DENSITY
+amrex::Vector<BackgroundCoupledDensity> global_background_density;
+#endif
+
 /**
  * 粒子注入入口
  */
@@ -22,7 +26,8 @@ ParticleInjectionEntrance () {
  */
 void
 PhiAdjustmentEntrance () {
-#ifdef BENCHMAKR2D
+#ifdef BENCHMARK_2D
+    WarpX& warpx_instance = WarpX::GetInstance();
     VoltageAdjustment(warpx_instance);
 #endif
 #ifdef HALL3D
@@ -111,9 +116,9 @@ PhiGuardSetEntrance () {
  * 碰撞前
  */
 void
-BeforeCollision (int step, bool if_split) {
+BeforeCollision (int step) {
 #ifdef MCC_DENSITY
-    GlobalBackgroundDensityUpdate(step, if_split);
+    GlobalBackgroundDensityUpdate(step);
 #endif
 }
 
@@ -121,8 +126,8 @@ BeforeCollision (int step, bool if_split) {
  * 碰撞前
  */
 void
-AfterCollision (int step, bool if_split) {
+AfterCollision (int step) {
 #ifdef MCC_DENSITY
-    GlobalBackgroundDensityClean(step, if_split);
+    GlobalBackgroundDensityClean(step);
 #endif
 }

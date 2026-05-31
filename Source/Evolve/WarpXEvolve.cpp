@@ -435,9 +435,9 @@ void WarpX::OneStep (
 
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
-                BeforeCollision(a_step, false);
+                BeforeCollision(a_step);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
-                AfterCollision(a_step, false);
+                AfterCollision(a_step);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and half momentum)
@@ -452,9 +452,9 @@ void WarpX::OneStep (
             else {
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
-                BeforeCollision(a_step, false);
+                BeforeCollision(a_step);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
-                AfterCollision(a_step, false);
+                AfterCollision(a_step);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and full momentum)
