@@ -437,6 +437,70 @@ CathodeInjection3D () {
     }
 }
 
+// 初始注入等离子体
+void
+PlasmaInit () {
+    const double L = 0.05; // 未缩比边长
+    double Ic, dt, l_factor, elec_weight;
+
+        amrex::ParmParse pp_mc("my_constants");
+        pp_mc.get("dt", dt);
+        pp_mc.get("l_factor", l_factor);
+        pp_mc.getWithParser("elec_weight", elec_weight);
+
+    const double r1 = 0.0105 / l_factor, r2 = 0.0155 / l_factor,
+                        dr = r2 - r1, sumr = r1 + r2, multr = r1 * r2,
+                        z1 = 0.001 / l_factor, z2 = 0.004 / l_factor,
+                        dz = z2 - z1, Pi2 = 3.1415926 * 2, sigma_e = 592982,
+                        sigma_xe = 1212.41, half_l = L / 2 / l_factor;
+
+    const double volume = (r2 * r2 - r1 * r1) * 3.14159 * dz;
+    const auto num_elec = static_cast<int>(volume * 1e18 / elec_weight);
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+
+    double r, theta;
+    static amrex::Vector<amrex::Vector<int>> nattr;
+
+    amrex::Vector<amrex::ParticleReal> pz(num_elec), px(num_elec),
+        py(num_elec), vx(num_elec), vy(num_elec),
+        vz(num_elec), pw(num_elec, elec_weight);
+
+    amrex::RandomEngine uniform_engine(amrex::getRandState()),
+        normal_engine(amrex::getRandState());
+
+    for (int i = 0; i < num_elec; i++) {
+        // 柱坐标空间均匀分布
+        r = amrex::Random(uniform_engine) * dr + r1;
+        theta = amrex::Random(uniform_engine) * Pi2;
+        pz[i] = amrex::Random(uniform_engine) * dz + z1;
+
+        // 转化到直角坐标空间均匀分布
+        r = sqrt(sumr * r - multr);
+        px[i] = r * cos(theta) + half_l;
+        py[i] = r * sin(theta) + half_l;
+
+        // 速度
+        vx[i] = amrex::RandomNormal(0, sigma_e, normal_engine);
+        vy[i] = amrex::RandomNormal(0, sigma_e, normal_engine);
+        vz[i] = amrex::RandomNormal(0, sigma_e, normal_engine);
+    }
+    auto& mypc = warpx_instance.GetPartContainer();
+    auto& e_pc = mypc.GetParticleContainer(mypc.getSpeciesID("electrons"));
+    e_pc.AddNParticles(0, num_elec, px, py, pz, vx, vy, vz, 1, {pw}, 0, nattr,
+                       0);
+    for (int i = 0; i < num_elec; i++) {
+        // 速度
+        vx[i] = amrex::RandomNormal(0, sigma_xe, normal_engine);
+        vy[i] = amrex::RandomNormal(0, sigma_xe, normal_engine);
+        vz[i] = amrex::RandomNormal(0, sigma_xe, normal_engine);
+    }
+
+    auto& xe_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_ions"));
+    xe_pc.AddNParticles(0, num_elec, px, py, pz, vx, vy, vz, 1, {pw}, 0, nattr,
+                       0);
+}
+
 // 氙气注入
 void
 XeInjection () {
@@ -747,7 +811,7 @@ SecondaryEmission () {
             static_cast<amrex::ParticleReal>(std::sqrt(
                 2.0 * emission_energy_eV * PhysConst::q_e / PhysConst::m_e));
 
-        const SecondaryEmissionFilter filter{amrex::ParticleReal(0.1)};
+        const SecondaryEmissionFilter filter{amrex::ParticleReal(0.5)};
         const SecondaryEmissionTransform transform{
             normal_index, plo, phi, amrex::ParticleReal(0.1 * min_dx), vz_std};
 

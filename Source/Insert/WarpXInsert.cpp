@@ -92,6 +92,9 @@ MyInit () {
 #ifdef MCC_DENSITY
     GlobalBackgroundDensityInit();
 #endif
+#ifdef HALL3D
+    PlasmaInit();
+#endif
 }
 
 /**
