@@ -333,13 +333,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt, Mult
     const auto CopyExc = copy_factory_exc.getSmartCopy();
 #endif
 
-#ifndef MCC_DENSITY_MID
     m_max_background_density =
         m_background_density.m_background_density_fabs[0].max(0);
-#else
-    m_max_background_density =
-        m_background_density.m_background_density_fabs[0]->max(0);
-#endif
 
     //  calculate maximum collision frequency without ionization
     m_nu_max = m_sigma_max * m_max_background_density;
@@ -402,13 +397,8 @@ BackgroundMCCCollision::doCollisions (amrex::Real cur_time, amrex::Real dt, Mult
                                          1.0_rt / cell_size[1],
                                          1.0_rt / cell_size[2]};
 
-#ifndef MCC_DENSITY_MID
         amrex::MultiFab& ground_density =
             m_background_density.m_background_density_fabs[lev];
-#else
-        amrex::MultiFab& ground_density =
-            *(m_background_density.m_background_density_fabs[lev].get());
-#endif
 #endif
         for (WarpXParIter pti(species1, lev); pti.isValid(); ++pti) {
             if (cost && WarpX::load_balance_costs_update_algo ==
@@ -771,7 +761,6 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                               rpy = (y - xyzmin.y) * inv_cell_size.y,
                               rpz = (z - xyzmin.z) * inv_cell_size.z;
             amrex::ParticleReal n_a = 0;
-#ifndef MCC_DENSITY_MID
             Compute_shape_factor<depos_order> const compute_shape_factor;
             amrex::Real sx[depos_order + 1] = {0._rt},
                         sy[depos_order + 1] = {0._rt},
@@ -802,11 +791,6 @@ void BackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     }
                 }
             }
-#endif
-#else
-            const int px = static_cast<int>(rpx), py = static_cast<int>(rpy),
-                      pz = static_cast<int>(rpz);
-            n_a = ground_rho_arr(px, py, pz);
 #endif
 
             const amrex::ParticleReal T_a = T_a_func(x, y, z, t);
@@ -1134,7 +1118,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                                                         inv_cell_size.y,
                                                   rpz = (z - xyzmin.z) *
                                                         inv_cell_size.z;
-#ifndef MCC_DENSITY_MID
                         Compute_shape_factor<depos_order> const
                             compute_shape_factor;
 
@@ -1170,12 +1153,6 @@ BackgroundMCCCollision::doBackgroundIonizationCouple (
                                 }
                             }
                         }
-#endif
-#else
-                        const int pi = static_cast<int>(rpx),
-                                  pj = static_cast<int>(rpy),
-                                  pk = static_cast<int>(rpz);
-                        amrex::Gpu::Atomic::AddNoRet(&rho_arr(pi, pj, pk), w);
 #endif
                     }
                 }

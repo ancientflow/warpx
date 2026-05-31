@@ -3,7 +3,6 @@
 #include "WarpX.H"
 
 #include "Particles/MultiParticleContainer.H"
-#include "WarpXFunctionConfig.h"
 
 #include <AMReX_MultiFab.H>
 #include <AMReX_REAL.H>
@@ -24,11 +23,7 @@ class BackgroundCoupledDensity {
     */
 
     std::string m_ground_species;
-#ifndef MCC_DENSITY_MID
     amrex::Vector<amrex::MultiFab> m_background_density_fabs;
-#else
-    amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_background_density_fabs;
-#endif
     amrex::Vector<
         amrex::Vector<amrex::DenseBins<ParticleUtils::ParticleTileDataType>>>
         m_background_bins;

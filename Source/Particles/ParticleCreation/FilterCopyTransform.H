@@ -12,7 +12,6 @@
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_TypeTraits.H>
-#include <Insert/WarpXFunctionConfig.h>
 /**
  * \brief Apply a filter, copy, and transform operation to the particles
  * in src, in that order, writing the result to dst, starting at dst_index.
@@ -426,7 +425,6 @@ filterCopyTransformParticles (
             const int pi = static_cast<int>(rpx - grow_dim.x),
                       pj = static_cast<int>(rpy - grow_dim.y),
                       pk = static_cast<int>(rpz - grow_dim.z);
-#ifndef MCC_DENSITY_MID
             Compute_shape_factor<depos_order> const compute_shape_factor;
             amrex::Real sx[depos_order + 1] = {0._rt},
                         sy[depos_order + 1] = {0._rt},
@@ -457,9 +455,6 @@ filterCopyTransformParticles (
                     }
                 }
             }
-#endif
-#else
-            n_a = rho_array(pi, pj, pk);
 #endif
             p_mask[i] = filter(src_data, i, engine, n_a);
 
