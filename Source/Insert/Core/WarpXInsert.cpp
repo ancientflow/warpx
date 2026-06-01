@@ -131,6 +131,7 @@ void
 AfterDiagnostics () {
 #ifdef HALL3D
     SecondaryEmission();
+    AnodeIonNeutralization();
     AnodeCurrentCalc();
 #endif
 }
