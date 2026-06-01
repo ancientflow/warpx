@@ -82,27 +82,6 @@ public:
                                  WarpXParticleContainer& species2,
                                  amrex::Real t);
 
-    /** Perform MCC ionization interactions with local density
-     *
-     * @param[in] lev the mesh-refinement level
-     * @param[in,out] cost pointer to (load balancing) cost corresponding to box
-     * where present particles are ionized.
-     * @param[in,out] species1,species2 reference to species container used to
-     * inject new particles
-     * @param t current time
-     * @param ground_rho local background density
-     * @param inv_cell_size the reciprocal of the cell size
-     * @param elec_weight the weight of electron
-     */
-    template <int depos_order>
-    void
-    doBackgroundIonizationCouple (int lev, amrex::LayoutData<amrex::Real>* cost,
-                                  WarpXParticleContainer& species1,
-                                  WarpXParticleContainer& species2,
-                                  amrex::Real t, amrex::MultiFab& ground_rho,
-                                  const amrex::XDim3& inv_cell_size,
-                                  amrex::ParticleReal elec_weight);
-
   private:
     amrex::Vector<ScatteringProcess> m_scattering_processes;
     amrex::Vector<ScatteringProcess> m_ionization_processes;

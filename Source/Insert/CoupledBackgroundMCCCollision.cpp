@@ -6,11 +6,11 @@
  */
 #include "CoupledBackgroundMCCCollision.H"
 
+#include "Insert/FilterCopyTransformCoupled.H"
 #include "Insert/WarpXFunctionConfig.h"
 
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/Collision/BackgroundMCC/ImpactIonization.H"
-#include "Particles/ParticleCreation/FilterCopyTransform.H"
 #include "Particles/ParticleCreation/SmartCopy.H"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/ParticleUtils.H"

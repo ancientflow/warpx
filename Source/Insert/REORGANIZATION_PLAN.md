@@ -246,6 +246,8 @@ public:
 
 ### 4.3 迁移耦合散射和耦合电离主体
 
+状态：已完成。
+
 把当前官方 `BackgroundMCCCollision.cpp` 中的私有耦合主体复制/迁移到
 `CoupledBackgroundMCCCollision`：
 
@@ -262,9 +264,15 @@ public:
 
 - 私有耦合散射和耦合电离代码已位于 Insert 私有类。
 - `MCC_EXCITATION` 仍能完整关闭激发态相关逻辑。
-- `MCC_DENSITY`、`MCC_DELETE`、`COLLISION_RECORD` 等功能开关仍保持关闭/启用作用。
+- `MCC_DENSITY` 已从 Insert 私有碰撞类中移除：独立类默认就是耦合密度场路径。
+- `MCC_DELETE` 已从 Insert 私有碰撞类中移除：背景粒子扣减和删除是私有耦合电离的
+  默认行为。
+- `COLLISION_RECORD` 当前不在 Insert 私有碰撞类中使用，后续如重新启用需在私有类内
+  单独接入。
 
 ### 4.4 移动私有 FilterCopyTransform overload
+
+状态：已完成。
 
 将当前添加到官方 `FilterCopyTransform.H` 的私有 overload 移动到：
 
@@ -298,7 +306,7 @@ else if (type == "insert_background_mcc") {
 输入文件中私有耦合 MCC 使用：
 
 ```text
-<collision_name>.type = insert_background_mcc
+<collision_name>.type = coupled_background_mcc
 ```
 
 官方 `background_mcc` 保持官方语义，不再承载私有耦合模型。
