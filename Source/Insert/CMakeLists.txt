@@ -4,6 +4,7 @@ foreach(D IN LISTS WarpX_DIMS)
       PRIVATE
         WarpXInsert.cpp
         BackgroundCoupledDensity.cpp
+        CoupledBackgroundMCCCollision.cpp
         InsertBackgroundDensity.cpp
         InsertBoundaryParticles.cpp
         InsertBoundaryPhi.cpp
