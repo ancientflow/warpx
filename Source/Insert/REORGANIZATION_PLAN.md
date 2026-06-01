@@ -319,19 +319,21 @@ else if (type == "insert_background_mcc") {
 
 ### 4.6 清理官方 BackgroundMCCCollision 的历史私有改动
 
-在 Insert 私有类可用后，清理官方文件：
+状态：已完成。
 
-- 删除 `BackgroundMCCCollision.H` 中的私有成员：
+在 Insert 私有类可用后，已清理官方文件：
+
+- 已删除 `BackgroundMCCCollision.H` 中的私有成员：
   - `m_ground_rho_index`
   - `m_excitation_product`
   - `m_have_excitation`
   - `m_excitation_rho_index`
   - `m_sigma_max`
   - `m_ioni_sigma_max`
-- 删除 `BackgroundMCCCollision.cpp` 中对 `global_background_density`、
+- 已删除 `BackgroundMCCCollision.cpp` 中对 `global_background_density`、
   `BackgroundCoupledDensity`、`WarpXFunc.h` 和私有宏的直接依赖。
-- 删除官方 `BackgroundMCCCollision.cpp` 中的耦合散射、电离和激发态替换逻辑。
-- 保留官方普通 MCC 行为，尽量恢复接近上游。
+- 已删除官方 `BackgroundMCCCollision.cpp` 中的耦合散射、电离和激发态替换逻辑。
+- 已保留官方普通 MCC 行为，并将官方 `BackgroundMCCCollision` 恢复为接近上游。
 
 验收标准：
 
