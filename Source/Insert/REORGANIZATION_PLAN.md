@@ -347,15 +347,21 @@ else if (type == "insert_background_mcc") {
 
 目标：降低长期 merge/rebase 冲突。
 
-1. 还原 `AddParticles.cpp` 中与功能无关的格式化改动。
-2. 还原 include 顺序中非必要调整。
-3. 对 `BackgroundMCCCollision.cpp` 只保留与私有模型接入有关的最小 diff。
-4. 对 `LabFrameExplicitES.cpp`、`WarpXEvolve.cpp`、`PhysicalParticleContainer.cpp`
-   保持小范围 hook 调用，不做邻近代码重排。
+状态：已完成。
+
+1. 已还原 `AddParticles.cpp` 中与功能无关的格式化改动。
+2. 已还原 include 顺序中非必要调整。
+3. `BackgroundMCCCollision.cpp` 当前相对 `origin/development` 无阶段 5 额外差异；
+   私有耦合 MCC 继续集中在 `Source/Insert`。
+4. 已将 `PhysicalParticleContainer.cpp` 中的 `ndt` 实现移入
+   `Insert::ReadParticleSubcycling()` 和 `Insert::ApplyParticleSubcycling()`，官方文件
+   只保留小范围 hook 调用；`WarpXParticleContainer.H` 不再保存私有 `ndt` 状态。
+5. 已清理 `WarpXEvolve.cpp` 中临时注释、include 位置和重复 implicit collision
+   调用，只保留阶段 2 需要的 Insert hook。
 
 验收标准：
 
-- `git diff origin/development...HEAD --stat` 中官方核心文件的 diff 明显缩小。
+- `git diff origin/development --stat` 中官方核心文件的 diff 明显缩小。
 - 私有功能主要集中在 `Source/Insert`。
 
 ## 阶段 6：验证

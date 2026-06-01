@@ -24,6 +24,7 @@
 #   endif
 #endif
 #include "FieldSolver/ImplicitSolvers/ImplicitSolver.H"
+#include "Insert/WarpXInsert.h"
 #include "Parallelization/GuardCellManager.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Fluids/MultiFluidContainer.H"
@@ -58,7 +59,6 @@
 #include <ostream>
 #include <string>
 #include <vector>
-#include "Insert/WarpXInsert.h"
 
 using namespace amrex;
 using ablastr::utils::SignalHandling;
@@ -165,7 +165,6 @@ WarpX::Evolve (int numsteps)
 
     const int step_begin = istep[0];
 
-    // My Init
     Insert::Initialize();
 
     for (int step = istep[0]; step < numsteps_max && cur_time < stop_time; ++step)
@@ -190,7 +189,6 @@ WarpX::Evolve (int numsteps)
 
         }
 
-        //自定义诊断（打印到屏幕） 
         Insert::BeforeStep();
         // Start loop on time steps
         if (verbose_step) {
@@ -409,11 +407,6 @@ void WarpX::OneStep (
 
     // implicit solver
     if (m_implicit_solver) {
-        // perform particle collisions
-        ExecutePythonCallback("beforecollisions");
-        mypc->doCollisions(a_step, a_cur_time, a_dt);
-        ExecutePythonCallback("aftercollisions");
-
         // advance fields and particles by one time step
         m_implicit_solver->OneStep(a_cur_time, a_dt, a_step);
     }

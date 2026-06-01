@@ -3,6 +3,7 @@
 #include "WarpX.H"
 
 #include "Particles/MultiParticleContainer.H"
+#include "WarpXInsert.h"
 #include "WarpXFunctionConfig.h"
 
 #include <AMReX_ParmParse.H>
@@ -44,9 +45,7 @@ GlobalBackgroundDensityUpdate (const int step)
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
     const bool if_update_sort = warpx_instance.sort_intervals.contains(step);
     for (auto& density : global_background_density) {
-        const int ndt =
-            mypc.GetParticleContainerFromName(density.m_ground_species)
-                .get_ndt();
+        int const ndt = ParticleSubcyclingNdt(density.m_ground_species);
         const bool if_update_push = (step % ndt == 1);
         if (if_update_push || if_update_sort) {
             density.backgroundDensityUpdate(mypc, elec_weight);
@@ -71,9 +70,7 @@ GlobalBackgroundDensityClean (const int step)
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
     for (auto& density : global_background_density) {
-        int const ndt =
-            mypc.GetParticleContainerFromName(density.m_ground_species)
-                .get_ndt();
+        int const ndt = ParticleSubcyclingNdt(density.m_ground_species);
         const bool if_clean = (step % ndt == 0);
         if (if_clean) {
             density.backgroundSpeciesClean(mypc);

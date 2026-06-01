@@ -8,6 +8,17 @@
 #include "WarpXFunctionConfig.h"
 #include "WarpXSimulationConfig.h"
 
+#include <AMReX_ParmParse.H>
+#include <AMReX_Print.H>
+
+#include <map>
+#include <string>
+
+namespace
+{
+    std::map<std::string, int> particle_subcycling_ndt;
+}
+
 /**
  * 粒子注入入口
  */
@@ -22,6 +33,39 @@ ParticleInjection () {
 #ifdef HALL3D_INIT
     XeFastInjection();
 #endif
+}
+
+void
+ReadParticleSubcycling (std::string const& species_name, amrex::ParmParse const& pp_species)
+{
+    int ndt = 1;
+    pp_species.query("ndt", ndt);
+    particle_subcycling_ndt[species_name] = ndt;
+}
+
+int
+ParticleSubcyclingNdt (std::string const& species_name)
+{
+    auto const iter = particle_subcycling_ndt.find(species_name);
+    if (iter != particle_subcycling_ndt.end()) {
+        return iter->second;
+    }
+    return 1;
+}
+
+void
+ApplyParticleSubcycling (
+    std::string const& species_name, int step, amrex::Real& dt, bool& do_not_push)
+{
+    int const ndt = ParticleSubcyclingNdt(species_name);
+
+    if (step % ndt == 0) {
+        amrex::Print() << "push species: " << species_name << "\n";
+        dt *= ndt;
+        do_not_push = false;
+    } else {
+        do_not_push = true;
+    }
 }
 
 /**

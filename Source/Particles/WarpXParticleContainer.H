@@ -640,7 +640,6 @@ public:
     void setDoNotPush (bool flag) { do_not_push = flag; }
     void setDoNotGather (int flag) { do_not_gather = flag; }
     void setDoNotDeposit (int flag) { do_not_deposit = flag; }
-    int get_ndt() { return ndt; }
 
     bool HasiAttrib (const std::string& name)
     {
@@ -671,9 +670,6 @@ protected:
 
     bool do_not_push = false;
     int do_not_gather = 0;
-
-    // the time steps during which particles are being pushed
-    int ndt = 1;
 
     // Whether to allow particles outside of the simulation domain to be
     // initialized when they enter the domain.
