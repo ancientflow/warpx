@@ -2,9 +2,10 @@
 
 #include "WarpX.H"
 
+#include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
-#include "Insert/Config/WarpXFunctionConfig.h"
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_ParmParse.H>
@@ -16,8 +17,7 @@
 namespace Insert {
 
 void
-ParticleNumber ()
-{
+ParticleNumber () {
 #ifdef NUMP
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
@@ -33,8 +33,7 @@ ParticleNumber ()
 }
 
 void
-ShowAndWriteIonzationNum (amrex::Vector<int> num)
-{
+ShowAndWriteIonzationNum (amrex::Vector<int> num) {
 #ifdef COLLISION_RECORD
     amrex::Print() << "produce macro electron: " << num[0]
                    << "\nproduce macro xe ions: " << num[1] << "\n";
@@ -55,13 +54,11 @@ ShowAndWriteIonzationNum (amrex::Vector<int> num)
 }
 
 void
-AnodeCurrentCalc ()
-{
+AnodeCurrentCalc () {
 #ifdef HALL3D
     static int times = 0;
     static const int gap = 10;
     times++;
-
     static bool ifinit = false;
     if (times == gap) {
         std::fstream fileout;
