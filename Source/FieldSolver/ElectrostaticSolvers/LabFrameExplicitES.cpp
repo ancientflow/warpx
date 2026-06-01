@@ -13,7 +13,7 @@
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#include "Insert/WarpXInsert.h"
+#include "Insert/Core/WarpXInsert.h"
 
 using namespace amrex;
 

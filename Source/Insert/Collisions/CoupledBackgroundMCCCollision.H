@@ -7,7 +7,7 @@
 #ifndef WARPX_INSERT_COUPLEDBACKGROUNDMCCCOLLISION_H_
 #define WARPX_INSERT_COUPLEDBACKGROUNDMCCCOLLISION_H_
 
-#include "Insert/WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Particles/Collision/CollisionBase.H"
 #include "Particles/Collision/ScatteringProcess.H"
 #include "Particles/MultiParticleContainer.H"

@@ -9,7 +9,7 @@
 #include "Particles/ParticleCreation/SmartUtils.H"
 #include "Particles/Pusher/GetAndSetPosition.H"
 #include "Utils/WarpXConst.H"
-#include "WarpXSimulationConfig.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
 
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>

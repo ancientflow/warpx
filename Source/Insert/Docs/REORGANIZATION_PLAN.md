@@ -33,38 +33,49 @@
 
 ```text
 Source/Insert/
-  BackgroundCoupledDensity.cpp
-  BackgroundCoupledDensity.h
-  BackgroundMCCCoupled.H
-  BackgroundMCCCoupled.cpp
-  BackgroundMCCCoupledI.H
-  FilterCopyTransformCoupled.H
-  InsertBoundaryParticles.cpp
-  InsertBoundaryParticles.h
-  InsertConfig.H
-  InsertInjection.cpp
-  InsertInjection.h
-  InsertRuntimeDiagnostics.cpp
-  InsertRuntimeDiagnostics.h
-  InsertBackgroundDensity.cpp
-  InsertBackgroundDensity.h
-  InsertHooks.cpp
-  InsertHooks.h
-  InsertState.cpp
-  InsertState.h
-  InsertBoundaryPhi.cpp
-  InsertBoundaryPhi.h
+  Background/
+    BackgroundCoupledDensity.cpp
+    BackgroundCoupledDensity.h
+    InsertBackgroundDensity.cpp
+    InsertBackgroundDensity.h
+  Boundary/
+    InsertBoundaryParticles.cpp
+    InsertBoundaryParticles.h
+    InsertBoundaryPhi.cpp
+    InsertBoundaryPhi.h
+  Collisions/
+    CoupledBackgroundMCCCollision.H
+    CoupledBackgroundMCCCollision.cpp
+    CoupledBackgroundMCCCollisionI.H
+    FilterCopyTransformCoupled.H
+  Config/
+    WarpXFunctionConfig.h
+    WarpXSimulationConfig.h
+  Core/
+    WarpXFunc.h
+    WarpXInsert.cpp
+    WarpXInsert.h
+    WarpXInsertFunction.h
+    WarpXSimulationFunction.h
+  Diagnostics/
+    InsertRuntimeDiagnostics.cpp
+    InsertRuntimeDiagnostics.h
+  Docs/
+    REORGANIZATION_PLAN.md
+  Injection/
+    InsertInjection.cpp
+    InsertInjection.h
 ```
 
 说明：
 
-- `InsertHooks.*`：对外暴露给 WarpX 官方文件调用的薄入口。
-- `InsertState.*`：集中保存私有全局状态，例如背景密度对象。
-- `BackgroundMCCCoupled.*`：承载从 `BackgroundMCCCollision.cpp` 移出的
-  耦合 MCC 模型。
-- `FilterCopyTransformCoupled.H`：承载当前加到官方 `FilterCopyTransform.H`
-  中的私有 overload。
-- `InsertConfig.H`：集中管理私有宏和功能开关。
+- `Core/WarpXInsert.*`：对外暴露给 WarpX 官方文件调用的薄入口。
+- `Background/*`：集中保存背景密度对象、背景粒子密度沉积和全局状态。
+- `Collisions/CoupledBackgroundMCCCollision.*`：承载从
+  `BackgroundMCCCollision.cpp` 移出的耦合 MCC 模型。
+- `Collisions/FilterCopyTransformCoupled.H`：承载当前加到官方
+  `FilterCopyTransform.H` 中的私有 overload。
+- `Config/*`：集中管理私有宏和维度相关功能开关。
 
 ## 阶段 1：低风险清理
 
@@ -106,7 +117,7 @@ Source/Insert/
    - `Insert::AfterCollision(int step)`
    - `Insert::AfterDiagnostics()`
 2. 已将 `WarpXEvolve.cpp`、`LabFrameExplicitES.cpp` 等官方文件改为只 include
-   `Insert/WarpXInsert.h`。
+   `Insert/Core/WarpXInsert.h`。
 3. 已确认阶段 2 中官方演化和场求解 hook 调用点不再直接依赖私有实现头。
    `MCC_EXCITATION`、`COLLISION_RECORD` 等编译期功能开关必须继续生效，因此
    相关实现文件和头文件中的 `WarpXFunctionConfig.h` 依赖暂时保留到阶段 4
@@ -197,9 +208,9 @@ diff 应缩小到类型分发和删除历史私有改动。
 在 `Source/Insert` 中新建独立碰撞类，例如：
 
 ```text
-Source/Insert/CoupledBackgroundMCCCollision.H
-Source/Insert/CoupledBackgroundMCCCollision.cpp
-Source/Insert/CoupledBackgroundMCCCollisionI.H
+Source/Insert/Collisions/CoupledBackgroundMCCCollision.H
+Source/Insert/Collisions/CoupledBackgroundMCCCollision.cpp
+Source/Insert/Collisions/CoupledBackgroundMCCCollisionI.H
 ```
 
 类定义为：
@@ -277,7 +288,7 @@ public:
 将当前添加到官方 `FilterCopyTransform.H` 的私有 overload 移动到：
 
 ```text
-Source/Insert/FilterCopyTransformCoupled.H
+Source/Insert/Collisions/FilterCopyTransformCoupled.H
 ```
 
 Insert 私有碰撞类 include 这个私有头。官方 `FilterCopyTransform.H` 恢复为接近
@@ -294,7 +305,7 @@ Insert 私有碰撞类 include 这个私有头。官方 `FilterCopyTransform.H` 
 在官方 `CollisionHandler.cpp` 中增加最小分发：
 
 ```cpp
-#include "Insert/CoupledBackgroundMCCCollision.H"
+#include "Insert/Collisions/CoupledBackgroundMCCCollision.H"
 
 ...
 else if (type == "insert_background_mcc") {

@@ -38,7 +38,7 @@
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
-#include "WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include <algorithm>
 #include <array>
 #include <memory>

@@ -4,7 +4,7 @@
 
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
-#include "WarpXSimulationConfig.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>

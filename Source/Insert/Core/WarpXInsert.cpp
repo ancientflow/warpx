@@ -1,12 +1,12 @@
 #include "WarpXInsert.h"
 
-#include "InsertBackgroundDensity.h"
-#include "InsertBoundaryParticles.h"
-#include "InsertBoundaryPhi.h"
-#include "InsertInjection.h"
-#include "InsertRuntimeDiagnostics.h"
-#include "WarpXFunctionConfig.h"
-#include "WarpXSimulationConfig.h"
+#include "Insert/Background/InsertBackgroundDensity.h"
+#include "Insert/Boundary/InsertBoundaryParticles.h"
+#include "Insert/Boundary/InsertBoundaryPhi.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Injection/InsertInjection.h"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>

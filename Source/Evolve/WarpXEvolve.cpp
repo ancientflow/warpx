@@ -24,7 +24,7 @@
 #   endif
 #endif
 #include "FieldSolver/ImplicitSolvers/ImplicitSolver.H"
-#include "Insert/WarpXInsert.h"
+#include "Insert/Core/WarpXInsert.h"
 #include "Parallelization/GuardCellManager.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Fluids/MultiFluidContainer.H"

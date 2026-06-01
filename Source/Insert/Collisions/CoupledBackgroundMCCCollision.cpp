@@ -6,8 +6,8 @@
  */
 #include "CoupledBackgroundMCCCollision.H"
 
-#include "Insert/FilterCopyTransformCoupled.H"
-#include "Insert/WarpXFunctionConfig.h"
+#include "Insert/Collisions/FilterCopyTransformCoupled.H"
+#include "Insert/Config/WarpXFunctionConfig.h"
 
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/Collision/BackgroundMCC/ImpactIonization.H"
@@ -23,8 +23,8 @@
 #include <ablastr/profiler/ProfilerWrapper.H>
 #include <string>
 
-#include "Insert/InsertBackgroundDensity.h"
-#include "Insert/WarpXFunc.h"
+#include "Insert/Background/InsertBackgroundDensity.h"
+#include "Insert/Core/WarpXFunc.h"
 
 namespace {
 

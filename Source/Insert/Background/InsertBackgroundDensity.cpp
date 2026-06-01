@@ -3,8 +3,8 @@
 #include "WarpX.H"
 
 #include "Particles/MultiParticleContainer.H"
-#include "WarpXInsert.h"
-#include "WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Core/WarpXInsert.h"
 
 #include <AMReX_ParmParse.H>
 

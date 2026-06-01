@@ -13,7 +13,7 @@
 #include "Fields.H"
 #include "Filter/NCIGodfreyFilter.H"
 #include "Initialization/PlasmaInjector.H"
-#include "Insert/WarpXInsert.h"
+#include "Insert/Core/WarpXInsert.h"
 #include "MultiParticleContainer.H"
 #include "Parallelization/WarpXSumGuardCells.H"
 #ifdef WARPX_QED

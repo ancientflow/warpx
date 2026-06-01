@@ -4,8 +4,8 @@
 
 #include "Fields.H"
 #include "Utils/WarpXConst.H"
-#include "WarpXFunctionConfig.h"
-#include "WarpXSimulationConfig.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MultiFab.H>
