@@ -13,7 +13,7 @@
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#include "Insert/WarpXInsert.h"
+#include "Insert/Core/WarpXInsert.h"
 
 using namespace amrex;
 
@@ -62,7 +62,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
-    BoundaryPhiSetEntrance();//修正电势
+    Insert::SetBoundaryPhi();//修正电势
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
 
@@ -83,7 +83,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     }
     // 共置网格guard cell处理
-    PhiGuardSetEntrance();
+    Insert::SetPhiGuards();
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }

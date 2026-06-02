@@ -82,13 +82,11 @@ BackgroundCoupledDensity::backgroundDensityInit () {
     amrex::Print() << "Background density initialized with size: \n";
 
     for (int lev = 0; lev <= flvl; lev++) {
-#ifndef MCC_DENSITY_MID
         auto* rho =
             warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, lev);
         m_background_density_fabs[lev] =
             amrex::MultiFab(rho->boxArray(), rho->DistributionMap(),
                             rho->nComp(), rho->nGrow());
-#endif
 
         auto geo = warpx_instance.Geom(lev);
         const size_t box_num = warpx_instance.boxArray(lev).size();
@@ -126,13 +124,8 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
     amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
                       << ":Start updating background density\n";
     for (int lev = 0; lev <= flvl; lev++) {
-#ifndef MCC_DENSITY_MID
         m_background_density_fabs[lev].setVal(0.0_prt);
         AtomDepositAPI(background_species, m_background_density_fabs[lev], lev);
-#else
-        m_background_density_fabs[lev] =
-            background_species.GetNumberDensity(lev);
-#endif
         auto geo = warpx_instance.Geom(lev);
         auto& background_bin = m_background_bins[lev];
         auto& background_np = m_n_particle_in_each_cell[lev];

@@ -6,6 +6,7 @@
  */
 #include "CollisionHandler.H"
 
+#include "Insert/Collisions/CoupledBackgroundMCCCollision.H"
 #include "Particles/Collision/BackgroundMCC/BackgroundMCCCollision.H"
 #include "Particles/Collision/PulsedDecay/PulsedDecay.H"
 #include "Particles/Collision/BackgroundStopping/BackgroundStopping.H"
@@ -61,6 +62,10 @@ CollisionHandler::CollisionHandler(MultiParticleContainer const * const mypc)
         }
         else if (type == "background_mcc") {
             allcollisions[i] = std::make_unique<BackgroundMCCCollision>(collision_names[i]);
+        }
+        else if (type == "coupled_background_mcc") {
+            allcollisions[i] =
+                std::make_unique<CoupledBackgroundMCCCollision>(collision_names[i]);
         }
         else if (type == "pulsed_decay") {
             allcollisions[i] = std::make_unique<PulsedDecay>(collision_names[i], mypc);
