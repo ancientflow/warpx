@@ -13,5 +13,6 @@ namespace Insert {
 void GlobalBackgroundDensityInit ();
 void GlobalBackgroundDensityUpdate (int step);
 void GlobalBackgroundDensityClean (int step);
+void GlobalBackgroundDensityFinalize ();
 
 } // namespace Insert

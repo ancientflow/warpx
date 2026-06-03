@@ -348,10 +348,12 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
         init_flag = true;
     }
 
+#ifndef MCC_DENSITY_AVERAGE_USE
     auto& ground_pc = mypc->GetParticleContainer(mypc->getSpeciesID(
         global_background_density[m_ground_rho_index].m_ground_species));
+#endif
 
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
     auto& excitation_pc =
         mypc->GetParticleContainer(mypc->getSpeciesID(m_excitation_product));
     MultiFab& m_excitation_rho = global_rho[m_excitation_rho_index];
@@ -360,8 +362,8 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
     const auto CopyExc = copy_factory_exc.getSmartCopy();
 #endif
 
-    m_max_background_density =
-        m_background_density.m_background_density_fabs[0].max(0);
+    amrex::MultiFab& max_density = m_background_density.m_background_density_fabs[0];
+    m_max_background_density = max_density.max(0);
 
     //  calculate maximum collision frequency without ionization
     m_nu_max = m_sigma_max * m_max_background_density;
@@ -395,7 +397,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
 
     // Loop over refinement levels
     const int depos_order = WarpX::nox;
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
     amrex::Vector<amrex::Vector<amrex::ParticleReal>> pdata(7);
 #endif
     auto const flvl = species1.finestLevel();
@@ -415,9 +417,11 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
         auto binIter = m_background_density.m_background_bins[lev].begin();
         auto npIter =
             m_background_density.m_n_particle_in_each_cell[lev].begin();*/
+#ifndef MCC_DENSITY_AVERAGE_USE
         auto& background_bin = m_background_density.m_background_bins[lev];
         auto& background_np =
             m_background_density.m_n_particle_in_each_cell[lev];
+#endif
         auto cell_size = warpx_instance.CellSize(lev);
         amrex::XDim3 const inv_cell_size{1.0_rt / cell_size[0],
                                          1.0_rt / cell_size[1],
@@ -435,6 +439,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
 
             // 调用耦合函数
             /**********************准备需要用到的数组***************************/
+#ifndef MCC_DENSITY_AVERAGE_USE
             const int box_index = pti.index();
             auto& bin = background_bin[box_index];
             auto& ptile = ground_pc.ParticlesAt(lev, pti);
@@ -442,13 +447,20 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
             int* indices = bin.permutationPtr();
             int np = ptile.numParticles();
             long const numbins = bin.numBins();
+#else
+            long const numbins = 1;
+#endif
             amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
             int* p_delete = num_delete.dataPtr();
             // 记录每个cell中的原子数
+#ifndef MCC_DENSITY_AVERAGE_USE
             int* p_particle_num = background_np[box_index].dataPtr();
+#else
+            int* p_particle_num = p_delete;
+#endif
             // npIter++;
             // binIter++;
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
             amrex::Gpu::DeviceVector<int> mask(np, 0);
             int* p_mask = mask.dataPtr();
 #endif
@@ -457,7 +469,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -469,7 +481,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<2>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<2>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -481,7 +493,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<3>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<3>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -493,7 +505,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<4>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<4>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -505,7 +517,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -514,7 +526,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 }
 #endif
             }
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
             if (m_have_excitation) {
                 auto& exc_ptile = excitation_pc.ParticlesAt(lev, pti);
                 int np_exc = exc_ptile.numParticles();
@@ -532,7 +544,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
             }
         }
         // secondly perform ionization through the SmartCopyFactory if needed
-#ifdef MCC_EXCITATION
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
         ground_pc.deleteInvalidParticles();
 #endif
         if (ionization_flag) {
@@ -754,6 +766,10 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                 ParticleUtils::RandomizeVelocity(
                     vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
 #else
+#ifdef MCC_DENSITY_AVERAGE_USE
+                    ParticleUtils::RandomizeVelocity(
+                        vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
+#else
                     int pos = px * ncell * ncell + py * ncell + pz;
                     if (p_particle_num[pos] > 0) {
                         ParticleUtils::RandomizeVelocity(
@@ -763,6 +779,7 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                         amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
                         //需要CAS来解决冲突，需要处理网格索引偏差
                     }
+#endif
 #endif
             } else if (scattering_process.m_type ==
                        ScatteringProcessType::BACK) {
@@ -793,6 +810,9 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
     amrex::Real t, amrex::MultiFab& ground_rho,
     const amrex::XDim3& inv_cell_size, amrex::ParticleReal elec_weight) {
     using namespace amrex::literals;
+#ifdef MCC_DENSITY_AVERAGE_USE
+    amrex::ignore_unused(elec_weight);
+#endif
 
     ABLASTR_PROFILE(
         "CoupledBackgroundMCCCollision::doBackgroundIonizationCouple()");
@@ -813,15 +833,16 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
 
+#ifndef MCC_DENSITY_AVERAGE_USE
     BackgroundCoupledDensity& m_background_density =
         global_background_density[m_ground_rho_index];
-
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& pc = warpx_instance.GetPartContainer().GetParticleContainerFromName(
         m_background_density.m_ground_species);
 
     auto& background_bin = m_background_density.m_background_bins[lev];
     auto& background_np = m_background_density.m_n_particle_in_each_cell[lev];
+#endif
     for (WarpXParIter pti(species1, lev); pti.isValid(); ++pti) {
 
         if (cost && WarpX::load_balance_costs_update_algo ==
@@ -842,22 +863,25 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
 
         // 获取粒子网格信息
         const int box_index = pti.index();
-        auto geo = warpx_instance.Geom(lev);
+        long numbins = 1;
+#ifndef MCC_DENSITY_AVERAGE_USE
         auto& ptile = pc.ParticlesAt(lev, pti);
         auto& bin = background_bin[box_index];
         const int* offsets = bin.offsetsPtr();
         int* indices = bin.permutationPtr();
-        long numbins = bin.numBins();
+        numbins = bin.numBins();
 
         auto& soa = ptile.GetStructOfArrays();
         auto get_atom_postion = GetParticlePosition<PIdx>(ptile);
         uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
         auto& soa_arr = soa.GetRealData();
         amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
+#endif
 
         amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
         int* p_delete = num_delete.dataPtr();
 
+#ifndef MCC_DENSITY_AVERAGE_USE
         // 记录每个cell中的原子数，存储原始数据
         amrex::Gpu::DeviceVector<int> particle_num_in_cell_origin(numbins, 0);
         int *p_particle_num = background_np[box_index].dataPtr(),
@@ -866,6 +890,9 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                          background_np[box_index].begin(),
                          background_np[box_index].end(),
                          particle_num_in_cell_origin.begin());
+#else
+        int* p_particle_num = p_delete;
+#endif
         auto& fab = ground_rho[box_index];
         auto const& rho_arr = fab.array();
         /*
@@ -876,13 +903,21 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
 
         amrex::Box box = fab.box();
         const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, lev, 0._rt);
+#ifndef MCC_DENSITY_AVERAGE_USE
         const amrex::Dim3 lo = lbound(box);
+#endif
 
         const auto num_added = filterCopyTransformParticles<1, depos_order>(
             species1, species2, elec_tile, ion_tile, elec_tile, np_elec, np_ion,
             Filter, CopyElec, CopyIon, Transform, p_delete, rho_arr,
-            p_particle_num, xyzmin, box, ground_rho.nGrowVect(), inv_cell_size);
+            p_particle_num, xyzmin, box, ground_rho.nGrowVect(), inv_cell_size
+#ifdef MCC_DENSITY_AVERAGE_USE
+            ,
+            false
+#endif
+            );
 
+#ifndef MCC_DENSITY_AVERAGE_USE
         amrex::Gpu::DeviceScalar<int> all_deleted(0);
         int* p_num = all_deleted.dataPtr();
 
@@ -965,6 +1000,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                           << ": lev " << lev << " box " << box_index
                           << " ionization: delete " << all_deleted.dataValue()
                           << " particle" << pc.getSpeciesId() + 1 << "\n";
+#endif
 
         setNewParticleIDs(elec_tile, np_elec, num_added);
         setNewParticleIDs(ion_tile, np_ion, num_added);

@@ -25,5 +25,6 @@ void SetPhiGuards ();
 void BeforeCollision (int step);
 void AfterCollision (int step);
 void AfterDiagnostics ();
+void Finalize ();
 
 } // namespace Insert

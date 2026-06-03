@@ -37,6 +37,10 @@ GlobalBackgroundDensityUpdate (const int step)
     if (global_background_density.empty()) {
         return;
     }
+#ifdef MCC_DENSITY_AVERAGE_USE
+    amrex::ignore_unused(step);
+    return;
+#else
     amrex::ParmParse pp_mc("my_constants");
     amrex::ParticleReal elec_weight;
     pp_mc.getWithParser("elec_weight", elec_weight);
@@ -48,9 +52,10 @@ GlobalBackgroundDensityUpdate (const int step)
         int const ndt = ParticleSubcyclingNdt(density.m_ground_species);
         const bool if_update_push = (step % ndt == 1);
         if (if_update_push || if_update_sort) {
-            density.backgroundDensityUpdate(mypc, elec_weight);
+            density.backgroundDensityUpdate(mypc, elec_weight, step);
         }
     }
+#endif
 #else
     amrex::ignore_unused(step);
 #endif
@@ -63,10 +68,10 @@ GlobalBackgroundDensityClean (const int step)
     if (global_background_density.empty()) {
         return;
     }
-    amrex::ParmParse const pp_mc("my_constants");
-    amrex::ParticleReal elec_weight;
-    pp_mc.getWithParser("elec_weight", elec_weight);
-
+#ifdef MCC_DENSITY_AVERAGE_USE
+    amrex::ignore_unused(step);
+    return;
+#else
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
     for (auto& density : global_background_density) {
@@ -76,8 +81,19 @@ GlobalBackgroundDensityClean (const int step)
             density.backgroundSpeciesClean(mypc);
         }
     }
+#endif
 #else
     amrex::ignore_unused(step);
+#endif
+}
+
+void
+GlobalBackgroundDensityFinalize ()
+{
+#ifdef MCC_DENSITY
+    for (auto& density : global_background_density) {
+        density.backgroundDensityFinalize();
+    }
 #endif
 }
 

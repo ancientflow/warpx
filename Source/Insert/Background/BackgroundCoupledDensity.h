@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "WarpX.H"
 
 #include "Particles/MultiParticleContainer.H"
@@ -24,6 +25,19 @@ class BackgroundCoupledDensity {
 
     std::string m_ground_species;
     amrex::Vector<amrex::MultiFab> m_background_density_fabs;
+#ifdef MCC_DENSITY_AVERAGE_CALC
+    amrex::Vector<amrex::MultiFab> m_background_density_sum_fabs;
+    int m_average_sample_count = 0;
+    int m_average_steps_per_period = 1;
+    int m_average_periods = 1;
+    int m_average_window_steps = 1;
+    int m_raw_output_interval = 0;
+    std::string m_output_dir = "background_density_fab";
+    std::string m_output_fab;
+#endif
+#ifdef MCC_DENSITY_AVERAGE_USE
+    std::string m_input_fab;
+#endif
     amrex::Vector<
         amrex::Vector<amrex::DenseBins<ParticleUtils::ParticleTileDataType>>>
         m_background_bins;
@@ -39,7 +53,12 @@ class BackgroundCoupledDensity {
      * @brief update the background density data
      */
     void backgroundDensityUpdate (MultiParticleContainer& mypc,
-                                  amrex::ParticleReal elec_weight);
+                                  amrex::ParticleReal elec_weight, int step);
+
+    /**
+     * @brief finalize background density data
+     */
+    void backgroundDensityFinalize ();
 
     /**
      * @brief delete the particles with zero weight

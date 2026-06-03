@@ -32,7 +32,8 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                               const amrex::Array4<amrex::Real>& rho_array,
                               Index* p_particle_num, const amrex::XDim3 xyzmin,
                               const amrex::Box& box, const amrex::IntVect ngrow,
-                              const amrex::XDim3& inv_cell_size) noexcept {
+                              const amrex::XDim3& inv_cell_size,
+                              const bool consume_background = true) noexcept {
     using namespace amrex;
 
     auto np = src.numParticles();
@@ -95,7 +96,7 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
 #endif
             p_mask[i] = filter(src_data, i, engine, n_a);
 
-            if (p_mask[i]) {
+            if (p_mask[i] && consume_background) {
                 int pos = pi * ncell.z * ncell.y + pj * ncell.z + pk;
                 Index np_old = p_particle_num[pos];
                 while (np_old > 0) {

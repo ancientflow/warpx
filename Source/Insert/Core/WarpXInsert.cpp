@@ -166,4 +166,11 @@ AfterCollision (int step) {
 #endif
 }
 
+void
+Finalize () {
+#ifdef MCC_DENSITY
+    GlobalBackgroundDensityFinalize();
+#endif
+}
+
 } // namespace Insert
