@@ -442,17 +442,57 @@ struct SecondaryEmissionTransform {
     }
 };
 
-struct ValidParticleFilter {
+struct AnodeRingIonFilter {
+    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_plo;
+    amrex::ParticleReal m_anode_ring_x = 0.0;
+    amrex::ParticleReal m_anode_ring_y = 0.0;
+    amrex::ParticleReal m_anode_ring_rmin = 0.0;
+    amrex::ParticleReal m_anode_ring_rmax = 0.0;
+    bool m_select_ring = true;
+
     template <typename PData>
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE bool
     operator()(PData const& ptd, int const i,
                amrex::RandomEngine const& /*engine*/) const noexcept {
-        return amrex::ParticleIDWrapper{ptd.m_idcpu[i]}.is_valid();
+        if (!amrex::ParticleIDWrapper{ptd.m_idcpu[i]}.is_valid()) {
+            return false;
+        }
+#if defined(WARPX_DIM_3D)
+        using std::sqrt;
+
+        const auto& p = ptd.getSuperParticle(i);
+        amrex::ParticleReal x, y, z;
+        get_particle_position(p, x, y, z);
+
+        const amrex::ParticleReal ux_inc = ptd.m_rdata[PIdx::ux][i];
+        const amrex::ParticleReal uy_inc = ptd.m_rdata[PIdx::uy][i];
+        const amrex::ParticleReal uz_inc = ptd.m_rdata[PIdx::uz][i];
+        const amrex::ParticleReal z_boundary = m_plo[2];
+
+        amrex::ParticleReal x_emit = x;
+        amrex::ParticleReal y_emit = y;
+        if (uz_inc != amrex::ParticleReal(0.0)) {
+            const amrex::ParticleReal dt_back = (z - z_boundary) / uz_inc;
+            if (dt_back >= amrex::ParticleReal(0.0)) {
+                x_emit -= dt_back * ux_inc;
+                y_emit -= dt_back * uy_inc;
+            }
+        }
+
+        const amrex::ParticleReal dx = x_emit - m_anode_ring_x;
+        const amrex::ParticleReal dy = y_emit - m_anode_ring_y;
+        const amrex::ParticleReal r = sqrt(dx * dx + dy * dy);
+        const bool is_ring_hit =
+            r >= m_anode_ring_rmin && r <= m_anode_ring_rmax;
+        return m_select_ring ? is_ring_hit : !is_ring_hit;
+#else
+        amrex::ignore_unused(ptd, i);
+        return false;
+#endif
     }
 };
 
-struct AnodeIonNeutralizationTransform {
-    int m_normal_index = 0;
+struct AnodeIonEmissionTransform {
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_plo;
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_phi;
     amrex::ParticleReal m_eps = 0.0;
@@ -471,14 +511,7 @@ struct AnodeIonNeutralizationTransform {
         const amrex::ParticleReal ux_inc = src.m_rdata[PIdx::ux][i_src];
         const amrex::ParticleReal uy_inc = src.m_rdata[PIdx::uy][i_src];
         const amrex::ParticleReal uz_inc = src.m_rdata[PIdx::uz][i_src];
-        const amrex::ParticleReal nz =
-            src.m_runtime_rdata[m_normal_index + 2][i_src];
-
-        const amrex::ParticleReal normal_sign = (nz >= amrex::ParticleReal(0.0))
-                                                    ? amrex::ParticleReal(1.0)
-                                                    : amrex::ParticleReal(-1.0);
-        const amrex::ParticleReal z_boundary =
-            (normal_sign > amrex::ParticleReal(0.0)) ? m_plo[2] : m_phi[2];
+        const amrex::ParticleReal z_boundary = m_plo[2];
 
         amrex::ParticleReal x_emit = x;
         amrex::ParticleReal y_emit = y;
@@ -509,14 +542,13 @@ struct AnodeIonNeutralizationTransform {
 
         dst.m_rdata[PIdx::x][i_dst] = x_emit;
         dst.m_rdata[PIdx::y][i_dst] = y_emit;
-        dst.m_rdata[PIdx::z][i_dst] = z_boundary + normal_sign * m_eps;
+        dst.m_rdata[PIdx::z][i_dst] = z_boundary + m_eps;
 
         dst.m_rdata[PIdx::ux][i_dst] =
             amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
         dst.m_rdata[PIdx::uy][i_dst] =
             amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
         dst.m_rdata[PIdx::uz][i_dst] =
-            normal_sign *
             generateGaussianFluxDist(amrex::ParticleReal(0.0), m_vth, engine);
 #else
         amrex::ignore_unused(dst, src, i_src, i_dst, engine);
@@ -620,9 +652,6 @@ AnodeIonNeutralization () {
         WarpX& warpx_instance = WarpX::GetInstance();
 
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
-        auto& xe_ion_zmin = mybpc.getParticleBuffer("xe_ions", 4);
-        const int normal_index = xe_ion_zmin.GetRealCompIndex("nx") -
-                                 WarpXParticleContainer::NArrayReal;
 
         auto& mypc = warpx_instance.GetPartContainer();
         auto& atom_pc = mypc.GetParticleContainerFromName("xe_netural");
@@ -640,14 +669,44 @@ AnodeIonNeutralization () {
         const amrex::ParticleReal atom_vth = static_cast<amrex::ParticleReal>(
             std::sqrt(PhysConst::kb * atom_temperature_K / atom_pc.getMass()));
 
-        const ValidParticleFilter filter;
-        const AnodeIonNeutralizationTransform transform{
-            normal_index, plo, phi, amrex::ParticleReal(0.1 * min_dx),
-            atom_vth};
+        auto& ion_pc = mypc.GetParticleContainerFromName("xe_ions");
 
-        int num_added = FilterCopyTransformBoundaryBuffer(
-            mybpc, "xe_ions", 4, atom_pc, filter, transform);
-        amrex::Print() << "Neutralized anode Xe ions: " << num_added << "\n";
+        amrex::ParticleReal l_factor, anode_length;
+        amrex::ParmParse pp_mc("my_constants");
+        pp_mc.get("l_factor", l_factor);
+        pp_mc.get("L", anode_length);
+
+        const amrex::ParticleReal anode_ring_center =
+            anode_length / l_factor / amrex::ParticleReal(2.0);
+        const amrex::ParticleReal anode_ring_inner_radius =
+            amrex::ParticleReal(0.021) / amrex::ParticleReal(2.0) / l_factor;
+        const amrex::ParticleReal anode_ring_outer_radius =
+            amrex::ParticleReal(0.031) / amrex::ParticleReal(2.0) / l_factor;
+
+        constexpr amrex::ParticleReal ion_temperature_eV =
+            amrex::ParticleReal(3.0);
+        const amrex::ParticleReal ion_vth = static_cast<amrex::ParticleReal>(
+            std::sqrt(ion_temperature_eV * PhysConst::q_e / ion_pc.getMass()));
+
+        const AnodeRingIonFilter ring_filter{
+            plo, anode_ring_center, anode_ring_center,
+            anode_ring_inner_radius, anode_ring_outer_radius, true};
+        const AnodeRingIonFilter non_ring_filter{
+            plo, anode_ring_center, anode_ring_center,
+            anode_ring_inner_radius, anode_ring_outer_radius, false};
+        const AnodeIonEmissionTransform neutral_transform{
+            plo, phi, amrex::ParticleReal(0.1 * min_dx), atom_vth};
+        const AnodeIonEmissionTransform ion_transform{
+            plo, phi, amrex::ParticleReal(0.1 * min_dx), ion_vth};
+
+        const amrex::Long num_neutralized = FilterCopyTransformBoundaryBuffer(
+            mybpc, "xe_ions", 4, atom_pc, ring_filter, neutral_transform);
+        const amrex::Long num_ion_emitted = FilterCopyTransformBoundaryBuffer(
+            mybpc, "xe_ions", 4, ion_pc, non_ring_filter, ion_transform);
+        amrex::Print() << "Neutralized anode-ring Xe ions: " << num_neutralized
+                       << "\n";
+        amrex::Print() << "Re-emitted non-ring Xe ions: " << num_ion_emitted
+                       << "\n";
     }
 #endif
 }
