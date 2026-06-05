@@ -246,9 +246,7 @@ struct SecondaryEmissionDecision {
 };
 
 struct SecondaryEmissionDecisionFunc {
-    int m_normal_index = 0;
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_plo;
-    amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_phi;
     amrex::ParticleReal m_anode_ring_x = 0.0;
     amrex::ParticleReal m_anode_ring_y = 0.0;
     amrex::ParticleReal m_anode_ring_rmin = 0.0;
@@ -287,14 +285,7 @@ struct SecondaryEmissionDecisionFunc {
         const amrex::ParticleReal ux_inc = ptd.m_rdata[PIdx::ux][i];
         const amrex::ParticleReal uy_inc = ptd.m_rdata[PIdx::uy][i];
         const amrex::ParticleReal uz_inc = ptd.m_rdata[PIdx::uz][i];
-        const amrex::ParticleReal nz =
-            ptd.m_runtime_rdata[m_normal_index + 2][i];
-
-        const amrex::ParticleReal normal_sign = (nz >= amrex::ParticleReal(0.0))
-                                                    ? amrex::ParticleReal(1.0)
-                                                    : amrex::ParticleReal(-1.0);
-        const amrex::ParticleReal z_boundary =
-            (normal_sign > amrex::ParticleReal(0.0)) ? m_plo[2] : m_phi[2];
+        const amrex::ParticleReal z_boundary = m_plo[2];
 
         // The boundary buffer stores the scraped particle after it crossed the
         // domain boundary. Backtrace to the actual wall-hit position before
@@ -354,7 +345,6 @@ struct SecondaryEmissionDecisionFunc {
 };
 
 struct SecondaryEmissionTransform {
-    int m_normal_index = 0;
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_plo;
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_phi;
     amrex::ParticleReal m_eps = 0.0;
@@ -376,14 +366,7 @@ struct SecondaryEmissionTransform {
         const amrex::ParticleReal ux_inc = src.m_rdata[PIdx::ux][i_src];
         const amrex::ParticleReal uy_inc = src.m_rdata[PIdx::uy][i_src];
         const amrex::ParticleReal uz_inc = src.m_rdata[PIdx::uz][i_src];
-        const amrex::ParticleReal nz =
-            src.m_runtime_rdata[m_normal_index + 2][i_src];
-
-        const amrex::ParticleReal normal_sign = (nz >= amrex::ParticleReal(0.0))
-                                                    ? amrex::ParticleReal(1.0)
-                                                    : amrex::ParticleReal(-1.0);
-        const amrex::ParticleReal z_boundary =
-            (normal_sign > amrex::ParticleReal(0.0)) ? m_plo[2] : m_phi[2];
+        const amrex::ParticleReal z_boundary = m_plo[2];
 
         amrex::ParticleReal x_emit = x;
         amrex::ParticleReal y_emit = y;
@@ -414,14 +397,14 @@ struct SecondaryEmissionTransform {
 
         dst.m_rdata[PIdx::x][i_dst] = x_emit;
         dst.m_rdata[PIdx::y][i_dst] = y_emit;
-        dst.m_rdata[PIdx::z][i_dst] = z_boundary + normal_sign * m_eps;
+        dst.m_rdata[PIdx::z][i_dst] = z_boundary + m_eps;
 
         // Reflection keeps the incident tangential velocity and flips the
         // normal component back into the domain.
         if (behavior == static_cast<int>(SecondaryEmissionBehavior::Reflect)) {
             dst.m_rdata[PIdx::ux][i_dst] = ux_inc;
             dst.m_rdata[PIdx::uy][i_dst] = uy_inc;
-            dst.m_rdata[PIdx::uz][i_dst] = normal_sign * abs(uz_inc);
+            dst.m_rdata[PIdx::uz][i_dst] = abs(uz_inc);
             return;
         }
 
@@ -433,7 +416,6 @@ struct SecondaryEmissionTransform {
         dst.m_rdata[PIdx::uy][i_dst] =
             amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
         dst.m_rdata[PIdx::uz][i_dst] =
-            normal_sign *
             abs(amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine));
 #else
         amrex::ignore_unused(dst, src, i_src, i_dst, behavior, emission_index,
@@ -571,9 +553,6 @@ SecondaryEmission () {
         WarpX& warpx_instance = WarpX::GetInstance();
 
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
-        auto& elec_zmin = mybpc.getParticleBuffer("electrons", 4);
-        const int normal_index = elec_zmin.GetRealCompIndex("nx") -
-                                 WarpXParticleContainer::NArrayReal;
 
         auto& mypc = warpx_instance.GetPartContainer();
         auto& elec_pc = mypc.GetParticleContainerFromName("electrons");
@@ -614,9 +593,7 @@ SecondaryEmission () {
                 emission_temperature_eV * PhysConst::q_e / elec_pc.getMass()));
 
         const SecondaryEmissionDecisionFunc decision_func{
-            normal_index,
             plo,
-            phi,
             anode_ring_center,
             anode_ring_center,
             anode_ring_inner_radius,
@@ -629,8 +606,7 @@ SecondaryEmission () {
             emit_one_a,
             emit_one_x0_eV};
         const SecondaryEmissionTransform transform{
-            normal_index, plo, phi, amrex::ParticleReal(0.1 * min_dx),
-            emission_vth};
+            plo, phi, amrex::ParticleReal(0.1 * min_dx), emission_vth};
 
         amrex::Long num_added = VariableCountCopyTransformBoundaryBuffer(
             mybpc, "electrons", 4, elec_pc, decision_func, transform);
