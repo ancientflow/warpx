@@ -60,16 +60,19 @@ AnodeCurrentCalc () {
     static const int gap = 10;
     times++;
     static bool ifinit = false;
+    static std::string file_path = "anode_current.dat";
     if (times == gap) {
         std::fstream fileout;
         if (!ifinit) {
-            fileout.open("anode_current.dat", std::ios::out);
+            amrex::ParmParse pp_mc("my_constants");
+            pp_mc.query("anode_current_path", file_path);
+            fileout.open(file_path, std::ios::out);
             fileout << "time\t"
                        "zmin_electron\tzmin_ion\tanode_electron\t"
                        "anode_electron_cut\n";
             ifinit = true;
         } else {
-            fileout.open("anode_current.dat", std::ios::app);
+            fileout.open(file_path, std::ios::app);
         }
         times = 0;
 
