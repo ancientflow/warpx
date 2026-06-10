@@ -10,6 +10,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Collisions/CoupledBackgroundMCCCollision.cpp
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Fields/ECDIChargeFilter.cpp
+        Injection/DistributionSampler1D.cpp
         Injection/InsertInjection.cpp
     )
 endforeach()

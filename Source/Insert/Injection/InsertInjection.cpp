@@ -2,27 +2,41 @@
 
 #include "WarpX.H"
 
+#include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Injection/DistributionSampler1D.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
-#include "Insert/Config/WarpXSimulationConfig.h"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>
 #include <AMReX_Vector.H>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 
 namespace Insert {
 
+namespace {
+
+amrex::RandomEngine
+MakeRandomEngine () {
+#ifdef AMREX_USE_GPU
+    return amrex::RandomEngine(nullptr);
+#else
+    return amrex::RandomEngine{};
+#endif
+}
+
+} // namespace
+
 #ifdef BENCHMARK_2D
 namespace {
 
 int
-ElectronsCollection (WarpX& warpx_instance)
-{
+ElectronsCollection (WarpX& warpx_instance) {
     auto& boundary_buffer = warpx_instance.GetParticleBoundaryBuffer();
     int e_xlo =
             boundary_buffer.getNumParticlesInContainer("electrons", 0, false),
@@ -32,8 +46,7 @@ ElectronsCollection (WarpX& warpx_instance)
 }
 
 void
-ParticleInjection (WarpX& warpx_instance)
-{
+ParticleInjection (WarpX& warpx_instance) {
     static const int nx = 512, ny = 256, nppc = 75;
     static const double lx = 0.025, ly = 0.0128, NPlasma = 5e16, s0 = 5.23e23,
                         const_dt = 5e-12;
@@ -60,8 +73,8 @@ ParticleInjection (WarpX& warpx_instance)
     auto& xe_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_ions"));
 
     const amrex::Vector<amrex::Vector<int>> nattr;
-    amrex::RandomEngine uniform_engine(amrex::getRandState());
-    amrex::RandomEngine normal_engine(amrex::getRandState());
+    amrex::RandomEngine uniform_engine(MakeRandomEngine());
+    amrex::RandomEngine normal_engine(MakeRandomEngine());
 
     int const electron_size = this_step_pair + this_step_cathode_electron;
     std::cout << electron_size << " " << this_step_pair << " " << std::endl;
@@ -118,9 +131,62 @@ ParticleInjection (WarpX& warpx_instance)
 } // namespace
 #endif
 
+#ifdef HALL3D
+namespace {
+
+amrex::ParticleReal
+single_spoke_distribution (amrex::ParticleReal theta) {
+    constexpr amrex::ParticleReal pi = amrex::Math::pi<amrex::ParticleReal>();
+    constexpr amrex::ParticleReal center = pi;
+    constexpr amrex::ParticleReal sigma = pi / amrex::ParticleReal(4.0);
+    constexpr amrex::ParticleReal normalization =
+        amrex::ParticleReal(0.5079812642688625);
+
+    const amrex::ParticleReal normalized_distance = (theta - center) / sigma;
+    return normalization * std::exp(-amrex::ParticleReal(0.5) *
+                                    normalized_distance * normalized_distance);
+}
+
+template <int spoke_count>
+amrex::ParticleReal
+multi_spoke_distribution (amrex::ParticleReal theta) {
+    constexpr amrex::ParticleReal pi = amrex::Math::pi<amrex::ParticleReal>();
+    constexpr amrex::ParticleReal period = amrex::ParticleReal(2.0) * pi;
+    constexpr amrex::ParticleReal spoke_interval =
+        period / static_cast<amrex::ParticleReal>(spoke_count);
+
+    amrex::ParticleReal local_theta = std::fmod(theta, spoke_interval);
+    if (local_theta < amrex::ParticleReal(0.0)) {
+        local_theta += spoke_interval;
+    }
+
+    // Map each spoke interval back to [0, 2*pi] and reuse the normalized
+    // single-spoke distribution. No extra factor is needed: each compressed
+    // interval contributes 1/spoke_count of the single-spoke integral.
+    const amrex::ParticleReal equivalent_single_spoke_theta =
+        local_theta * static_cast<amrex::ParticleReal>(spoke_count);
+    return single_spoke_distribution(equivalent_single_spoke_theta);
+}
+
+DistributionSampler1D
+MakePlasmaThetaSampler () {
+    constexpr int theta_num_bins = 1024;
+    constexpr amrex::ParticleReal theta_min = 0.0;
+    constexpr amrex::ParticleReal theta_max =
+        amrex::ParticleReal(2.0) *
+        amrex::ParticleReal(3.1415926535897932384626433832795);
+
+    // Hard-coded single-spoke probability density. The spoke peaks at the
+    // interval midpoint, and both interval boundaries are exactly 4 sigma away.
+    return DistributionSampler1D(theta_min, theta_max, theta_num_bins,
+                                 single_spoke_distribution);
+}
+
+} // namespace
+#endif
+
 void
-CathodeInjection3D ()
-{
+CathodeInjection3D () {
 #ifdef HALL3D
     static const double L = 0.05;
     static double Ic, dt, l_factor, elec_weight;
@@ -164,8 +230,8 @@ CathodeInjection3D ()
             vx(one_step_injection), vy(one_step_injection),
             vz(one_step_injection), pw(one_step_injection, elec_weight);
 
-        amrex::RandomEngine uniform_engine(amrex::getRandState()),
-            normal_engine(amrex::getRandState());
+        amrex::RandomEngine uniform_engine(MakeRandomEngine()),
+            normal_engine(MakeRandomEngine());
 
         for (int i = 0; i < one_step_injection; i++) {
             r = amrex::Random(uniform_engine) * dr + r1;
@@ -190,8 +256,7 @@ CathodeInjection3D ()
 }
 
 void
-PlasmaInit ()
-{
+PlasmaInit () {
 #ifdef HALL3D
     const double L = 0.05;
     double l_factor, elec_weight;
@@ -200,13 +265,13 @@ PlasmaInit ()
     pp_mc.get("l_factor", l_factor);
     pp_mc.getWithParser("elec_weight", elec_weight);
 
-    const double r1 = 0.0105 / l_factor, r2 = 0.0155 / l_factor,
-                 dr = r2 - r1, sumr = r1 + r2, multr = r1 * r2,
-                 z1 = 0.001 / l_factor, z2 = 0.004 / l_factor,
-                 dz = z2 - z1, Pi2 = 3.1415926 * 2, sigma_e = 592982,
+    const double r1 = 0.0105 / l_factor, r2 = 0.0155 / l_factor, dr = r2 - r1,
+                 sumr = r1 + r2, multr = r1 * r2, z1 = 0.001 / l_factor,
+                 z2 = 0.004 / l_factor, dz = z2 - z1, sigma_e = 592982,
                  sigma_xe = 1212.41, half_l = L / 2 / l_factor;
 
     const double volume = (r2 * r2 - r1 * r1) * 3.14159 * dz;
+    const auto theta_sampler = MakePlasmaThetaSampler();
     const auto num_elec = static_cast<int>(volume * 1e18 / elec_weight);
 
     WarpX& warpx_instance = WarpX::GetInstance();
@@ -214,16 +279,15 @@ PlasmaInit ()
     double r, theta;
     static amrex::Vector<amrex::Vector<int>> nattr;
 
-    amrex::Vector<amrex::ParticleReal> pz(num_elec), px(num_elec),
-        py(num_elec), vx(num_elec), vy(num_elec), vz(num_elec),
-        pw(num_elec, elec_weight);
+    amrex::Vector<amrex::ParticleReal> pz(num_elec), px(num_elec), py(num_elec),
+        vx(num_elec), vy(num_elec), vz(num_elec), pw(num_elec, elec_weight);
 
-    amrex::RandomEngine uniform_engine(amrex::getRandState()),
-        normal_engine(amrex::getRandState());
+    amrex::RandomEngine uniform_engine(MakeRandomEngine()),
+        normal_engine(MakeRandomEngine());
 
     for (int i = 0; i < num_elec; i++) {
         r = amrex::Random(uniform_engine) * dr + r1;
-        theta = amrex::Random(uniform_engine) * Pi2;
+        theta = theta_sampler.sample(uniform_engine);
         pz[i] = amrex::Random(uniform_engine) * dz + z1;
 
         r = std::sqrt(sumr * r - multr);
@@ -251,8 +315,7 @@ PlasmaInit ()
 }
 
 void
-XeInjection ()
-{
+XeInjection () {
 #ifdef HALL3D
     static const double L = 0.05, NA = 6.03e23;
     static bool ifinit = false, ifhole = false;
@@ -323,8 +386,8 @@ XeInjection ()
             vz(one_times_inject_particle),
             pw(one_times_inject_particle, atom_weight);
 
-        amrex::RandomEngine uniform_engine(amrex::getRandState()),
-            normal_engine(amrex::getRandState());
+        amrex::RandomEngine uniform_engine(MakeRandomEngine()),
+            normal_engine(MakeRandomEngine());
         int hole_start = std::rand() % hole_num;
         for (unsigned i = 0; i < one_times_inject_particle; i++) {
             if (!ifhole) {
@@ -359,8 +422,7 @@ XeInjection ()
 }
 
 void
-XeFastInjection ()
-{
+XeFastInjection () {
 #ifdef HALL3D_INIT
     double atom_weight, l_factor, m_dot, Tx, Ty, Tz, vz0;
     bool ifhole = false;
@@ -381,8 +443,8 @@ XeFastInjection ()
     const double V_per_sec = 0.06 / 60. / 1e6, dt = 5.6e-10,
                  n_per_sec = V_per_sec * 101325 / 8.314 / 273.15 * NA,
                  n_per_step = n_per_sec * dt,
-                 n_marco_per_step = n_per_step / atom_weight,
-                 mxe = 2.179e-25, Pi2 = 3.1415926 * 2;
+                 n_marco_per_step = n_per_step / atom_weight, mxe = 2.179e-25,
+                 Pi2 = 3.1415926 * 2;
     amrex::ignore_unused(n_marco_per_step);
     const double n_marco_per_step_m =
         m_dot * dt / mxe / l_factor / l_factor / atom_weight;
@@ -424,8 +486,8 @@ XeFastInjection ()
             vz(one_times_inject_particle, vz0),
             pw(one_times_inject_particle, atom_weight);
 
-        amrex::RandomEngine uniform_engine(amrex::getRandState()),
-            normal_engine(amrex::getRandState());
+        amrex::RandomEngine uniform_engine(MakeRandomEngine()),
+            normal_engine(MakeRandomEngine());
 
         int hole_start = std::rand() % hole_num;
         for (int i = 0; i < one_times_inject_particle; i++) {
