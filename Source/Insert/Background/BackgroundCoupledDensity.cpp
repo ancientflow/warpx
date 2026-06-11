@@ -15,7 +15,12 @@
 #include <sstream>
 #endif
 
-#ifdef MCC_DENSITY_AVERAGE_CALC
+#ifdef MCC_DENSITY_AVERAGE_USE
+#include <cctype>
+#include <sstream>
+#endif
+
+#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
 namespace {
 
 std::string
@@ -46,6 +51,12 @@ FabOutputPath (std::string const& base_dir, std::string const& species,
     os << FabOutputParent(base_dir, species, quantity, lev) << "/" << quantity;
     return os.str();
 }
+
+} // namespace
+#endif
+
+#ifdef MCC_DENSITY_AVERAGE_CALC
+namespace {
 
 std::string
 FabStepOutputPath (std::string const& base_dir, std::string const& species,
@@ -195,11 +206,18 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
 void
 BackgroundCoupledDensity::backgroundDensityInit () {
     WarpX& warpx_instance = WarpX::GetInstance();
+
+#ifndef MCC_DENSITY_AVERAGE_USE
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
     auto& background_species =
         mypc.GetParticleContainerFromName(m_ground_species);
     // resize the vector
     auto const flvl = background_species.finestLevel();
+#else
+    // In USE mode no neutral particle container is required;
+    // the averaged density is loaded directly from file.
+    int const flvl = 0;
+#endif
     m_background_density_fabs.resize(flvl + 1);
 #ifdef MCC_DENSITY_AVERAGE_CALC
     m_background_density_sum_fabs.resize(flvl + 1);
@@ -222,6 +240,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
         m_background_density_sum_fabs[lev].setVal(0.0);
 #endif
 
+#ifndef MCC_DENSITY_AVERAGE_USE
         auto geo = warpx_instance.Geom(lev);
         const size_t box_num = warpx_instance.boxArray(lev).size();
 
@@ -240,6 +259,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
             background_np[box_index] =
                 amrex::Gpu::DeviceVector<int>(numbins, 0);
         }
+#endif
     }
 #ifdef MCC_DENSITY_AVERAGE_CALC
     amrex::ParmParse const pp_bg("background_density");
@@ -263,10 +283,10 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 #endif
 #ifdef MCC_DENSITY_AVERAGE_USE
     amrex::ParmParse const pp_bg("background_density");
-    pp_bg.get("input_fab", m_input_fab);
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        flvl == 0,
-        "MCC_DENSITY_AVERAGE_USE currently supports only one mesh level.");
+    pp_bg.query("input_fab", m_input_fab);
+    if (m_input_fab.empty()) {
+        m_input_fab = FabOutputPath("background_density_fab", m_ground_species, "average", 0);
+    }
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_background_density_fabs[0].boxArray().size() == 1,
         "MCC_DENSITY_AVERAGE_USE requires the current background density "
