@@ -14,9 +14,8 @@
 #include <map>
 #include <string>
 
-namespace
-{
-    std::map<std::string, int> particle_subcycling_ndt;
+namespace {
+std::map<std::string, int> particle_subcycling_ndt;
 }
 
 /**
@@ -28,7 +27,10 @@ void
 ParticleInjection () {
 #ifdef HALL3D
     CathodeInjection3D();
+#ifndef MCC_DENSITY_AVERAGE_USE
     XeInjection();
+#endif
+
 #endif
 #ifdef HALL3D_INIT
     XeFastInjection();
@@ -36,16 +38,15 @@ ParticleInjection () {
 }
 
 void
-ReadParticleSubcycling (std::string const& species_name, amrex::ParmParse const& pp_species)
-{
+ReadParticleSubcycling (std::string const& species_name,
+                        amrex::ParmParse const& pp_species) {
     int ndt = 1;
     pp_species.query("ndt", ndt);
     particle_subcycling_ndt[species_name] = ndt;
 }
 
 int
-ParticleSubcyclingNdt (std::string const& species_name)
-{
+ParticleSubcyclingNdt (std::string const& species_name) {
     auto const iter = particle_subcycling_ndt.find(species_name);
     if (iter != particle_subcycling_ndt.end()) {
         return iter->second;
@@ -54,9 +55,8 @@ ParticleSubcyclingNdt (std::string const& species_name)
 }
 
 void
-ApplyParticleSubcycling (
-    std::string const& species_name, int step, amrex::Real& dt, bool& do_not_push)
-{
+ApplyParticleSubcycling (std::string const& species_name, int step,
+                         amrex::Real& dt, bool& do_not_push) {
     int const ndt = ParticleSubcyclingNdt(species_name);
 
     if (step % ndt == 0) {
@@ -131,7 +131,7 @@ void
 AfterDiagnostics () {
 #ifdef HALL3D
     SecondaryEmission();
-    AnodeIonNeutralization();
+    // AnodeIonNeutralization();
     AnodeCurrentCalc();
 #endif
 }

@@ -168,6 +168,11 @@ multi_spoke_distribution (amrex::ParticleReal theta) {
     return single_spoke_distribution(equivalent_single_spoke_theta);
 }
 
+amrex::ParticleReal
+uniform_distribution (amrex::ParticleReal theta) {
+    return 0.5 / amrex::Math::pi<amrex::ParticleReal>();
+}
+
 DistributionSampler1D
 MakePlasmaThetaSampler () {
     constexpr int theta_num_bins = 1024;
@@ -179,7 +184,7 @@ MakePlasmaThetaSampler () {
     // Hard-coded single-spoke probability density. The spoke peaks at the
     // interval midpoint, and both interval boundaries are exactly 4 sigma away.
     return DistributionSampler1D(theta_min, theta_max, theta_num_bins,
-                                 single_spoke_distribution);
+                                 uniform_distribution);
 }
 
 } // namespace
