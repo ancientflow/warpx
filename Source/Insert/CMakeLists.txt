@@ -11,6 +11,10 @@ foreach(D IN LISTS WarpX_DIMS)
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Fields/ECDIChargeFilter.cpp
         Injection/DistributionSampler1D.cpp
+        Injection/HallCoordinateDistribution.cpp
+        Injection/HallCoordinateTransform.cpp
+        Injection/HallDistribution1D.cpp
+        Injection/HallRateModel.cpp
         Injection/InsertInjection.cpp
     )
 endforeach()

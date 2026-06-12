@@ -9,20 +9,24 @@
 namespace Insert {
 
 /**
- * One-dimensional sampler for a non-negative distribution.
+ * Numerical inverse-CDF sampler for a one-dimensional non-negative PDF.
+ *
+ * Use this class for distributions whose cumulative distribution function, or
+ * inverse cumulative distribution function, is not available in a convenient
+ * closed form. Simple distributions with elementary inverse CDFs should sample
+ * directly instead of building this table.
  *
  * The constructor tabulates the cumulative distribution function from the
- * supplied distribution function. The sample routine then uses inverse-CDF
- * sampling. The original integral is kept so callers can decide whether the
- * distribution should only redistribute particles or also scale the total
- * particle count.
+ * supplied PDF. The sample routine then uses inverse-CDF sampling. The original
+ * integral is kept so callers can decide whether the distribution should only
+ * redistribute particles or also scale the total particle count.
  */
-class DistributionSampler1D
+class NumericalInverseCDFSampler1D
 {
 public:
-    DistributionSampler1D (
+    NumericalInverseCDFSampler1D (
         amrex::ParticleReal xmin, amrex::ParticleReal xmax, int num_bins,
-        std::function<amrex::ParticleReal(amrex::ParticleReal)> distribution);
+        std::function<amrex::ParticleReal(amrex::ParticleReal)> pdf);
 
     [[nodiscard]] amrex::ParticleReal
     sample (amrex::RandomEngine const& engine) const noexcept;
@@ -38,5 +42,7 @@ private:
     amrex::ParticleReal m_integral = 0.0;
     amrex::Vector<amrex::ParticleReal> m_cdf;
 };
+
+using DistributionSampler1D = NumericalInverseCDFSampler1D;
 
 } // namespace Insert
