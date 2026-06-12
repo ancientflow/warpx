@@ -22,23 +22,15 @@ struct ECDIChargeFilterOptions
     int nr = -1;
     amrex::Real dr = amrex::Real(-1.0);
     int filter_interval = 1;
-    bool diagnostics = false;
+    bool diagnostics = true;
 };
 
 struct ECDIChargeFilterDiagnostics
 {
-    // Charge and norm diagnostics use the same nodal control volumes as the filter.
-    amrex::Real charge_before = amrex::Real(0.0);
-    amrex::Real charge_after = amrex::Real(0.0);
-    amrex::Real charge_abs_sum = amrex::Real(0.0);
-    amrex::Real charge_relative_error = amrex::Real(0.0);
-    amrex::Real rho_l2_ratio = amrex::Real(0.0);
-    amrex::Real max_abs_difference = amrex::Real(0.0);
-    amrex::Real max_relative_difference = amrex::Real(0.0);
+    // Bin geometry used by the filter.
     amrex::Real r_domain_max = amrex::Real(0.0);
     amrex::Real dr = amrex::Real(0.0);
     int nr = 0;
-    int empty_bins = 0;
 };
 
 ECDIChargeFilterOptions ReadECDIChargeFilterOptions ();

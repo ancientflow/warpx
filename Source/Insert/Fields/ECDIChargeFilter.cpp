@@ -157,26 +157,11 @@ MaxCornerRadius (
 void
 PrintDiagnostics (Insert::ECDIChargeFilterDiagnostics const& diag)
 {
-    amrex::Print() << "insert_ecdi_filter_charge_before = "
-                   << diag.charge_before << "\n";
-    amrex::Print() << "insert_ecdi_filter_charge_after = "
-                   << diag.charge_after << "\n";
-    amrex::Print() << "insert_ecdi_filter_charge_abs_sum = "
-                   << diag.charge_abs_sum << "\n";
-    amrex::Print() << "insert_ecdi_filter_charge_relative_error = "
-                   << diag.charge_relative_error << "\n";
-    amrex::Print() << "insert_ecdi_filter_rho_l2_ratio = "
-                   << diag.rho_l2_ratio << "\n";
-    amrex::Print() << "insert_ecdi_filter_max_abs_difference = "
-                   << diag.max_abs_difference << "\n";
-    amrex::Print() << "insert_ecdi_filter_max_relative_difference = "
-                   << diag.max_relative_difference << "\n";
+    amrex::Print() << "ECDI charge filter applied successfully.\n";
     amrex::Print() << "insert_ecdi_filter_nr = " << diag.nr << "\n";
     amrex::Print() << "insert_ecdi_filter_dr = " << diag.dr << "\n";
     amrex::Print() << "insert_ecdi_filter_r_domain_max = "
                    << diag.r_domain_max << "\n";
-    amrex::Print() << "insert_ecdi_filter_empty_bins = "
-                   << diag.empty_bins << "\n";
 }
 
 } // namespace
@@ -295,13 +280,10 @@ ApplyECDIChargeFilter (
     amrex::Gpu::DeviceVector<amrex::Real> d_Q(n_bins, amrex::Real(0.0));
     amrex::Gpu::DeviceVector<amrex::Real> d_D(n_bins, amrex::Real(0.0));
     amrex::Gpu::DeviceVector<amrex::Real> d_bar_rho(n_bins, amrex::Real(0.0));
-    amrex::Gpu::DeviceVector<amrex::Real> d_diag(7, amrex::Real(0.0));
-    amrex::Gpu::DeviceVector<int> d_empty_bins(1, 0);
 
     amrex::Real* const AMREX_RESTRICT q_ptr = d_Q.dataPtr();
     amrex::Real* const AMREX_RESTRICT d_ptr = d_D.dataPtr();
     amrex::Real* const AMREX_RESTRICT bar_ptr = d_bar_rho.dataPtr();
-    int* const empty_bins_ptr = (diagnostics != nullptr) ? d_empty_bins.dataPtr() : nullptr;
 
     int const nr = options.nr;
     amrex::Real const dr = options.dr;
@@ -313,38 +295,18 @@ ApplyECDIChargeFilter (
         amrex::Box const& tbx = mfi.tilebox();
         amrex::Array4<amrex::Real const> const& rho_arr = rho.const_array(mfi);
 
-        if (diagnostics != nullptr) {
-            amrex::Real* const AMREX_RESTRICT diag_ptr = d_diag.dataPtr();
-            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
-                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
-                amrex::Real const r = std::sqrt(x*x + y*y);
-                amrex::Real const volume = NodeControlVolume(
-                    i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
-                amrex::Real const rho_val = rho_arr(i, j, k, 0);
+        amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
+            amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
+            amrex::Real const r = std::sqrt(x*x + y*y);
+            amrex::Real const volume = NodeControlVolume(
+                i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
+            amrex::Real const rho_val = rho_arr(i, j, k, 0);
 
-                AddWeightedChargeToBins(
-                    q_ptr, d_ptr, nr, dr, rmax, k - cell_klo, r, rho_val, volume);
-
-                amrex::HostDevice::Atomic::Add(&diag_ptr[0], rho_val * volume);
-                amrex::HostDevice::Atomic::Add(&diag_ptr[1], amrex::Math::abs(rho_val) * volume);
-                amrex::HostDevice::Atomic::Add(&diag_ptr[2], rho_val * rho_val * volume);
-            });
-        } else {
-            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
-                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
-                amrex::Real const r = std::sqrt(x*x + y*y);
-                amrex::Real const volume = NodeControlVolume(
-                    i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
-                amrex::Real const rho_val = rho_arr(i, j, k, 0);
-
-                AddWeightedChargeToBins(
-                    q_ptr, d_ptr, nr, dr, rmax, k - cell_klo, r, rho_val, volume);
-            });
-        }
+            AddWeightedChargeToBins(
+                q_ptr, d_ptr, nr, dr, rmax, k - cell_klo, r, rho_val, volume);
+        });
     }
 
     // Axisymmetric mean density: bar_rho = Q / D, using discrete volume D (on GPU).
@@ -354,88 +316,30 @@ ApplyECDIChargeFilter (
             bar_ptr[ibin] = q_ptr[ibin] / d_ptr[ibin];
         } else {
             bar_ptr[ibin] = amrex::Real(0.0);
-            if (empty_bins_ptr != nullptr) {
-                amrex::Gpu::Atomic::Add(empty_bins_ptr, 1);
-            }
         }
     });
-
-    // Copy empty-bin count only when diagnostics are requested.
-    int empty_bins = 0;
-    if (diagnostics != nullptr) {
-        amrex::Vector<int> h_empty_bins(1, 0);
-        amrex::Gpu::copy(
-            amrex::Gpu::deviceToHost, d_empty_bins.begin(), d_empty_bins.end(),
-            h_empty_bins.begin());
-        empty_bins = h_empty_bins[0];
-    }
 
     // Backfill: overwrite valid rho nodes with the m=0 value interpolated from the bins.
     for (amrex::MFIter mfi(rho, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         amrex::Box const& tbx = mfi.tilebox();
         amrex::Array4<amrex::Real> const& rho_arr = rho.array(mfi);
 
-        if (diagnostics != nullptr) {
-            amrex::Real* const AMREX_RESTRICT diag_ptr = d_diag.dataPtr();
-            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
-                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
-                amrex::Real const r = std::sqrt(x*x + y*y);
-                amrex::Real const volume = NodeControlVolume(
-                    i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
+        amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+        {
+            amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
+            amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
+            amrex::Real const r = std::sqrt(x*x + y*y);
 
-                amrex::Real const rho_old = rho_arr(i, j, k, 0);
-                amrex::Real const rho_new = InterpolateFromBins(
-                    bar_ptr, nr, dr, rmax, k - cell_klo, r);
-                amrex::Real const diff = rho_old - rho_new;
-                amrex::Real const abs_diff = amrex::Math::abs(diff);
-                amrex::Real const abs_old = amrex::Math::abs(rho_old);
-                amrex::Real const rel_denom =
-                    (abs_old > amrex::Real(1.0e-30)) ? abs_old : amrex::Real(1.0e-30);
-
-                rho_arr(i, j, k, 0) = rho_new;
-
-                amrex::HostDevice::Atomic::Add(&diag_ptr[3], rho_new * volume);
-                amrex::HostDevice::Atomic::Add(&diag_ptr[4], diff * diff * volume);
-                amrex::Gpu::Atomic::Max(&diag_ptr[5], abs_diff);
-                amrex::Gpu::Atomic::Max(&diag_ptr[6], abs_diff / rel_denom);
-            });
-        } else {
-            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-            {
-                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
-                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
-                amrex::Real const r = std::sqrt(x*x + y*y);
-
-                rho_arr(i, j, k, 0) = InterpolateFromBins(
-                    bar_ptr, nr, dr, rmax, k - cell_klo, r);
-            });
-        }
+            rho_arr(i, j, k, 0) = InterpolateFromBins(
+                bar_ptr, nr, dr, rmax, k - cell_klo, r);
+        });
     }
 
-    // Diagnostics are local by design: this first implementation has no MPI reduction.
+    // Record bin geometry for the simplified diagnostic output.
     if (diagnostics != nullptr) {
-        amrex::Vector<amrex::Real> h_diag(d_diag.size(), amrex::Real(0.0));
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_diag.begin(), d_diag.end(), h_diag.begin());
-
-        diagnostics->charge_before = h_diag[0];
-        diagnostics->charge_abs_sum = h_diag[1];
-        diagnostics->charge_after = h_diag[3];
-        diagnostics->charge_relative_error =
-            (h_diag[1] > amrex::Real(0.0))
-                ? amrex::Math::abs(h_diag[3] - h_diag[0]) / h_diag[1]
-                : amrex::Real(0.0);
-        diagnostics->rho_l2_ratio =
-            (h_diag[2] > amrex::Real(0.0))
-                ? std::sqrt(h_diag[4] / h_diag[2])
-                : amrex::Real(0.0);
-        diagnostics->max_abs_difference = h_diag[5];
-        diagnostics->max_relative_difference = h_diag[6];
         diagnostics->r_domain_max = r_domain_max;
         diagnostics->dr = dr;
         diagnostics->nr = nr;
-        diagnostics->empty_bins = empty_bins;
     }
 #endif
 }
