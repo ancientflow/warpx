@@ -24,10 +24,10 @@
 namespace {
 
 std::string
-SafeName (std::string name)
-{
+SafeName (std::string name) {
     for (char& c : name) {
-        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' &&
+            c != '-') {
             c = '_';
         }
     }
@@ -36,17 +36,16 @@ SafeName (std::string name)
 
 std::string
 FabOutputParent (std::string const& base_dir, std::string const& species,
-                 std::string const& quantity, int lev)
-{
+                 std::string const& quantity, int lev) {
     std::ostringstream os;
-    os << base_dir << "/" << SafeName(species) << "/" << quantity << "/lev" << lev;
+    os << base_dir << "/" << SafeName(species) << "/" << quantity << "/lev"
+       << lev;
     return os.str();
 }
 
 std::string
 FabOutputPath (std::string const& base_dir, std::string const& species,
-               std::string const& quantity, int lev)
-{
+               std::string const& quantity, int lev) {
     std::ostringstream os;
     os << FabOutputParent(base_dir, species, quantity, lev) << "/" << quantity;
     return os.str();
@@ -60,17 +59,15 @@ namespace {
 
 std::string
 FabStepOutputPath (std::string const& base_dir, std::string const& species,
-                   std::string const& quantity, int lev, int step)
-{
+                   std::string const& quantity, int lev, int step) {
     std::ostringstream os;
-    os << FabOutputParent(base_dir, species, quantity, lev) << "/step" << std::setw(8)
-       << std::setfill('0') << step;
+    os << FabOutputParent(base_dir, species, quantity, lev) << "/step"
+       << std::setw(8) << std::setfill('0') << step;
     return os.str();
 }
 
 void
-CreateDirectoryTree (std::string const& dir)
-{
+CreateDirectoryTree (std::string const& dir) {
     if (dir.empty() || dir == ".") {
         return;
     }
@@ -110,8 +107,7 @@ CreateDirectoryTree (std::string const& dir)
 }
 
 std::string
-ParentPath (std::string const& path)
-{
+ParentPath (std::string const& path) {
     auto const slash = path.find_last_of('/');
     if (slash == std::string::npos) {
         return ".";
@@ -124,8 +120,7 @@ ParentPath (std::string const& path)
 
 void
 WriteSingleFabMultiFab (amrex::MultiFab const& mf, std::string const& path,
-                        std::string const& species, int lev)
-{
+                        std::string const& species, int lev) {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         mf.boxArray().size() == 1,
         "Background density FAB output requires exactly one FAB for species " +
@@ -157,7 +152,7 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
     // 处理边界密度
     // 尝试使用内置函数进行修改，便于进行高阶插值
     // 考虑到更多的层级，必须采用这种内置函数
-    //考虑到PEC中的修改，这会导致边界密度被大大低估，但是一般来说这不会明细影响放电
+    // 考虑到PEC中的修改，这会导致边界密度被大大低估，但是一般来说这不会明细影响放电
     auto& warpx_instance = WarpX::GetInstance();
     PEC::ApplyReflectiveBoundarytoRhofield(
         &rho, WarpX::field_boundary_lo, WarpX::field_boundary_hi,
@@ -285,7 +280,8 @@ BackgroundCoupledDensity::backgroundDensityInit () {
     amrex::ParmParse const pp_bg("background_density");
     pp_bg.query("input_fab", m_input_fab);
     if (m_input_fab.empty()) {
-        m_input_fab = FabOutputPath("background_density_fab", m_ground_species, "average", 0);
+        m_input_fab = FabOutputPath("background_density_fab", m_ground_species,
+                                    "average", 0);
     }
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_background_density_fabs[0].boxArray().size() == 1,
@@ -294,6 +290,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
     amrex::Print() << "Reading averaged background density FAB from "
                    << m_input_fab << "\n";
     amrex::VisMF::Read(m_background_density_fabs[0], m_input_fab);
+    m_background_density_fabs[0].mult(0.5);
 #endif
 }
 
@@ -319,16 +316,17 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
         AtomDepositAPI(background_species, m_background_density_fabs[lev], lev);
 #ifdef MCC_DENSITY_AVERAGE_CALC
         if (m_raw_output_interval > 0 && step % m_raw_output_interval == 0) {
-            WriteSingleFabMultiFab(
-                m_background_density_fabs[lev],
-                FabStepOutputPath(m_output_dir, m_ground_species, "raw", lev, step),
-                m_ground_species, lev);
+            WriteSingleFabMultiFab(m_background_density_fabs[lev],
+                                   FabStepOutputPath(m_output_dir,
+                                                     m_ground_species, "raw",
+                                                     lev, step),
+                                   m_ground_species, lev);
         }
         if (m_average_sample_count < m_average_window_steps) {
-            amrex::MultiFab::Add(
-                m_background_density_sum_fabs[lev], m_background_density_fabs[lev],
-                0, 0, m_background_density_fabs[lev].nComp(),
-                m_background_density_fabs[lev].nGrowVect());
+            amrex::MultiFab::Add(m_background_density_sum_fabs[lev],
+                                 m_background_density_fabs[lev], 0, 0,
+                                 m_background_density_fabs[lev].nComp(),
+                                 m_background_density_fabs[lev].nGrowVect());
         }
 #endif
         auto geo = warpx_instance.Geom(lev);
@@ -391,25 +389,27 @@ BackgroundCoupledDensity::backgroundDensityFinalize () {
     }
 
     auto const sample_count = static_cast<amrex::Real>(m_average_sample_count);
-    amrex::Vector<amrex::MultiFab> average_fabs(m_background_density_sum_fabs.size());
-    for (int lev = 0; lev < static_cast<int>(m_background_density_sum_fabs.size()); ++lev) {
+    amrex::Vector<amrex::MultiFab> average_fabs(
+        m_background_density_sum_fabs.size());
+    for (int lev = 0;
+         lev < static_cast<int>(m_background_density_sum_fabs.size()); ++lev) {
         average_fabs[lev] = amrex::MultiFab(
             m_background_density_sum_fabs[lev].boxArray(),
             m_background_density_sum_fabs[lev].DistributionMap(),
             m_background_density_sum_fabs[lev].nComp(),
             m_background_density_sum_fabs[lev].nGrowVect());
-        amrex::MultiFab::Copy(
-            average_fabs[lev], m_background_density_sum_fabs[lev], 0, 0,
-            m_background_density_sum_fabs[lev].nComp(),
-            m_background_density_sum_fabs[lev].nGrowVect());
+        amrex::MultiFab::Copy(average_fabs[lev],
+                              m_background_density_sum_fabs[lev], 0, 0,
+                              m_background_density_sum_fabs[lev].nComp(),
+                              m_background_density_sum_fabs[lev].nGrowVect());
         average_fabs[lev].mult(1.0_rt / sample_count);
 
         std::string const output_path =
             (lev == 0 && !m_output_fab.empty())
                 ? m_output_fab
                 : FabOutputPath(m_output_dir, m_ground_species, "average", lev);
-        WriteSingleFabMultiFab(
-            average_fabs[lev], output_path, m_ground_species, lev);
+        WriteSingleFabMultiFab(average_fabs[lev], output_path, m_ground_species,
+                               lev);
     }
 
     amrex::Print() << "Wrote averaged background density FAB for species "

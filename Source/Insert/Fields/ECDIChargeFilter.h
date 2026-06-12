@@ -22,7 +22,7 @@ struct ECDIChargeFilterOptions
     int nr = -1;
     amrex::Real dr = amrex::Real(-1.0);
     int filter_interval = 1;
-    bool diagnostics = true;
+    bool diagnostics = false;
 };
 
 struct ECDIChargeFilterDiagnostics
@@ -56,9 +56,10 @@ void ApplyECDIChargeFilter (
     ECDIChargeFilterDiagnostics* diagnostics = nullptr);
 
 /**
- * Runtime-parameter wrapper for future insertion into the electrostatic solve path.
+ * Runtime-parameter wrapper for the electrostatic solve path.
  *
- * This function is intentionally not called from WarpX field-solver code yet.
+ * If enabled, applies the ECDI charge filter to rho_fp[0] and refreshes guard
+ * cells and physical boundaries. Does nothing when disabled.
  */
 void FilterRhoForECDIControl (
     ablastr::fields::MultiLevelScalarField const& rho_fp,

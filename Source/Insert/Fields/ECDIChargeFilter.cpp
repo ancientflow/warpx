@@ -296,10 +296,12 @@ ApplyECDIChargeFilter (
     amrex::Gpu::DeviceVector<amrex::Real> d_D(n_bins, amrex::Real(0.0));
     amrex::Gpu::DeviceVector<amrex::Real> d_bar_rho(n_bins, amrex::Real(0.0));
     amrex::Gpu::DeviceVector<amrex::Real> d_diag(7, amrex::Real(0.0));
+    amrex::Gpu::DeviceVector<int> d_empty_bins(1, 0);
 
     amrex::Real* const AMREX_RESTRICT q_ptr = d_Q.dataPtr();
     amrex::Real* const AMREX_RESTRICT d_ptr = d_D.dataPtr();
-    amrex::Real* const AMREX_RESTRICT diag_ptr = d_diag.dataPtr();
+    amrex::Real* const AMREX_RESTRICT bar_ptr = d_bar_rho.dataPtr();
+    int* const empty_bins_ptr = (diagnostics != nullptr) ? d_empty_bins.dataPtr() : nullptr;
 
     int const nr = options.nr;
     amrex::Real const dr = options.dr;
@@ -311,81 +313,112 @@ ApplyECDIChargeFilter (
         amrex::Box const& tbx = mfi.tilebox();
         amrex::Array4<amrex::Real const> const& rho_arr = rho.const_array(mfi);
 
-        amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
-            amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
-            amrex::Real const r = std::sqrt(x*x + y*y);
-            amrex::Real const volume = NodeControlVolume(
-                i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
-            amrex::Real const rho_val = rho_arr(i, j, k, 0);
+        if (diagnostics != nullptr) {
+            amrex::Real* const AMREX_RESTRICT diag_ptr = d_diag.dataPtr();
+            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
+                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
+                amrex::Real const r = std::sqrt(x*x + y*y);
+                amrex::Real const volume = NodeControlVolume(
+                    i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
+                amrex::Real const rho_val = rho_arr(i, j, k, 0);
 
-            AddWeightedChargeToBins(
-                q_ptr, d_ptr, nr, dr, rmax, k - cell_klo, r, rho_val, volume);
+                AddWeightedChargeToBins(
+                    q_ptr, d_ptr, nr, dr, rmax, k - cell_klo, r, rho_val, volume);
 
-            amrex::HostDevice::Atomic::Add(&diag_ptr[0], rho_val * volume);
-            amrex::HostDevice::Atomic::Add(&diag_ptr[1], amrex::Math::abs(rho_val) * volume);
-            amrex::HostDevice::Atomic::Add(&diag_ptr[2], rho_val * rho_val * volume);
-        });
-    }
-
-    amrex::Vector<amrex::Real> h_Q(n_bins, amrex::Real(0.0));
-    amrex::Vector<amrex::Real> h_D(n_bins, amrex::Real(0.0));
-    amrex::Vector<amrex::Real> h_bar_rho(n_bins, amrex::Real(0.0));
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_Q.begin(), d_Q.end(), h_Q.begin());
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_D.begin(), d_D.end(), h_D.begin());
-
-    // Axisymmetric mean density: bar_rho = Q / D, using discrete volume D.
-    int empty_bins = 0;
-    for (long ibin = 0; ibin < n_bins; ++ibin) {
-        if (h_D[ibin] > amrex::Real(0.0)) {
-            h_bar_rho[ibin] = h_Q[ibin] / h_D[ibin];
+                amrex::HostDevice::Atomic::Add(&diag_ptr[0], rho_val * volume);
+                amrex::HostDevice::Atomic::Add(&diag_ptr[1], amrex::Math::abs(rho_val) * volume);
+                amrex::HostDevice::Atomic::Add(&diag_ptr[2], rho_val * rho_val * volume);
+            });
         } else {
-            h_bar_rho[ibin] = amrex::Real(0.0);
-            ++empty_bins;
+            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
+                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
+                amrex::Real const r = std::sqrt(x*x + y*y);
+                amrex::Real const volume = NodeControlVolume(
+                    i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
+                amrex::Real const rho_val = rho_arr(i, j, k, 0);
+
+                AddWeightedChargeToBins(
+                    q_ptr, d_ptr, nr, dr, rmax, k - cell_klo, r, rho_val, volume);
+            });
         }
     }
 
-    amrex::Gpu::copy(
-        amrex::Gpu::hostToDevice, h_bar_rho.begin(), h_bar_rho.end(), d_bar_rho.begin());
+    // Axisymmetric mean density: bar_rho = Q / D, using discrete volume D (on GPU).
+    amrex::ParallelFor(n_bins, [=] AMREX_GPU_DEVICE (long ibin)
+    {
+        if (d_ptr[ibin] > amrex::Real(0.0)) {
+            bar_ptr[ibin] = q_ptr[ibin] / d_ptr[ibin];
+        } else {
+            bar_ptr[ibin] = amrex::Real(0.0);
+            if (empty_bins_ptr != nullptr) {
+                amrex::Gpu::Atomic::Add(empty_bins_ptr, 1);
+            }
+        }
+    });
+
+    // Copy empty-bin count only when diagnostics are requested.
+    int empty_bins = 0;
+    if (diagnostics != nullptr) {
+        amrex::Vector<int> h_empty_bins(1, 0);
+        amrex::Gpu::copy(
+            amrex::Gpu::deviceToHost, d_empty_bins.begin(), d_empty_bins.end(),
+            h_empty_bins.begin());
+        empty_bins = h_empty_bins[0];
+    }
 
     // Backfill: overwrite valid rho nodes with the m=0 value interpolated from the bins.
-    amrex::Real const* const AMREX_RESTRICT bar_ptr = d_bar_rho.dataPtr();
     for (amrex::MFIter mfi(rho, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         amrex::Box const& tbx = mfi.tilebox();
         amrex::Array4<amrex::Real> const& rho_arr = rho.array(mfi);
 
-        amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
-        {
-            amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
-            amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
-            amrex::Real const r = std::sqrt(x*x + y*y);
-            amrex::Real const volume = NodeControlVolume(
-                i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
+        if (diagnostics != nullptr) {
+            amrex::Real* const AMREX_RESTRICT diag_ptr = d_diag.dataPtr();
+            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
+                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
+                amrex::Real const r = std::sqrt(x*x + y*y);
+                amrex::Real const volume = NodeControlVolume(
+                    i, j, k, ilo, ihi, jlo, jhi, klo, khi, dV);
 
-            amrex::Real const rho_old = rho_arr(i, j, k, 0);
-            amrex::Real const rho_new = InterpolateFromBins(
-                bar_ptr, nr, dr, rmax, k - cell_klo, r);
-            amrex::Real const diff = rho_old - rho_new;
-            amrex::Real const abs_diff = amrex::Math::abs(diff);
-            amrex::Real const abs_old = amrex::Math::abs(rho_old);
-            amrex::Real const rel_denom =
-                (abs_old > amrex::Real(1.0e-30)) ? abs_old : amrex::Real(1.0e-30);
+                amrex::Real const rho_old = rho_arr(i, j, k, 0);
+                amrex::Real const rho_new = InterpolateFromBins(
+                    bar_ptr, nr, dr, rmax, k - cell_klo, r);
+                amrex::Real const diff = rho_old - rho_new;
+                amrex::Real const abs_diff = amrex::Math::abs(diff);
+                amrex::Real const abs_old = amrex::Math::abs(rho_old);
+                amrex::Real const rel_denom =
+                    (abs_old > amrex::Real(1.0e-30)) ? abs_old : amrex::Real(1.0e-30);
 
-            rho_arr(i, j, k, 0) = rho_new;
+                rho_arr(i, j, k, 0) = rho_new;
 
-            amrex::HostDevice::Atomic::Add(&diag_ptr[3], rho_new * volume);
-            amrex::HostDevice::Atomic::Add(&diag_ptr[4], diff * diff * volume);
-            amrex::Gpu::Atomic::Max(&diag_ptr[5], abs_diff);
-            amrex::Gpu::Atomic::Max(&diag_ptr[6], abs_diff / rel_denom);
-        });
+                amrex::HostDevice::Atomic::Add(&diag_ptr[3], rho_new * volume);
+                amrex::HostDevice::Atomic::Add(&diag_ptr[4], diff * diff * volume);
+                amrex::Gpu::Atomic::Max(&diag_ptr[5], abs_diff);
+                amrex::Gpu::Atomic::Max(&diag_ptr[6], abs_diff / rel_denom);
+            });
+        } else {
+            amrex::ParallelFor(tbx, [=] AMREX_GPU_DEVICE (int i, int j, int k)
+            {
+                amrex::Real const x = xlo + static_cast<amrex::Real>(i - cell_ilo) * dx - center_x;
+                amrex::Real const y = ylo + static_cast<amrex::Real>(j - cell_jlo) * dy - center_y;
+                amrex::Real const r = std::sqrt(x*x + y*y);
+
+                rho_arr(i, j, k, 0) = InterpolateFromBins(
+                    bar_ptr, nr, dr, rmax, k - cell_klo, r);
+            });
+        }
     }
-
-    amrex::Vector<amrex::Real> h_diag(d_diag.size(), amrex::Real(0.0));
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_diag.begin(), d_diag.end(), h_diag.begin());
 
     // Diagnostics are local by design: this first implementation has no MPI reduction.
     if (diagnostics != nullptr) {
+        amrex::Vector<amrex::Real> h_diag(d_diag.size(), amrex::Real(0.0));
+        amrex::Gpu::copy(amrex::Gpu::deviceToHost, d_diag.begin(), d_diag.end(), h_diag.begin());
+
         diagnostics->charge_before = h_diag[0];
         diagnostics->charge_abs_sum = h_diag[1];
         diagnostics->charge_after = h_diag[3];
@@ -435,10 +468,13 @@ FilterRhoForECDIControl (
         return;
     }
 
-    // Wrapper only applies the filter; caller remains responsible for guard/boundary refresh.
     ECDIChargeFilterDiagnostics diagnostics;
     ECDIChargeFilterDiagnostics* diagnostics_ptr = options.diagnostics ? &diagnostics : nullptr;
     ApplyECDIChargeFilter(*rho_fp[0], warpx.Geom(0), options, diagnostics_ptr);
+
+    // Refresh guard cells and physical boundaries after modifying valid-domain rho.
+    rho_fp[0]->FillBoundary(warpx.Geom(0).periodicity());
+    warpx.ApplyRhofieldBoundary(0, rho_fp[0], PatchType::fine);
 
     if (options.diagnostics) {
         PrintDiagnostics(diagnostics);

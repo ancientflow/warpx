@@ -14,6 +14,7 @@
 #include "Python/callbacks.H"
 #include "WarpX.H"
 #include "Insert/Core/WarpXInsert.h"
+#include "Insert/Fields/ECDIChargeFilter.h"
 
 using namespace amrex;
 
@@ -56,6 +57,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         warpx.ApplyRhofieldBoundary(lev, rho_fp[lev], PatchType::fine);
     }
 #endif
+
+    Insert::FilterRhoForECDIControl(rho_fp, max_level);
+
     // beta is zero in lab frame
     // Todo: use simpler finite difference form with beta=0
     const std::array<Real, 3> beta = {0._rt};
