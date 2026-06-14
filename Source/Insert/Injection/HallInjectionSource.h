@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Insert/Injection/HallCoordinateDistribution.h"
+#include "Insert/Injection/HallPositionSampler.h"
 #include "Insert/Injection/HallRateModel.h"
 
 #include <AMReX_REAL.H>
@@ -34,7 +35,7 @@ public:
     HallInjectionSource (
         std::string source_name,
         std::unique_ptr<HallRateModel> rate_model,
-        std::unique_ptr<HallCoordinateDistribution> position_space,
+        std::unique_ptr<HallPositionSampler> position_space,
         std::vector<HallSpeciesVelocityConfig> species,
         amrex::ParticleReal x_offset = amrex::ParticleReal(0.0),
         amrex::ParticleReal y_offset = amrex::ParticleReal(0.0));
@@ -60,7 +61,7 @@ private:
 
     std::string m_source_name;
     std::unique_ptr<HallRateModel> m_rate_model;
-    std::unique_ptr<HallCoordinateDistribution> m_position_space;
+    std::unique_ptr<HallPositionSampler> m_position_space;
     std::vector<HallSpeciesVelocityConfig> m_species;
     HallFractionalParticleAccumulator m_accumulator;
     amrex::ParticleReal m_x_offset = amrex::ParticleReal(0.0);

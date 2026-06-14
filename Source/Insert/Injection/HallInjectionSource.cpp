@@ -46,7 +46,7 @@ RandomHoleStart (int hole_count, amrex::RandomEngine const& engine)
 HallInjectionSource::HallInjectionSource (
     std::string source_name,
     std::unique_ptr<HallRateModel> rate_model,
-    std::unique_ptr<HallCoordinateDistribution> position_space,
+    std::unique_ptr<HallPositionSampler> position_space,
     std::vector<HallSpeciesVelocityConfig> species,
     amrex::ParticleReal x_offset,
     amrex::ParticleReal y_offset)

@@ -2,6 +2,7 @@
 
 #include "Insert/Injection/HallCoordinateTransform.h"
 #include "Insert/Injection/HallDistribution1D.h"
+#include "Insert/Injection/HallPositionSampler.h"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_RandomEngine.H>
@@ -10,7 +11,7 @@
 
 namespace Insert {
 
-class HallCoordinateDistribution
+class HallCoordinateDistribution : public HallPositionSampler
 {
 public:
     HallCoordinateDistribution (
@@ -25,7 +26,7 @@ public:
     sampleCoordinates (amrex::RandomEngine const& engine) const;
 
     [[nodiscard]] EmissionSample
-    samplePosition (amrex::RandomEngine const& engine) const;
+    samplePosition (amrex::RandomEngine const& engine) const override;
 
     [[nodiscard]] amrex::XDim3
     sampleVelocity (

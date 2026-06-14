@@ -6,6 +6,11 @@
 #include "Insert/Injection/HallCoordinateDistribution.h"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
+#include "Utils/WarpXConst.H"
+
+#ifdef IONIZATION_SOURCE_INJECT
+#include "Insert/Injection/IonizationSourceSampler.h"
+#endif
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Math.H>
@@ -23,6 +28,36 @@ namespace {
 constexpr amrex::ParticleReal L = 0.05;
 constexpr amrex::ParticleReal XeMass = 2.179e-25;
 constexpr amrex::ParticleReal Boltzmann = 1.38064852e-23;
+
+#ifdef IONIZATION_SOURCE_INJECT
+constexpr amrex::ParticleReal BirthElectronTemperatureEV = 1.0;
+
+class IonizationSourceRateModel final : public HallRateModel
+{
+public:
+    IonizationSourceRateModel (
+        amrex::Real total_rate, amrex::ParticleReal macro_weight)
+        : m_total_rate(total_rate), m_macro_weight(macro_weight)
+    {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            m_total_rate >= 0.0,
+            "IonizationSourceRateModel requires non-negative A_tot.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            m_macro_weight > amrex::ParticleReal(0.0),
+            "IonizationSourceRateModel requires positive macro_weight.");
+    }
+
+    [[nodiscard]] amrex::Real
+    expectedMacroParticles (amrex::Real dt) const override
+    {
+        return m_total_rate * dt / static_cast<amrex::Real>(m_macro_weight);
+    }
+
+private:
+    amrex::Real m_total_rate;
+    amrex::ParticleReal m_macro_weight;
+};
+#endif
 
 amrex::ParticleReal
 TwoPi ()
@@ -394,6 +429,45 @@ MakeDefaultXeNeutralSource (amrex::Real batch_multiplier)
     return source;
 }
 
+#ifdef IONIZATION_SOURCE_INJECT
+HallInjectionSource
+MakeIonizationSource ()
+{
+    amrex::ParmParse pp_mc("my_constants");
+    amrex::ParticleReal elec_weight = 0.0;
+    pp_mc.getWithParser("elec_weight", elec_weight);
+
+    auto position_sampler = std::make_unique<IonizationSourceSampler>();
+    const auto source_weight = position_sampler->electronWeight();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::abs(static_cast<amrex::Real>(source_weight - elec_weight)) <=
+            1.0e-12 *
+                std::max(1.0, std::abs(static_cast<amrex::Real>(elec_weight))),
+        "IONIZATION_SOURCE_INJECT requires my_constants.elec_weight to match "
+        "ionization_source_fab/metadata.txt.");
+
+    const auto electron_sigma = static_cast<amrex::ParticleReal>(
+        std::sqrt(PhysConst::q_e * BirthElectronTemperatureEV / PhysConst::m_e));
+
+    std::vector<HallSpeciesVelocityConfig> species;
+    species.push_back(MakeSpecies(
+        "electrons", elec_weight,
+        MakeCartesianGaussianVelocityDistribution(
+            electron_sigma, electron_sigma, electron_sigma)));
+    species.push_back(MakeSpecies(
+        "xe_ions", elec_weight,
+        MakeCartesianGaussianVelocityDistribution(
+            amrex::ParticleReal(1212.41), amrex::ParticleReal(1212.41),
+            amrex::ParticleReal(1212.41))));
+
+    return HallInjectionSource(
+        "average_ionization_source",
+        std::make_unique<IonizationSourceRateModel>(
+            position_sampler->totalRate(), elec_weight),
+        std::move(position_sampler), std::move(species));
+}
+#endif
+
 } // namespace
 
 HallInjector&
@@ -438,6 +512,10 @@ HallInjector::ReadParameters ()
     } else {
         AppendConfiguredSources(m_continuous_sources, continuous_source_names);
     }
+
+#ifdef IONIZATION_SOURCE_INJECT
+    m_continuous_sources.push_back(MakeIonizationSource());
+#endif
 
     m_initialized = true;
 }

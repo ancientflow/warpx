@@ -15,11 +15,13 @@
     (defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE))
 #error "IONIZATION_SOURCE_RECORD replaces the MCC_DENSITY_AVERAGE_* path"
 #endif
-#if defined(IONIZATION_SOURCE_INJECT)
-#error "IONIZATION_SOURCE_INJECT is reserved for the injection-refactor branch"
+#if defined(IONIZATION_SOURCE_INJECT) && \
+    (defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE))
+#error "IONIZATION_SOURCE_INJECT replaces the MCC_DENSITY_AVERAGE_* path"
 #endif
-#if defined(IONIZATION_SOURCE_RECORD) && !defined(WARPX_DIM_3D)
-#error "IONIZATION_SOURCE_RECORD currently supports WARPX_DIM_3D only"
+#if (defined(IONIZATION_SOURCE_RECORD) || defined(IONIZATION_SOURCE_INJECT)) && \
+    !defined(WARPX_DIM_3D)
+#error "Average ionization source currently supports WARPX_DIM_3D only"
 #endif
 #if defined(IONIZATION_SOURCE_RECORD) && !defined(MCC_DENSITY)
 #error "IONIZATION_SOURCE_RECORD requires MCC_DENSITY"

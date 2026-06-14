@@ -554,6 +554,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
 #if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
         ground_pc.deleteInvalidParticles();
 #endif
+#ifndef IONIZATION_SOURCE_INJECT
         if (ionization_flag) {
             if (depos_order == 1) {
                 doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
@@ -577,6 +578,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                                                 inv_cell_size, elec_weight);
             }
         }
+#endif
     }
 }
 
