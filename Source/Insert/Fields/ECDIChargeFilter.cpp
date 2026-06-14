@@ -194,6 +194,12 @@ ReadECDIChargeFilterOptions ()
             center.size() == 2,
             "insert.ecdi_control.center must contain exactly two values.");
         options.center = {center[0], center[1]};
+    } else {
+        amrex::Geometry const& geom = WarpX::GetInstance().Geom(0);
+        options.center = {
+            (geom.ProbLo(0) + geom.ProbHi(0)) * amrex::Real(0.5),
+            (geom.ProbLo(1) + geom.ProbHi(1)) * amrex::Real(0.5)
+        };
     }
 
     return options;
