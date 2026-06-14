@@ -41,12 +41,15 @@ public:
 
     void setHoleArrayPlane (HallHoleArrayPlaneConfig config);
     void setTimeStepOverride (amrex::Real dt);
+    void setBatchMultiplier (amrex::Real batch_multiplier);
 
     void Inject (WarpX& warpx, amrex::Real dt);
 
     [[nodiscard]] std::string const& name () const noexcept;
 
 private:
+    [[nodiscard]] int consumeParticleCount (amrex::Real expected_macro_particles);
+
     [[nodiscard]] EmissionSample samplePosition (
         int particle_index, amrex::RandomEngine& engine);
 
@@ -67,6 +70,8 @@ private:
     int m_hole_start = 0;
     bool m_has_dt_override = false;
     amrex::Real m_dt_override = 0.0;
+    amrex::Real m_batch_multiplier = 0.0;
+    amrex::Real m_batch_remainder = 0.0;
 };
 
 } // namespace Insert

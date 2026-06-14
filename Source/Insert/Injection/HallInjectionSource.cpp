@@ -92,15 +92,25 @@ void
 HallInjectionSource::setTimeStepOverride (amrex::Real dt)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        dt >= 0.0, "HallInjectionSource time step override must be non-negative.");
+        std::isfinite(dt) && dt >= 0.0,
+        "HallInjectionSource time step override must be finite and non-negative.");
     m_dt_override = dt;
     m_has_dt_override = true;
 }
 
 void
+HallInjectionSource::setBatchMultiplier (amrex::Real batch_multiplier)
+{
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::isfinite(batch_multiplier) && batch_multiplier >= 1.0,
+        "HallInjectionSource batch multiplier must be larger than 1");
+    m_batch_multiplier = batch_multiplier;
+}
+
+void
 HallInjectionSource::Inject (WarpX& warpx, amrex::Real dt)
 {
-    const int count = m_accumulator.consume(
+    const int count = consumeParticleCount(
         m_rate_model->expectedMacroParticles(m_has_dt_override ? m_dt_override : dt));
     if (count <= 0) {
         return;
@@ -127,6 +137,30 @@ std::string const&
 HallInjectionSource::name () const noexcept
 {
     return m_source_name;
+}
+
+int
+HallInjectionSource::consumeParticleCount (amrex::Real expected_macro_particles)
+{
+    if (m_batch_multiplier <= 0.0) {
+        return m_accumulator.consume(expected_macro_particles);
+    }
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        expected_macro_particles >= 0.0,
+        "HallInjectionSource requires non-negative particle counts.");
+    const auto batch_count = static_cast<int>(
+        expected_macro_particles * m_batch_multiplier + 1.0);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        batch_count > 0,
+        "HallInjectionSource batch threshold must be positive.");
+
+    m_batch_remainder += expected_macro_particles;
+    if (m_batch_remainder > static_cast<amrex::Real>(batch_count)) {
+        m_batch_remainder -= static_cast<amrex::Real>(batch_count);
+        return batch_count;
+    }
+    return 0;
 }
 
 EmissionSample

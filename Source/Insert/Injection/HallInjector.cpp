@@ -222,6 +222,12 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
         source_name, std::move(rate_model), std::move(position),
         std::move(species_configs), x_offset, y_offset);
 
+    amrex::Real batch_multiplier = 0.0;
+    if (utils::parser::queryWithParser(
+            pp, source_name, "batch_multiplier", batch_multiplier)) {
+        source.setBatchMultiplier(batch_multiplier);
+    }
+
     const auto position_prefix = source_name + ".position";
     std::string coupled_distribution;
     if (utils::parser::query(pp, position_prefix, "coupled_distribution",
@@ -329,7 +335,7 @@ MakeDefaultCathodeSource ()
 }
 
 HallInjectionSource
-MakeDefaultXeNeutralSource ()
+MakeDefaultXeNeutralSource (amrex::Real batch_multiplier)
 {
     amrex::ParmParse pp_mc("my_constants");
     amrex::Real l_factor = 1.0;
@@ -384,6 +390,7 @@ MakeDefaultXeNeutralSource ()
         hole_config.z = amrex::ParticleReal(0.0);
         source.setHoleArrayPlane(hole_config);
     }
+    source.setBatchMultiplier(batch_multiplier);
     return source;
 }
 
@@ -420,11 +427,11 @@ HallInjector::ReadParameters ()
 #ifdef HALL3D
         m_continuous_sources.push_back(MakeDefaultCathodeSource());
 #ifndef MCC_DENSITY_AVERAGE_USE
-        m_continuous_sources.push_back(MakeDefaultXeNeutralSource());
+        m_continuous_sources.push_back(MakeDefaultXeNeutralSource(100.0));
 #endif
 #endif
 #ifdef HALL3D_INIT
-        auto fast_neutral_source = MakeDefaultXeNeutralSource();
+        auto fast_neutral_source = MakeDefaultXeNeutralSource(1.0);
         fast_neutral_source.setTimeStepOverride(5.6e-10);
         m_continuous_sources.push_back(std::move(fast_neutral_source));
 #endif
