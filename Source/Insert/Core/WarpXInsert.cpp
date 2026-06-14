@@ -25,15 +25,8 @@ namespace Insert {
 
 void
 ParticleInjection () {
-#ifdef HALL3D
-    CathodeInjection3D();
-#ifndef MCC_DENSITY_AVERAGE_USE
-    XeInjection();
-#endif
-
-#endif
-#ifdef HALL3D_INIT
-    XeFastInjection();
+#if defined(HALL3D) || defined(HALL3D_INIT)
+    InjectHallParticles();
 #endif
 }
 
@@ -113,7 +106,7 @@ Initialize () {
     GlobalBackgroundDensityInit();
 #endif
 #ifdef HALL3D
-    PlasmaInit();
+    InitializeHallInjection();
 #endif
 }
 

@@ -4,8 +4,7 @@
 
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Injection/DistributionSampler1D.H"
-#include "Insert/Injection/HallCoordinateDistribution.h"
-#include "Insert/Injection/HallRateModel.h"
+#include "Insert/Injection/HallInjector.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
 
@@ -18,7 +17,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
-#include <memory>
 
 namespace Insert {
 
@@ -534,212 +532,11 @@ LegacyXeFastInjection () {
 #endif
 }
 
-#if defined(HALL3D) || defined(HALL3D_INIT)
-namespace {
-
-constexpr amrex::ParticleReal
-HallTwoPi ()
-{
-    return amrex::ParticleReal(2.0) * amrex::Math::pi<amrex::ParticleReal>();
-}
-
-std::unique_ptr<HallCoordinateDistribution>
-MakeCylindricalPositionDistribution (
-    amrex::ParticleReal rmin, amrex::ParticleReal rmax,
-    std::unique_ptr<HallDistribution1D> theta_distribution,
-    std::unique_ptr<HallDistribution1D> z_distribution)
-{
-    return std::make_unique<HallCoordinateDistribution>(
-        HallCoordinateSystem::cylindrical,
-        std::make_unique<HallAreaUniformDistribution1D>(rmin, rmax),
-        std::move(theta_distribution), std::move(z_distribution));
-}
-
-std::unique_ptr<HallCoordinateDistribution>
-MakeCartesianGaussianVelocityDistribution (
-    amrex::ParticleReal sigma_x, amrex::ParticleReal sigma_y,
-    amrex::ParticleReal sigma_z)
-{
-    return std::make_unique<HallCoordinateDistribution>(
-        HallCoordinateSystem::cartesian,
-        std::make_unique<HallGaussianDistribution1D>(amrex::ParticleReal(0.0), sigma_x),
-        std::make_unique<HallGaussianDistribution1D>(amrex::ParticleReal(0.0), sigma_y),
-        std::make_unique<HallGaussianDistribution1D>(amrex::ParticleReal(0.0), sigma_z));
-}
-
-std::unique_ptr<HallCoordinateDistribution>
-MakeCartesianInflowVelocityDistribution (
-    amrex::ParticleReal sigma_x, amrex::ParticleReal sigma_y,
-    amrex::ParticleReal sigma_z, amrex::ParticleReal vz0)
-{
-    return std::make_unique<HallCoordinateDistribution>(
-        HallCoordinateSystem::cartesian,
-        std::make_unique<HallGaussianDistribution1D>(amrex::ParticleReal(0.0), sigma_x),
-        std::make_unique<HallGaussianDistribution1D>(amrex::ParticleReal(0.0), sigma_y),
-        std::make_unique<HallPositiveGaussianDistribution1D>(vz0, sigma_z));
-}
-
-void
-SampleParticles (
-    int count, amrex::ParticleReal weight,
-    HallCoordinateDistribution const& position_distribution,
-    HallCoordinateDistribution const& velocity_distribution,
-    amrex::ParticleReal x_offset, amrex::ParticleReal y_offset,
-    amrex::RandomEngine& uniform_engine, amrex::RandomEngine& normal_engine,
-    amrex::Vector<amrex::ParticleReal>& px,
-    amrex::Vector<amrex::ParticleReal>& py,
-    amrex::Vector<amrex::ParticleReal>& pz,
-    amrex::Vector<amrex::ParticleReal>& vx,
-    amrex::Vector<amrex::ParticleReal>& vy,
-    amrex::Vector<amrex::ParticleReal>& vz,
-    amrex::Vector<amrex::ParticleReal>& pw)
-{
-    px.resize(count);
-    py.resize(count);
-    pz.resize(count);
-    vx.resize(count);
-    vy.resize(count);
-    vz.resize(count);
-    pw.assign(count, weight);
-
-    for (int i = 0; i < count; ++i) {
-        const auto position = position_distribution.samplePosition(uniform_engine);
-        const auto velocity = velocity_distribution.sampleVelocity(normal_engine, position);
-        px[i] = position.x + x_offset;
-        py[i] = position.y + y_offset;
-        pz[i] = position.z;
-        vx[i] = velocity.x;
-        vy[i] = velocity.y;
-        vz[i] = velocity.z;
-    }
-}
-
-void
-AddParticlesToSpecies (
-    char const* species_name, int count,
-    amrex::Vector<amrex::ParticleReal> const& px,
-    amrex::Vector<amrex::ParticleReal> const& py,
-    amrex::Vector<amrex::ParticleReal> const& pz,
-    amrex::Vector<amrex::ParticleReal> const& vx,
-    amrex::Vector<amrex::ParticleReal> const& vy,
-    amrex::Vector<amrex::ParticleReal> const& vz,
-    amrex::Vector<amrex::ParticleReal> const& pw)
-{
-    if (count <= 0) {
-        return;
-    }
-
-    static const amrex::Vector<amrex::Vector<int>> nattr;
-    auto& warpx_instance = WarpX::GetInstance();
-    auto& mypc = warpx_instance.GetPartContainer();
-    auto& pc = mypc.GetParticleContainer(mypc.getSpeciesID(species_name));
-    pc.AddNParticles(0, count, px, py, pz, vx, vy, vz, 1, {pw}, 0, nattr, 0);
-}
-
-void
-SampleXeHoleArrayPositions (
-    int count, int hole_num, int hole_start,
-    amrex::ParticleReal rmid, amrex::ParticleReal rwidth,
-    amrex::ParticleReal half_l, amrex::ParticleReal z,
-    amrex::RandomEngine& uniform_engine,
-    amrex::Vector<amrex::ParticleReal>& px,
-    amrex::Vector<amrex::ParticleReal>& py,
-    amrex::Vector<amrex::ParticleReal>& pz)
-{
-    auto local_disk = MakeCylindricalPositionDistribution(
-        amrex::ParticleReal(0.0), rwidth,
-        std::make_unique<HallUniformDistribution1D>(amrex::ParticleReal(0.0), HallTwoPi()),
-        std::make_unique<HallConstantDistribution1D>(z));
-
-    const amrex::ParticleReal per_angle = HallTwoPi() / hole_num;
-    for (int i = 0; i < count; ++i) {
-        const auto local = local_disk->samplePosition(uniform_engine);
-        const int hole_index = (i + hole_start) % hole_num;
-        const amrex::ParticleReal angle =
-            static_cast<amrex::ParticleReal>(hole_index) * per_angle;
-        px[i] = local.x + rmid * std::cos(angle) + half_l;
-        py[i] = local.y + rmid * std::sin(angle) + half_l;
-        pz[i] = local.z;
-    }
-}
-
-void
-SampleVelocities (
-    int count, HallCoordinateDistribution const& velocity_distribution,
-    amrex::RandomEngine& normal_engine,
-    amrex::Vector<amrex::ParticleReal>& vx,
-    amrex::Vector<amrex::ParticleReal>& vy,
-    amrex::Vector<amrex::ParticleReal>& vz)
-{
-    const EmissionSample dummy_position;
-    vx.resize(count);
-    vy.resize(count);
-    vz.resize(count);
-    for (int i = 0; i < count; ++i) {
-        const auto velocity = velocity_distribution.sampleVelocity(normal_engine, dummy_position);
-        vx[i] = velocity.x;
-        vy[i] = velocity.y;
-        vz[i] = velocity.z;
-    }
-}
-
-} // namespace
-#endif
-
 void
 CathodeInjection3D ()
 {
 #ifdef HALL3D
-    constexpr amrex::ParticleReal L = 0.05;
-    static bool initialized = false;
-    static amrex::Real dt = 0.0;
-    static amrex::ParticleReal elec_weight = 0.0;
-    static std::unique_ptr<HallCurrentRateModel> rate_model;
-    static HallFractionalParticleAccumulator accumulator;
-
-    if (!initialized) {
-        amrex::Real Ic = 0.0;
-        amrex::Real l_factor = 1.0;
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.get("dt", dt);
-        pp_mc.get("Ic", Ic);
-        pp_mc.get("l_factor", l_factor);
-        pp_mc.getWithParser("elec_weight", elec_weight);
-        rate_model = std::make_unique<HallCurrentRateModel>(Ic, elec_weight, l_factor);
-        initialized = true;
-    }
-
-    const int count = accumulator.consume(rate_model->expectedMacroParticles(dt));
-    if (count <= 0) {
-        return;
-    }
-
-    constexpr amrex::ParticleReal sigma = 592982.0;
-    constexpr amrex::ParticleReal r1 = 0.016;
-    constexpr amrex::ParticleReal r2 = 0.02;
-    constexpr amrex::ParticleReal z1 = 0.042;
-    constexpr amrex::ParticleReal z2 = 0.046;
-
-    amrex::Real l_factor = 1.0;
-    amrex::ParmParse pp_mc("my_constants");
-    pp_mc.get("l_factor", l_factor);
-    const amrex::ParticleReal inv_l = amrex::ParticleReal(1.0) / l_factor;
-    const amrex::ParticleReal half_l = L * inv_l / amrex::ParticleReal(2.0);
-
-    auto position_distribution = MakeCylindricalPositionDistribution(
-        r1 * inv_l, r2 * inv_l,
-        std::make_unique<HallUniformDistribution1D>(amrex::ParticleReal(0.0), HallTwoPi()),
-        std::make_unique<HallUniformDistribution1D>(z1 * inv_l, z2 * inv_l));
-    auto velocity_distribution =
-        MakeCartesianGaussianVelocityDistribution(sigma, sigma, sigma);
-
-    amrex::Vector<amrex::ParticleReal> px, py, pz, vx, vy, vz, pw;
-    amrex::RandomEngine uniform_engine(MakeRandomEngine());
-    amrex::RandomEngine normal_engine(MakeRandomEngine());
-    SampleParticles(
-        count, elec_weight, *position_distribution, *velocity_distribution,
-        half_l, half_l, uniform_engine, normal_engine, px, py, pz, vx, vy, vz, pw);
-    AddParticlesToSpecies("electrons", count, px, py, pz, vx, vy, vz, pw);
+    InjectHallParticles();
 #endif
 }
 
@@ -747,51 +544,7 @@ void
 PlasmaInit ()
 {
 #ifdef HALL3D
-    constexpr amrex::ParticleReal L = 0.05;
-    amrex::Real l_factor = 1.0;
-    amrex::ParticleReal elec_weight = 0.0;
-
-    amrex::ParmParse pp_mc("my_constants");
-    pp_mc.get("l_factor", l_factor);
-    pp_mc.getWithParser("elec_weight", elec_weight);
-
-    const amrex::ParticleReal inv_l = amrex::ParticleReal(1.0) / l_factor;
-    const amrex::ParticleReal r1 = 0.0105 * inv_l;
-    const amrex::ParticleReal r2 = 0.0155 * inv_l;
-    const amrex::ParticleReal z1 = 0.001 * inv_l;
-    const amrex::ParticleReal z2 = 0.004 * inv_l;
-    const amrex::ParticleReal dz = z2 - z1;
-    const amrex::ParticleReal volume =
-        (r2 * r2 - r1 * r1) * amrex::Math::pi<amrex::ParticleReal>() * dz;
-    const HallDensityVolumeRateModel rate_model(1.0e18, volume, elec_weight);
-    const int count = static_cast<int>(rate_model.expectedMacroParticles(0.0));
-    if (count <= 0) {
-        return;
-    }
-
-    constexpr amrex::ParticleReal sigma_e = 592982.0;
-    constexpr amrex::ParticleReal sigma_xe = 1212.41;
-    const amrex::ParticleReal half_l = L * inv_l / amrex::ParticleReal(2.0);
-
-    auto position_distribution = MakeCylindricalPositionDistribution(
-        r1, r2,
-        std::make_unique<HallUniformDistribution1D>(amrex::ParticleReal(0.0), HallTwoPi()),
-        std::make_unique<HallUniformDistribution1D>(z1, z2));
-    auto electron_velocity_distribution =
-        MakeCartesianGaussianVelocityDistribution(sigma_e, sigma_e, sigma_e);
-    auto ion_velocity_distribution =
-        MakeCartesianGaussianVelocityDistribution(sigma_xe, sigma_xe, sigma_xe);
-
-    amrex::Vector<amrex::ParticleReal> px, py, pz, vx, vy, vz, pw;
-    amrex::RandomEngine uniform_engine(MakeRandomEngine());
-    amrex::RandomEngine normal_engine(MakeRandomEngine());
-    SampleParticles(
-        count, elec_weight, *position_distribution, *electron_velocity_distribution,
-        half_l, half_l, uniform_engine, normal_engine, px, py, pz, vx, vy, vz, pw);
-    AddParticlesToSpecies("electrons", count, px, py, pz, vx, vy, vz, pw);
-
-    SampleVelocities(count, *ion_velocity_distribution, normal_engine, vx, vy, vz);
-    AddParticlesToSpecies("xe_ions", count, px, py, pz, vx, vy, vz, pw);
+    InitializeHallInjection();
 #endif
 }
 
@@ -799,81 +552,7 @@ void
 XeInjection ()
 {
 #ifdef HALL3D
-    constexpr amrex::ParticleReal L = 0.05;
-    constexpr amrex::ParticleReal mxe = 2.179e-25;
-    constexpr amrex::ParticleReal kb = 1.38064852e-23;
-
-    static bool initialized = false;
-    static bool ifhole = false;
-    static int hole_num = 48;
-    static amrex::Real dt = 0.0;
-    static amrex::Real l_factor = 1.0;
-    static amrex::ParticleReal atom_weight = 0.0;
-    static amrex::ParticleReal tx = 0.0;
-    static amrex::ParticleReal ty = 0.0;
-    static amrex::ParticleReal tz = 0.0;
-    static amrex::ParticleReal vz0 = 0.0;
-    static std::unique_ptr<HallMassFlowRateModel> rate_model;
-    static HallFractionalParticleAccumulator accumulator;
-
-    if (!initialized) {
-        amrex::Real m_dot = 0.0;
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.get("dt", dt);
-        pp_mc.get("l_factor", l_factor);
-        pp_mc.getWithParser("xe_weight", atom_weight);
-        pp_mc.get("m_dot", m_dot);
-        pp_mc.query("ifhole", ifhole);
-        pp_mc.get("Tx", tx);
-        pp_mc.get("Ty", ty);
-        pp_mc.get("Tz", tz);
-        pp_mc.get("vz0", vz0);
-        rate_model = std::make_unique<HallMassFlowRateModel>(
-            m_dot, mxe, atom_weight, l_factor);
-        initialized = true;
-    }
-
-    const int count = accumulator.consume(rate_model->expectedMacroParticles(dt));
-    if (count <= 0) {
-        return;
-    }
-
-    const amrex::ParticleReal inv_l = amrex::ParticleReal(1.0) / l_factor;
-    const amrex::ParticleReal rmid = (0.021 + 0.031) * inv_l / amrex::ParticleReal(4.0);
-    const amrex::ParticleReal rwidth = 0.001 * inv_l;
-    const amrex::ParticleReal r1 = rmid - rwidth;
-    const amrex::ParticleReal r2 = rmid + rwidth;
-    const amrex::ParticleReal half_l = L * inv_l / amrex::ParticleReal(2.0);
-    const amrex::ParticleReal sigmax = std::sqrt(kb * tx / mxe);
-    const amrex::ParticleReal sigmay = std::sqrt(kb * ty / mxe);
-    const amrex::ParticleReal sigmaz = std::sqrt(kb * tz / mxe);
-
-    auto velocity_distribution =
-        MakeCartesianInflowVelocityDistribution(sigmax, sigmay, sigmaz, vz0);
-
-    amrex::Vector<amrex::ParticleReal> px(count), py(count), pz(count);
-    amrex::Vector<amrex::ParticleReal> vx, vy, vz, pw(count, atom_weight);
-    amrex::RandomEngine uniform_engine(MakeRandomEngine());
-    amrex::RandomEngine normal_engine(MakeRandomEngine());
-
-    if (!ifhole) {
-        auto position_distribution = MakeCylindricalPositionDistribution(
-            r1, r2,
-            std::make_unique<HallUniformDistribution1D>(amrex::ParticleReal(0.0), HallTwoPi()),
-            std::make_unique<HallConstantDistribution1D>(amrex::ParticleReal(0.0)));
-        SampleParticles(
-            count, atom_weight, *position_distribution, *velocity_distribution,
-            half_l, half_l, uniform_engine, normal_engine, px, py, pz, vx, vy, vz, pw);
-    } else {
-        const int hole_start = static_cast<int>(amrex::Random(uniform_engine) * hole_num);
-        SampleXeHoleArrayPositions(
-            count, hole_num, hole_start, rmid, rwidth, half_l, amrex::ParticleReal(0.0),
-            uniform_engine, px, py, pz);
-        SampleVelocities(count, *velocity_distribution, normal_engine, vx, vy, vz);
-    }
-
-    AddParticlesToSpecies("xe_netural", count, px, py, pz, vx, vy, vz, pw);
-    amrex::Print() << "Injection Xe Atom\n";
+    InjectHallParticles();
 #endif
 }
 
@@ -881,74 +560,26 @@ void
 XeFastInjection ()
 {
 #ifdef HALL3D_INIT
-    constexpr amrex::ParticleReal L = 0.05;
-    constexpr amrex::ParticleReal mxe = 2.179e-25;
-    constexpr amrex::ParticleReal kb = 1.38064852e-23;
-    constexpr amrex::Real dt = 5.6e-10;
+    InjectHallParticles();
+#endif
+}
 
-    amrex::Real l_factor = 1.0;
-    amrex::Real m_dot = 0.0;
-    bool ifhole = false;
-    int hole_num = 48;
-    amrex::ParticleReal atom_weight = 0.0;
-    amrex::ParticleReal tx = 0.0;
-    amrex::ParticleReal ty = 0.0;
-    amrex::ParticleReal tz = 0.0;
-    amrex::ParticleReal vz0 = 0.0;
+void
+InitializeHallInjection ()
+{
+#if defined(HALL3D) || defined(HALL3D_INIT)
+    HallInjector::GetInstance().InitializePlasma(WarpX::GetInstance());
+#endif
+}
 
+void
+InjectHallParticles ()
+{
+#if defined(HALL3D) || defined(HALL3D_INIT)
+    amrex::Real dt = 0.0;
     amrex::ParmParse pp_mc("my_constants");
-    pp_mc.get("l_factor", l_factor);
-    pp_mc.getWithParser("xe_weight", atom_weight);
-    pp_mc.get("m_dot", m_dot);
-    pp_mc.query("ifhole", ifhole);
-    pp_mc.get("Tx", tx);
-    pp_mc.get("Ty", ty);
-    pp_mc.get("Tz", tz);
-    pp_mc.get("vz0", vz0);
-
-    static HallFractionalParticleAccumulator accumulator;
-    const HallMassFlowRateModel rate_model(m_dot, mxe, atom_weight, l_factor);
-    const int count = accumulator.consume(rate_model.expectedMacroParticles(dt));
-    if (count <= 0) {
-        return;
-    }
-
-    const amrex::ParticleReal inv_l = amrex::ParticleReal(1.0) / l_factor;
-    const amrex::ParticleReal rmid = (0.021 + 0.031) * inv_l / amrex::ParticleReal(4.0);
-    const amrex::ParticleReal rwidth = 0.001 * inv_l;
-    const amrex::ParticleReal r1 = rmid - rwidth;
-    const amrex::ParticleReal r2 = rmid + rwidth;
-    const amrex::ParticleReal half_l = L * inv_l / amrex::ParticleReal(2.0);
-    const amrex::ParticleReal sigmax = std::sqrt(kb * tx / mxe);
-    const amrex::ParticleReal sigmay = std::sqrt(kb * ty / mxe);
-    const amrex::ParticleReal sigmaz = std::sqrt(kb * tz / mxe);
-
-    auto velocity_distribution =
-        MakeCartesianInflowVelocityDistribution(sigmax, sigmay, sigmaz, vz0);
-
-    amrex::Vector<amrex::ParticleReal> px(count), py(count), pz(count);
-    amrex::Vector<amrex::ParticleReal> vx, vy, vz, pw(count, atom_weight);
-    amrex::RandomEngine uniform_engine(MakeRandomEngine());
-    amrex::RandomEngine normal_engine(MakeRandomEngine());
-
-    if (!ifhole) {
-        auto position_distribution = MakeCylindricalPositionDistribution(
-            r1, r2,
-            std::make_unique<HallUniformDistribution1D>(amrex::ParticleReal(0.0), HallTwoPi()),
-            std::make_unique<HallConstantDistribution1D>(amrex::ParticleReal(0.0)));
-        SampleParticles(
-            count, atom_weight, *position_distribution, *velocity_distribution,
-            half_l, half_l, uniform_engine, normal_engine, px, py, pz, vx, vy, vz, pw);
-    } else {
-        const int hole_start = static_cast<int>(amrex::Random(uniform_engine) * hole_num);
-        SampleXeHoleArrayPositions(
-            count, hole_num, hole_start, rmid, rwidth, half_l, amrex::ParticleReal(0.0),
-            uniform_engine, px, py, pz);
-        SampleVelocities(count, *velocity_distribution, normal_engine, vx, vy, vz);
-    }
-
-    AddParticlesToSpecies("xe_netural", count, px, py, pz, vx, vy, vz, pw);
-    amrex::Print() << "Injection Xe Atom\n";
+    pp_mc.query("dt", dt);
+    HallInjector::GetInstance().InjectParticles(WarpX::GetInstance(), dt, 0);
 #endif
 }
 
