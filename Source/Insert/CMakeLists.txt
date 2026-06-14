@@ -8,6 +8,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Boundary/InsertBoundaryParticles.cpp
         Boundary/InsertBoundaryPhi.cpp
         Collisions/CoupledBackgroundMCCCollision.cpp
+        Collisions/IonizationSourceTable.cpp
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Fields/ECDIChargeFilter.cpp
         Injection/DistributionSampler1D.cpp

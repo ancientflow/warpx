@@ -3,6 +3,7 @@
 #include "Insert/Background/InsertBackgroundDensity.h"
 #include "Insert/Boundary/InsertBoundaryParticles.h"
 #include "Insert/Boundary/InsertBoundaryPhi.h"
+#include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
@@ -168,6 +169,9 @@ AfterCollision (int step) {
 
 void
 Finalize () {
+#ifdef IONIZATION_SOURCE_RECORD
+    IonizationSourceFinalize();
+#endif
 #ifdef MCC_DENSITY
     GlobalBackgroundDensityFinalize();
 #endif
