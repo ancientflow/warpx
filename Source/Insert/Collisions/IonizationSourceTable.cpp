@@ -229,7 +229,7 @@ struct IonizationSourceTable {
                          cell_count.end(), d_cell_count.begin());
 
         amrex::Box const domain(amrex::IntVect(0, 0, 0),
-                                amrex::IntVect(nr - 1, 0, nz - 1));
+                                amrex::IntVect(nr - 1, nz - 1, 0));
         amrex::BoxArray ba(domain);
         amrex::DistributionMapping dm(ba);
         amrex::MultiFab plot_mf(ba, dm, 4, 0);
@@ -245,8 +245,9 @@ struct IonizationSourceTable {
             amrex::ParallelFor(
                 mfi.validbox(),
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept {
+                    amrex::ignore_unused(k);
                     int const ir = i;
-                    int const iz = k;
+                    int const iz = j;
                     int const idx = iz * nr + ir;
                     amrex::Real const r0 =
                         rmin + static_cast<amrex::Real>(ir) * dr_plot;
@@ -261,8 +262,8 @@ struct IonizationSourceTable {
         }
         amrex::Gpu::streamSynchronize();
 
-        amrex::RealBox const real_box({AMREX_D_DECL(r_min, 0.0_rt, z_min)},
-                                      {AMREX_D_DECL(r_max, 1.0_rt, z_max)});
+        amrex::RealBox const real_box({AMREX_D_DECL(r_min, z_min, 0.0_rt)},
+                                      {AMREX_D_DECL(r_max, z_max, 1.0_rt)});
         amrex::Array<int, AMREX_SPACEDIM> is_periodic{AMREX_D_DECL(0, 0, 0)};
         amrex::Geometry source_geom(domain, &real_box, 0, is_periodic.data());
 
