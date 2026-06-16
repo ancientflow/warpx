@@ -460,10 +460,10 @@ MakeIonizationSource ()
             amrex::ParticleReal(1212.41), amrex::ParticleReal(1212.41),
             amrex::ParticleReal(1212.41))));
 
+    const auto total_rate = position_sampler->totalRate();
     return HallInjectionSource(
         "average_ionization_source",
-        std::make_unique<IonizationSourceRateModel>(
-            position_sampler->totalRate(), elec_weight),
+        std::make_unique<IonizationSourceRateModel>(total_rate, elec_weight),
         std::move(position_sampler), std::move(species));
 }
 #endif
