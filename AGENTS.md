@@ -13,6 +13,10 @@ conda activate warpx-cpu-mpich-dev
 ```
 If this environment does not yet exist, create it as described in `Docs/source/install/cmake.rst`.
 
+## Tooling Preference
+
+When CLion MCP tools are available, prefer using them for project navigation, file reads, searches, edits, diagnostics, and running project commands.
+
 ## Build Commands
 
 The cmake build directory is always inside the repository root (or worktree root). Never look for or create a build directory outside of the current working directory.
