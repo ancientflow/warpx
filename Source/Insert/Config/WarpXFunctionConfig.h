@@ -42,16 +42,6 @@
 #error "IONIZATION_SOURCE_RECORD and IONIZATION_SOURCE_INJECT are mutually exclusive"
 #endif
 
-#if defined(IONIZATION_SOURCE_RECORD) && \
-    (defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE))
-#error "IONIZATION_SOURCE_RECORD replaces the MCC_DENSITY_AVERAGE_* path"
-#endif
-
-#if defined(IONIZATION_SOURCE_INJECT) && \
-    (defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE))
-#error "IONIZATION_SOURCE_INJECT replaces the MCC_DENSITY_AVERAGE_* path"
-#endif
-
 #if (defined(IONIZATION_SOURCE_RECORD) || defined(IONIZATION_SOURCE_INJECT)) && \
     !defined(WARPX_DIM_3D)
 #error "Average ionization source currently supports WARPX_DIM_3D only"
