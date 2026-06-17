@@ -146,6 +146,25 @@ private:
     NumericalInverseCDFSampler1D m_sampler;
 };
 
+class HallNeutralSpokeDistribution1D final : public HallDistribution1D
+{
+public:
+    HallNeutralSpokeDistribution1D (
+        amrex::ParticleReal ion_width, amrex::ParticleReal min_ratio,
+        amrex::ParticleReal drop_exponent, amrex::ParticleReal phase,
+        bool reverse, int num_bins);
+
+    [[nodiscard]] amrex::ParticleReal
+    sample (amrex::RandomEngine const& engine) const override;
+
+    [[nodiscard]] amrex::ParticleReal min () const noexcept override;
+    [[nodiscard]] amrex::ParticleReal max () const noexcept override;
+    [[nodiscard]] amrex::ParticleReal integral () const noexcept override;
+
+private:
+    NumericalInverseCDFSampler1D m_sampler;
+};
+
 class HallDiscreteDistribution1D final : public HallDistribution1D
 {
 public:

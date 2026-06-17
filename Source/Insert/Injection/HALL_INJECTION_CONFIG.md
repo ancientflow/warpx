@@ -246,6 +246,56 @@ axis.num_bins = 1024
 
 `spoke_phase` 可省略，默认 `0`。`num_bins` 可省略，默认 `1024`。
 
+### neutral_spoke
+
+中性气体初始化用的 spoke 耗尽分布。它用于构造一个稳定 spoke 扫过后的中性气体
+角向分布：电离区内中性密度快速下降，电离区外用一条直线恢复到下一个电离前沿。
+
+```text
+axis.distribution = neutral_spoke
+axis.ion_width = 0.30*pi
+axis.min_ratio = 0.25
+axis.drop_exponent = 4.0
+axis.phase = 0.0
+axis.reverse = 0
+axis.num_bins = 1024
+```
+
+也可以使用名称 `neutral_spoke_depletion`。
+
+令：
+
+```text
+phi = mod(theta - phase, 2*pi)              # reverse = 0
+phi = mod(phase - theta, 2*pi)              # reverse = 1
+n_min = min_ratio * n_max
+```
+
+电离区内：
+
+```text
+0 <= phi < ion_width
+s = phi / ion_width
+n(phi) = n_min + (n_max - n_min) * (1 - s)^drop_exponent
+```
+
+电离区外：
+
+```text
+ion_width <= phi < 2*pi
+s = (phi - ion_width) / (2*pi - ion_width)
+n(phi) = n_min + (n_max - n_min) * s
+```
+
+参数含义：
+
+- `ion_width`：电离前沿到电离后沿的角宽，必须满足 `0 < ion_width < 2*pi`。
+- `min_ratio`：电离后沿最低中性密度与最高中性密度之比，默认 `0.25`。
+- `drop_exponent`：电离区内快速下降指数，默认 `4.0`。越大，下降越集中在电离前沿附近。
+- `phase`：电离前沿相位，默认 `0.0`。也可写作 `phase_offset` 或 `spoke_phase`。
+- `reverse`：相位取反开关，默认 `0`。也可写作 `reverse_phase` 或 `phase_reverse`。
+- `num_bins`：数值 CDF 采样 bin 数，默认 `1024`。
+
 ### discrete
 
 从离散值中采样：
@@ -445,40 +495,40 @@ cathode_electron.velocity.vz.distribution = gaussian
 cathode_electron.velocity.vz.sigma = 592982
 ```
 
-## 示例：Xe 中性气体 spoke 连续注入
+## 示例：Xe 中性气体耗尽分布初始化
 
 ```text
-insert.continuous_sources = xe_neutral_inlet
+insert.initial_sources = initial_xe_neutral
 
-xe_neutral_inlet.species = xe_netural
-xe_neutral_inlet.rate = mass_flow
-xe_neutral_inlet.mass_flow = m_dot
-xe_neutral_inlet.mass = 2.179e-25
-xe_neutral_inlet.macro_weight = xe_weight
-xe_neutral_inlet.l_factor = l_factor
-xe_neutral_inlet.batch_multiplier = 100.0
-xe_neutral_inlet.x_offset = 0.025 / l_factor
-xe_neutral_inlet.y_offset = 0.025 / l_factor
+initial_xe_neutral.species = xe_netural
+initial_xe_neutral.rate = density_volume
+initial_xe_neutral.density = n_xe0
+initial_xe_neutral.volume = volume_xe
+initial_xe_neutral.macro_weight = xe_weight
+initial_xe_neutral.x_offset = 0.025 / l_factor
+initial_xe_neutral.y_offset = 0.025 / l_factor
 
-xe_neutral_inlet.position.coordinate_system = cylindrical
-xe_neutral_inlet.position.r.distribution = area_uniform
-xe_neutral_inlet.position.r.min = ((0.021 + 0.031) / 4 - 0.001) / l_factor
-xe_neutral_inlet.position.r.max = ((0.021 + 0.031) / 4 + 0.001) / l_factor
-xe_neutral_inlet.position.theta.distribution = multi_spoke
-xe_neutral_inlet.position.theta.spoke_count = 4
-xe_neutral_inlet.position.theta.spoke_sigma = pi / 8
-xe_neutral_inlet.position.theta.spoke_phase = 0
-xe_neutral_inlet.position.z.distribution = constant
-xe_neutral_inlet.position.z.value = 0.0
+initial_xe_neutral.position.coordinate_system = cylindrical
+initial_xe_neutral.position.r.distribution = area_uniform
+initial_xe_neutral.position.r.min = r_min
+initial_xe_neutral.position.r.max = r_max
+initial_xe_neutral.position.theta.distribution = neutral_spoke
+initial_xe_neutral.position.theta.ion_width = 0.30*pi
+initial_xe_neutral.position.theta.min_ratio = 0.25
+initial_xe_neutral.position.theta.drop_exponent = 4.0
+initial_xe_neutral.position.theta.phase = neutral_phase
+initial_xe_neutral.position.theta.reverse = 0
+initial_xe_neutral.position.z.distribution = uniform
+initial_xe_neutral.position.z.min = z_min
+initial_xe_neutral.position.z.max = z_max
 
-xe_neutral_inlet.velocity.coordinate_system = cartesian
-xe_neutral_inlet.velocity.vx.distribution = gaussian
-xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / 2.179e-25)
-xe_neutral_inlet.velocity.vy.distribution = gaussian
-xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / 2.179e-25)
-xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
-xe_neutral_inlet.velocity.vz.mean = vz0
-xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / 2.179e-25)
+initial_xe_neutral.velocity.coordinate_system = cartesian
+initial_xe_neutral.velocity.vx.distribution = gaussian
+initial_xe_neutral.velocity.vx.sigma = sqrt(kb * Tx / 2.179e-25)
+initial_xe_neutral.velocity.vy.distribution = gaussian
+initial_xe_neutral.velocity.vy.sigma = sqrt(kb * Ty / 2.179e-25)
+initial_xe_neutral.velocity.vz.distribution = gaussian
+initial_xe_neutral.velocity.vz.sigma = sqrt(kb * Tz / 2.179e-25)
 ```
 
 ## 当前限制

@@ -19,6 +19,8 @@ When CLion MCP tools are available, prefer using them for project navigation, fi
 
 ## Build Commands
 
+Compilation must be performed through CLion. Do not compile WarpX from the command line.
+
 The cmake build directory is always inside the repository root (or worktree root). Never look for or create a build directory outside of the current working directory.
 
 ```bash
