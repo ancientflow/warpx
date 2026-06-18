@@ -15,8 +15,20 @@
 
 #include <AMReX_Print.H>
 
+#include <cstring>
+#include <memory>
+#include <string>
+
 int
 main (int argc, char* argv[]) {
+    std::unique_ptr<char[]> relocated_input;
+    if (argc >= 2) {
+        std::string const relocated = std::string("../../Script/") + argv[1];
+        relocated_input = std::make_unique<char[]>(relocated.size() + 1);
+        std::memcpy(relocated_input.get(), relocated.c_str(), relocated.size() + 1);
+        argv[1] = relocated_input.get();
+    }
+
     warpx::initialization::initialize_external_libraries(argc, argv);
     {
         ABLASTR_PROFILE_VAR("main()", pmain);
