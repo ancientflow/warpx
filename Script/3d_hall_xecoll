@@ -1,0 +1,7 @@
+collisions.collision_names = xe_coll
+
+xe_coll.species = xe_netural xe_netural
+xe_coll.type = dsmc
+xe_coll.ndt_supercycle = 1
+xe_coll.scattering_processes = elastic
+xe_coll.elastic_cross_section = Xe2X/XeDSMC.dat

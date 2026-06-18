@@ -1,0 +1,55 @@
+collisions.collision_names =  elec_mcc_coll xe_coll xe_dsmc
+collisions.background_species = xe_netural
+
+my_constants.mcc_factor = 1
+my_constants.mccndt = 1*mcc_factor
+my_constants.dsmcndt = 10*mcc_factor
+#所有碰撞：
+# e + Xe -> e + Xe
+# e + Xe -> e + Xe+ + e
+# e + Xe -> e + Xe*
+# Xe+ + Xe -> Xe+ + Xe
+# Xe+ + Xe -> Xe + Xe+
+
+#e / Xe 弹性、激发为MCC 其余DSMC
+elec_mcc_coll.type = coupled_background_mcc
+xe_coll.type = dsmc
+xe_dsmc.type = dsmc
+
+
+# e- / Xe 弹性碰撞 激发碰撞 电离碰撞
+elec_mcc_coll.scattering_processes = elastic excitation1 ionization
+elec_mcc_coll.species = electrons
+elec_mcc_coll.elastic_cross_section = Xe2X/XeElastic.dat
+elec_mcc_coll.excitation1_energy = 8.3153
+elec_mcc_coll.excitation1_cross_section = Xe2X/XeExcitation.dat
+elec_mcc_coll.ionization_energy = 12.1298
+elec_mcc_coll.ionization_cross_section = Xe2X/XeIonization.dat
+elec_mcc_coll.ionization_species = xe_ions
+elec_mcc_coll.background_density = 2.5e18 #修改后不实际使用
+elec_mcc_coll.background_temperature = 400
+elec_mcc_coll.ndt_supercycle = mccndt
+elec_mcc_coll.ground_species = xe_netural
+elec_mcc_coll.ground_rho_index = 0
+elec_mcc_coll.excitation_rho_index = 0
+elec_mcc_coll.have_excitation = 0
+
+# Xe / Xe+ 电荷交换 弹性碰撞
+xe_coll.scattering_processes = elastic back 
+xe_coll.species = xe_ions xe_netural
+xe_coll.elastic_cross_section = Xe2X/XeMomentumTransfer.dat
+xe_coll.back_cross_section = Xe2X/XeChargeTransfer.dat
+#xe_coll.background_density = 2.5e18 #修改后不实际使用
+#xe_coll.background_temperature = 400
+#xe_coll.ground_species = xe_netural
+xe_coll.ndt_supercycle = dsmcndt
+#xe_coll.ground_rho_index = 0
+#xe_coll.have_excitation = 0
+
+# Xe / Xe 弹性碰撞
+xe_dsmc.species = xe_netural xe_netural
+xe_dsmc.type = dsmc
+xe_dsmc.ndt_supercycle = 1
+xe_dsmc.scattering_processes = elastic
+xe_dsmc.elastic_cross_section = Xe2X/XeDSMC.dat
+xe_coll.ndt_supercycle = dsmcndt

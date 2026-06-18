@@ -1,0 +1,20 @@
+#场诊断
+# Output for 3d_hall_spoke_init: spoke-distributed neutral gas bp5
+diagnostics.diags_names = rho_diag particle_diag
+
+rho_diag.diag_type = Full
+rho_diag.intervals = max_step / diag_num
+rho_diag.fields_to_plot = rho_xe_netural
+rho_diag.format = openpmd
+rho_diag.write_species = 0
+
+particle_diag.diag_type = Full
+particle_diag.format = openpmd
+particle_diag.intervals = max_step / 2
+particle_diag.file_prefix = spoke_neutral_init
+
+
+#宏观统计
+warpx.reduced_diags_names = init_particle_number
+init_particle_number.type = ParticleNumber
+init_particle_number.intervals = max_step / reduced_diag_num

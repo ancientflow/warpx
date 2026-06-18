@@ -1,0 +1,4 @@
+xe_netural.xeinit.injection_style = external_file
+xe_netural.xeinit.injection_file = zero_init_2X.bp5
+#xe_netural.xeinit.injection_file = PDP_zero_init.bp5
+#xe_netural.xeinit.injection_file = offset_init.bp5
