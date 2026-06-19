@@ -1,0 +1,119 @@
+#全局定义
+max_step = 5000
+my_constants.diag_num = 40
+my_constants.reduced_diag_num = diag_num*10
+my_constants.dt = 5.6e-10
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-06
+warpx.sort_intervals = 50
+amrex.the_arena_init_size = 1024*1024*1024*8
+#参数定义
+my_constants.Tnini = 400 #开尔文
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+
+#工况定义
+my_constants.m_dot = 0.6e-6
+my_constants.ifhole = 0
+my_constants.Tx = 200
+my_constants.Ty = 200
+my_constants.Tz = 140
+my_constants.vz0 = 240
+
+
+#粒子参数定义
+my_constants.rho_init = 2.5e18
+my_constants.w_factor = 2
+my_constants.weight_ratio = 1
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+my_constants.theta_e = kb*Teini/m_e/clight/clight
+my_constants.theta_xe = kb*Tnini/m_xe/clight/clight
+my_constants.theta_xen = kb*Tnini/m_xe/clight/clight
+
+warpx.poisson_solver = multigrid
+
+#几何
+
+my_constants.n_cell = 64
+
+amr.n_cell = n_cell n_cell n_cell
+amr.blocking_factor = n_cell
+amr.max_grid_size = n_cell
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo =  pec pec pec
+boundary.field_hi =  pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = xe_netural
+
+xe_netural.mass = m_xe
+xe_netural.charge = 1
+xe_netural.do_not_gather = 1
+xe_netural.do_not_deposit = 1
+xe_netural.ndt = 1
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# This file generates an initial neutral distribution via continuous injection.
+# ==========================================
+insert.initial_sources =
+insert.continuous_sources = xe_neutral_inlet
+
+xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1.0
+xe_neutral_inlet.x_offset = 0.025 / l_factor
+xe_neutral_inlet.y_offset = 0.025 / l_factor
+
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = area_uniform
+xe_neutral_inlet.position.r.min = ((0.021 + 0.031) / 4 - 0.001) / l_factor
+xe_neutral_inlet.position.r.max = ((0.021 + 0.031) / 4 + 0.001) / l_factor
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = 0.0
+
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = vz0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
+
+
+#碰撞定义
+FILE = 3d_hall_xecoll
+
+#输出定义
+FILE = init_diag

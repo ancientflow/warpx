@@ -7,6 +7,7 @@
 #include "CoupledBackgroundMCCCollision.H"
 
 #include "Insert/Collisions/FilterCopyTransformCoupled.H"
+#include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 
 #include "Particles/Algorithms/KineticEnergy.H"
@@ -397,6 +398,12 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
 
     // Loop over refinement levels
     const int depos_order = WarpX::nox;
+#ifdef IONIZATION_SOURCE_RECORD
+    if (ionization_flag) {
+        Insert::IonizationSourceRecordCollisionSample(
+            geom, dt, elec_weight, warpx_instance.maxLevel());
+    }
+#endif
 #if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
     amrex::Vector<amrex::Vector<amrex::ParticleReal>> pdata(7);
 #endif
@@ -547,6 +554,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
 #if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
         ground_pc.deleteInvalidParticles();
 #endif
+#ifndef IONIZATION_SOURCE_INJECT
         if (ionization_flag) {
             if (depos_order == 1) {
                 doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
@@ -570,6 +578,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                                                 inv_cell_size, elec_weight);
             }
         }
+#endif
     }
 }
 
@@ -916,6 +925,11 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
             false
 #endif
             );
+
+#ifdef IONIZATION_SOURCE_RECORD
+        Insert::IonizationSourceDepositNewElectrons(elec_tile, np_elec,
+                                                    num_added, elec_weight);
+#endif
 
 #ifndef MCC_DENSITY_AVERAGE_USE
         amrex::Gpu::DeviceScalar<int> all_deleted(0);

@@ -1,0 +1,19 @@
+#场诊断
+diagnostics.diags_names = intensive_diag ECDI_diag
+intensive_diag.diag_type = Full
+intensive_diag.intervals = max_step / diag_num
+intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural Ex Ey Ez phi T_electrons T_xe_ions
+intensive_diag.format = openpmd
+intensive_diag.write_species = 0
+
+ECDI_diag.diag_type = Full
+ECDI_diag.intervals = 1500000:3000000:500
+ECDI_diag.fields_to_plot = rho_xe_ions rho_electrons Ex Ey
+ECDI_diag.format = openpmd
+ECDI_diag.write_species = 0
+
+#宏观统计
+warpx.reduced_diags_names = particle_number
+
+particle_number.type = ParticleNumber
+particle_number.intervals = max_step / reduced_diag_num
