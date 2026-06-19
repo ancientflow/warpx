@@ -55,8 +55,9 @@ Source/Insert/Injection/
   DistributionSampler1D.cpp
 ```
 
-其中 `DistributionSampler1D` 继续复用，用于 spoke、任意表格化方向分布和其他
-一维概率密度采样。
+其中 `NumericalInverseCDFSampler1D` 继续复用，用于 spoke、任意表格化方向分布和
+其他无法方便写出解析反 CDF 的一维概率密度采样。`DistributionSampler1D` 仅作为
+兼容旧代码的类型别名保留。
 
 ## 核心数据模型
 
@@ -292,8 +293,8 @@ spoke_phase
 
 `discrete` 用于从一组离散坐标值中按权重选择，例如多个点发射器或离散孔中心。
 
-`tabulated` 使用表格概率密度构造 CDF；`DistributionSampler1D` 已经提供基本
-采样能力。
+`tabulated` 使用表格概率密度构造 CDF；`NumericalInverseCDFSampler1D` 已经提供
+基本采样能力。
 
 `parser` 为后续解析一维函数预留，例如 `f(theta)` 或 `f(z)`。
 
@@ -373,8 +374,9 @@ channel_plasma.position.theta.spoke_sigma = pi / 4
 ```
 
 `single_spoke`、`multi_spoke`、`tabulated` 和 `parser` 内部可以继续复用
-`DistributionSampler1D` 进行 CDF 采样。`constant`、`uniform`、`area_uniform`、
-`gaussian` 和 `positive_gaussian` 可直接实现采样，不需要预构造 CDF。
+`NumericalInverseCDFSampler1D` 进行数值 CDF 反演采样。`constant`、`uniform`、
+`area_uniform`、`gaussian` 和 `positive_gaussian` 可直接实现采样，不需要预构造
+CDF。
 
 ### 位置空间示例
 
@@ -673,7 +675,7 @@ WarpX 官方 `PlasmaInjector` 仍负责官方通用注入路径。`Insert` 的 H
 
 - `InjectorPosition` 的“运行时选择具体位置分布”思想。
 - `InjectorMomentum` 的“速度分布独立于位置分布”思想。
-- `DistributionSampler1D` 形式的 CDF 采样。
+- `NumericalInverseCDFSampler1D` 形式的数值 CDF 反演采样。
 - `PlasmaInjector` 的参数解析分层思想。
 
 不采用的部分：

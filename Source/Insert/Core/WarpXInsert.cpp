@@ -3,6 +3,7 @@
 #include "Insert/Background/InsertBackgroundDensity.h"
 #include "Insert/Boundary/InsertBoundaryParticles.h"
 #include "Insert/Boundary/InsertBoundaryPhi.h"
+#include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
@@ -25,15 +26,8 @@ namespace Insert {
 
 void
 ParticleInjection () {
-#ifdef HALL3D
-    CathodeInjection3D();
-#ifndef MCC_DENSITY_AVERAGE_USE
-    XeInjection();
-#endif
-
-#endif
-#ifdef HALL3D_INIT
-    XeFastInjection();
+#if defined(HALL3D) || defined(HALL3D_INIT)
+    InjectHallParticles();
 #endif
 }
 
@@ -113,7 +107,7 @@ Initialize () {
     GlobalBackgroundDensityInit();
 #endif
 #ifdef HALL3D
-    PlasmaInit();
+    InitializeHallInjection();
 #endif
 }
 
@@ -168,6 +162,9 @@ AfterCollision (int step) {
 
 void
 Finalize () {
+#ifdef IONIZATION_SOURCE_RECORD
+    IonizationSourceFinalize();
+#endif
 #ifdef MCC_DENSITY
     GlobalBackgroundDensityFinalize();
 #endif

@@ -9,18 +9,18 @@
 
 namespace Insert {
 
-DistributionSampler1D::DistributionSampler1D (
+NumericalInverseCDFSampler1D::NumericalInverseCDFSampler1D (
     amrex::ParticleReal xmin, amrex::ParticleReal xmax, int num_bins,
-    std::function<amrex::ParticleReal(amrex::ParticleReal)> distribution)
+    std::function<amrex::ParticleReal(amrex::ParticleReal)> pdf)
     : m_xmin(xmin), m_xmax(xmax)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        xmax > xmin, "DistributionSampler1D requires xmax > xmin.");
+        xmax > xmin, "NumericalInverseCDFSampler1D requires xmax > xmin.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        num_bins > 0, "DistributionSampler1D requires num_bins > 0.");
+        num_bins > 0, "NumericalInverseCDFSampler1D requires num_bins > 0.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        static_cast<bool>(distribution),
-        "DistributionSampler1D requires a valid distribution function.");
+        static_cast<bool>(pdf),
+        "NumericalInverseCDFSampler1D requires a valid PDF function.");
 
     m_dx = (m_xmax - m_xmin) / static_cast<amrex::ParticleReal>(num_bins);
     m_cdf.assign(num_bins + 1, static_cast<amrex::ParticleReal>(0.0));
@@ -28,13 +28,13 @@ DistributionSampler1D::DistributionSampler1D (
     // Use the midpoint rule to build a tabulated, unnormalized CDF.
     for (int i = 0; i < num_bins; ++i) {
         const amrex::ParticleReal x =
-            m_xmin +
-            (static_cast<amrex::ParticleReal>(i) + static_cast<amrex::ParticleReal>(0.5)) *
-                m_dx;
-        const amrex::ParticleReal density = distribution(x);
+            m_xmin + (static_cast<amrex::ParticleReal>(i) +
+                      static_cast<amrex::ParticleReal>(0.5)) *
+                         m_dx;
+        const amrex::ParticleReal density = pdf(x);
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(density >= amrex::ParticleReal(0.0) &&
                                              std::isfinite(density),
-                                         "DistributionSampler1D distribution "
+                                         "NumericalInverseCDFSampler1D PDF "
                                          "must be finite and non-negative.");
 
         m_cdf[i + 1] = m_cdf[i] + density * m_dx;
@@ -43,7 +43,7 @@ DistributionSampler1D::DistributionSampler1D (
     m_integral = m_cdf.back();
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_integral > amrex::ParticleReal(0.0),
-        "DistributionSampler1D distribution integral must be positive.");
+        "NumericalInverseCDFSampler1D PDF integral must be positive.");
 
     // Normalize the CDF to [0, 1], while preserving the original integral.
     for (auto& cdf_value : m_cdf) {
@@ -53,12 +53,15 @@ DistributionSampler1D::DistributionSampler1D (
 }
 
 amrex::ParticleReal
-DistributionSampler1D::sample (
+NumericalInverseCDFSampler1D::sample (
     amrex::RandomEngine const& engine) const noexcept
 {
     const amrex::ParticleReal selector = amrex::Random(engine);
     // Locate the tabulated CDF interval and linearly interpolate within it.
     auto const upper = std::upper_bound(m_cdf.begin(), m_cdf.end(), selector);
+    if (upper == m_cdf.end()) {
+        return m_xmax;
+    }
 
     const auto upper_index = static_cast<int>(upper - m_cdf.begin());
     const int bin = upper_index - 1;
@@ -74,19 +77,19 @@ DistributionSampler1D::sample (
 }
 
 amrex::ParticleReal
-DistributionSampler1D::integral () const noexcept
+NumericalInverseCDFSampler1D::integral () const noexcept
 {
     return m_integral;
 }
 
 amrex::ParticleReal
-DistributionSampler1D::xmin () const noexcept
+NumericalInverseCDFSampler1D::xmin () const noexcept
 {
     return m_xmin;
 }
 
 amrex::ParticleReal
-DistributionSampler1D::xmax () const noexcept
+NumericalInverseCDFSampler1D::xmax () const noexcept
 {
     return m_xmax;
 }

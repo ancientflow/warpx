@@ -4,6 +4,7 @@
 
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Injection/DistributionSampler1D.H"
+#include "Insert/Injection/HallInjector.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
 
@@ -134,7 +135,7 @@ ParticleInjection (WarpX& warpx_instance) {
 #ifdef HALL3D
 namespace {
 
-amrex::ParticleReal
+[[maybe_unused]] amrex::ParticleReal
 single_spoke_distribution (amrex::ParticleReal theta) {
     constexpr amrex::ParticleReal pi = amrex::Math::pi<amrex::ParticleReal>();
     constexpr amrex::ParticleReal center = pi;
@@ -170,6 +171,7 @@ multi_spoke_distribution (amrex::ParticleReal theta) {
 
 amrex::ParticleReal
 uniform_distribution (amrex::ParticleReal theta) {
+    amrex::ignore_unused(theta);
     return 0.5 / amrex::Math::pi<amrex::ParticleReal>();
 }
 
@@ -191,7 +193,7 @@ MakePlasmaThetaSampler () {
 #endif
 
 void
-CathodeInjection3D () {
+LegacyCathodeInjection3D () {
 #ifdef HALL3D
     static const double L = 0.05;
     static double Ic, dt, l_factor, elec_weight;
@@ -261,7 +263,7 @@ CathodeInjection3D () {
 }
 
 void
-PlasmaInit () {
+LegacyPlasmaInit () {
 #ifdef HALL3D
     const double L = 0.05;
     double l_factor, elec_weight;
@@ -320,7 +322,7 @@ PlasmaInit () {
 }
 
 void
-XeInjection () {
+LegacyXeInjection () {
 #ifdef HALL3D
     static const double L = 0.05, NA = 6.03e23;
     static bool ifinit = false, ifhole = false;
@@ -427,7 +429,7 @@ XeInjection () {
 }
 
 void
-XeFastInjection () {
+LegacyXeFastInjection () {
 #ifdef HALL3D_INIT
     double atom_weight, l_factor, m_dot, Tx, Ty, Tz, vz0;
     bool ifhole = false;
@@ -527,6 +529,57 @@ XeFastInjection () {
                             vz, 1, {pw}, 0, nattr, 0);
         amrex::Print() << "Injection Xe Atom\n";
     }
+#endif
+}
+
+void
+CathodeInjection3D ()
+{
+#ifdef HALL3D
+    InjectHallParticles();
+#endif
+}
+
+void
+PlasmaInit ()
+{
+#ifdef HALL3D
+    InitializeHallInjection();
+#endif
+}
+
+void
+XeInjection ()
+{
+#ifdef HALL3D
+    InjectHallParticles();
+#endif
+}
+
+void
+XeFastInjection ()
+{
+#ifdef HALL3D_INIT
+    InjectHallParticles();
+#endif
+}
+
+void
+InitializeHallInjection ()
+{
+#if defined(HALL3D) || defined(HALL3D_INIT)
+    HallInjector::GetInstance().InitializePlasma(WarpX::GetInstance());
+#endif
+}
+
+void
+InjectHallParticles ()
+{
+#if defined(HALL3D) || defined(HALL3D_INIT)
+    amrex::Real dt = 0.0;
+    amrex::ParmParse pp_mc("my_constants");
+    pp_mc.query("dt", dt);
+    HallInjector::GetInstance().InjectParticles(WarpX::GetInstance(), dt, 0);
 #endif
 }
 
