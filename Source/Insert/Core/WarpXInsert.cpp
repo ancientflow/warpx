@@ -127,6 +127,10 @@ AfterDiagnostics () {
     // SecondaryEmission();
     // AnodeIonNeutralization();
     AnodeCurrentCalc();
+    ThrustCalc();
+    BeamDivergenceCalc();
+    IEDFCalc();
+    ClearHallBoundaryParticleCache();
 #endif
 }
 
