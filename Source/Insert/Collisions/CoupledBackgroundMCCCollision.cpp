@@ -779,7 +779,9 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     ParticleUtils::RandomizeVelocity(
                         vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
 #else
-                    int pos = px * ncell * ncell + py * ncell + pz;
+                    int pos = Insert::CollisionDetail::DenseBinIndex(
+                        amrex::Dim3{px, py, pz},
+                        amrex::Dim3{ncell, ncell, ncell});
                     if (p_particle_num[pos] > 0) {
                         ParticleUtils::RandomizeVelocity(
                             vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz),
