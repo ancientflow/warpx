@@ -15,6 +15,15 @@
 
 #include <utility>
 
+namespace Insert::CollisionDetail {
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE int
+DenseBinIndex (amrex::Dim3 const cell, amrex::Dim3 const ncell) noexcept {
+    return (cell.z * ncell.y + cell.y) * ncell.x + cell.x;
+}
+
+} // namespace Insert::CollisionDetail
+
 /**
  * \brief Apply a filter, copy, and transform operation using a local
  * background-density field and record how many background particles should be
@@ -97,7 +106,8 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
             p_mask[i] = filter(src_data, i, engine, n_a);
 
             if (p_mask[i] && consume_background) {
-                int pos = pi * ncell.z * ncell.y + pj * ncell.z + pk;
+                int pos = Insert::CollisionDetail::DenseBinIndex(
+                    amrex::Dim3{pi, pj, pk}, ncell);
                 Index np_old = p_particle_num[pos];
                 while (np_old > 0) {
                     auto returned = amrex::Gpu::Atomic::CAS(
