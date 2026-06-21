@@ -15,7 +15,9 @@
 
 #include <ablastr/profiler/ProfilerWrapper.H>
 #include <AMReX_Array.H>
+#include <AMReX_iMultiFab.H>
 
+#include <optional>
 
 /**
  * \brief Base class for Electrostatic Solver
@@ -95,7 +97,8 @@ public:
         int max_iters,
         int verbosity,
         bool is_igf_2d_slices,
-        std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt // only used for EB
+        std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt, // only used for EB
+        std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
     ) const;
 
     /**

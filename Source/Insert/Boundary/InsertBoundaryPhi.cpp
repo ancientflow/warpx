@@ -13,6 +13,62 @@
 
 #include <iostream>
 
+namespace {
+
+#ifdef HALL3D
+struct HallAnodeRingConfig
+{
+    amrex::Real voltage;
+    amrex::Real center_x;
+    amrex::Real center_y;
+    amrex::Real r_min_sq;
+    amrex::Real r_max_sq;
+};
+
+HallAnodeRingConfig
+ReadHallAnodeRingConfig (amrex::Geometry const& geom)
+{
+    amrex::ParmParse pp_mc("my_constants");
+    auto l_factor = static_cast<amrex::Real>(1.0);
+    auto voltage = static_cast<amrex::Real>(0.0);
+    pp_mc.get("l_factor", l_factor);
+    pp_mc.query("voltage", voltage);
+
+    amrex::Real const r_min =
+        static_cast<amrex::Real>(0.021) / (static_cast<amrex::Real>(2.0) * l_factor);
+    amrex::Real const r_max =
+        static_cast<amrex::Real>(0.031) / (static_cast<amrex::Real>(2.0) * l_factor);
+
+    return HallAnodeRingConfig{
+        voltage,
+        static_cast<amrex::Real>(0.5) * (geom.ProbLo(0) + geom.ProbHi(0)),
+        static_cast<amrex::Real>(0.5) * (geom.ProbLo(1) + geom.ProbHi(1)),
+        r_min * r_min,
+        r_max * r_max
+    };
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+bool
+IsHallAnodeRingNode (
+    int i, int j, int k,
+    int zlo, int xlo, int ylo,
+    amrex::Real problo_x, amrex::Real problo_y,
+    amrex::Real dx, amrex::Real dy,
+    HallAnodeRingConfig const config)
+{
+    amrex::Real const x = problo_x + (i - xlo) * dx;
+    amrex::Real const y = problo_y + (j - ylo) * dy;
+    amrex::Real const r_sq =
+        (x - config.center_x) * (x - config.center_x) +
+        (y - config.center_y) * (y - config.center_y);
+
+    return k == zlo && r_sq >= config.r_min_sq && r_sq <= config.r_max_sq;
+}
+#endif
+
+} // namespace
+
 namespace Insert {
 
 void
@@ -65,44 +121,87 @@ AnodeVoltage ()
 {
 #ifdef HALL3D
     WarpX& warpx_instance = WarpX::GetInstance();
-    amrex::ParmParse pp_mc("my_constants");
-    double ncell, voltage, L, l_factor;
-    pp_mc.getWithParser("n_cell", ncell);
-    pp_mc.get("L", L);
-    pp_mc.get("l_factor", l_factor);
-    pp_mc.query("voltage", voltage);
-    double halfncell = ncell / 2;
-
-    double sim_L = L / l_factor, gap = sim_L / ncell,
-           index_sq_min =
-               (0.021 / 2 / l_factor / gap) * (0.021 / 2 / l_factor / gap),
-           index_sq_max =
-               (0.031 / 2 / l_factor / gap) * (0.031 / 2 / l_factor / gap);
-
     auto phi_field =
         warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
+    auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(0));
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
+    amrex::Real const problo_x = warpx_instance.Geom(0).ProbLo(0);
+    amrex::Real const problo_y = warpx_instance.Geom(0).ProbLo(1);
+    amrex::Real const dx = warpx_instance.Geom(0).CellSize(0);
+    amrex::Real const dy = warpx_instance.Geom(0).CellSize(1);
     for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid();
          ++mfi) {
         const amrex::Box& box = mfi.tilebox();
         amrex::Array4<amrex::Real> const& phi = phi_field->array(mfi);
         if (!domain.strictly_contains(box)) {
             amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
-                if (k == domain.smallEnd(2)) {
-                    double i_ex = i - halfncell, j_ex = j - halfncell;
-                    if (i_ex * i_ex + j_ex * j_ex >= index_sq_min &&
-                        i_ex * i_ex + j_ex * j_ex <= index_sq_max) {
-                        phi(i, j, k) = voltage;
-                    } else {
-                        phi(i, j, k) = 0;
-                    }
+                if (IsHallAnodeRingNode(i, j, k,
+                                         domain.smallEnd(2),
+                                         domain.smallEnd(0),
+                                         domain.smallEnd(1),
+                                         problo_x, problo_y, dx, dy, config))
+                {
+                    phi(i, j, k) = config.voltage;
                 }
             });
         }
     }
     phi_field->FillBoundary(warpx_instance.Geom(0).periodicity());
 #endif
+}
+
+amrex::Vector<std::unique_ptr<amrex::iMultiFab> >
+BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi)
+{
+    amrex::Vector<std::unique_ptr<amrex::iMultiFab> > masks;
+
+#if defined(HALL3D) && defined(WARPX_DIM_3D)
+    WarpX& warpx_instance = WarpX::GetInstance();
+    masks.reserve(phi.size());
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto* phi_field = phi[lev];
+        amrex::BoxArray mask_ba(phi_field->boxArray());
+        mask_ba.convert(amrex::IntVect::TheNodeVector());
+        auto mask = std::make_unique<amrex::iMultiFab>(
+            mask_ba, phi_field->DistributionMap(), 1, 0);
+        mask->setVal(1);
+
+        auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(lev));
+        amrex::Box domain = warpx_instance.Geom(lev).Domain();
+        domain.surroundingNodes();
+        amrex::Real const problo_x = warpx_instance.Geom(lev).ProbLo(0);
+        amrex::Real const problo_y = warpx_instance.Geom(lev).ProbLo(1);
+        amrex::Real const dx = warpx_instance.Geom(lev).CellSize(0);
+        amrex::Real const dy = warpx_instance.Geom(lev).CellSize(1);
+
+#ifdef AMREX_USE_OMP
+#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
+#endif
+        for (amrex::MFIter mfi(*mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            amrex::Array4<int> const& mask_arr = mask->array(mfi);
+            amrex::Array4<amrex::Real> const& phi_arr = phi_field->array(mfi);
+            amrex::Box const& box = mfi.tilebox();
+            amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+                if (IsHallAnodeRingNode(i, j, k,
+                                         domain.smallEnd(2),
+                                         domain.smallEnd(0),
+                                         domain.smallEnd(1),
+                                         problo_x, problo_y, dx, dy, config))
+                {
+                    mask_arr(i, j, k) = 0;
+                    phi_arr(i, j, k) = config.voltage;
+                }
+            });
+        }
+
+        phi_field->FillBoundary(warpx_instance.Geom(lev).periodicity());
+        masks.push_back(std::move(mask));
+    }
+#endif
+
+    return masks;
 }
 
 void
@@ -121,6 +220,11 @@ DirichletPhiGuardSet ()
     amrex::Gpu::copy(amrex::Gpu::hostToDevice, dx_host, dx_host + 3,
                      dx_device.begin());
     amrex::Real* dx = dx_device.dataPtr();
+#ifdef HALL3D
+    auto const anode_config = ReadHallAnodeRingConfig(warpx_instance.Geom(0));
+    amrex::Real const problo_x = warpx_instance.Geom(0).ProbLo(0);
+    amrex::Real const problo_y = warpx_instance.Geom(0).ProbLo(1);
+#endif
 
     for (amrex::MFIter mfi(*phi, amrex::TilingIfNotGPU()); mfi.isValid();
          ++mfi) {
@@ -151,7 +255,16 @@ DirichletPhiGuardSet ()
             }
 #endif
 #if defined(WARPX_DIM_3D)
-            if (k == domain.smallEnd(2)) {
+#if defined(HALL3D)
+            if (IsHallAnodeRingNode(i, j, k,
+                                    domain.smallEnd(2),
+                                    domain.smallEnd(0),
+                                    domain.smallEnd(1),
+                                    problo_x, problo_y, dx[0], dx[1], anode_config))
+#else
+            if (k == domain.smallEnd(2))
+#endif
+            {
                 phi_arr(i, j, k - 1) =
                     2.0_rt * phi_arr(i, j, k) - phi_arr(i, j, k + 1) -
                     rho_arr(i, j, k) * dx[2] * dx[2] / PhysConst::epsilon_0;

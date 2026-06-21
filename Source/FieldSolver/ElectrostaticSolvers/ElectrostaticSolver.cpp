@@ -130,7 +130,8 @@ ElectrostaticSolver::computePhi (
     int const max_iters,
     int const verbosity,
     bool const is_igf_2d,
-    std::optional<ablastr::fields::MultiLevelVectorField> efield
+    std::optional<ablastr::fields::MultiLevelVectorField> efield,
+    std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks
 ) const
 {
     // create a vector to our fields, sorted by level
@@ -217,7 +218,8 @@ ElectrostaticSolver::computePhi (
         post_phi_calculation,
         *m_poisson_boundary_handler,
         warpx.gett_new(0),
-        eb_farray_box_factory
+        eb_farray_box_factory,
+        overset_masks
     );
 
 }
