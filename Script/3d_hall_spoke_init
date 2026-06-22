@@ -49,6 +49,15 @@ my_constants.lz = sim_L
 #物质参数定义
 my_constants.m_xe = 2.179e-25
 
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 1
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
 my_constants.theta_e = kb*Teini/m_e/clight/clight
 my_constants.theta_xe = kb*Tnini/m_xe/clight/clight
 my_constants.theta_xen = kb*Tnini/m_xe/clight/clight

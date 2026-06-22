@@ -28,7 +28,7 @@
  * IONIZATION_SOURCE_INJECT reads source tables and injects particles from them.
  */
 // #define IONIZATION_SOURCE_RECORD
-// #define IONIZATION_SOURCE_INJECT
+#define IONIZATION_SOURCE_INJECT
 
 /* Particle push / injection helpers. */
 #define PUSH_GAP

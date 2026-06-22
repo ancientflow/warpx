@@ -52,6 +52,14 @@ SampleDt (amrex::Real const time, amrex::Real& last_sample_time,
     return sample_dt;
 }
 
+bool
+DiagEnabled (const char* const name) {
+    bool enabled = false;
+    amrex::ParmParse pp_mc("my_constants");
+    pp_mc.query(name, enabled);
+    return enabled;
+}
+
 } // namespace
 
 namespace Insert {
@@ -59,6 +67,9 @@ namespace Insert {
 void
 ParticleNumber () {
 #ifdef NUMP
+    static bool const diag_enabled = DiagEnabled("particle_number_diag");
+    if (!diag_enabled) { return; }
+
     WarpX& warpx_instance = WarpX::GetInstance();
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
 
@@ -75,6 +86,9 @@ ParticleNumber () {
 void
 ShowAndWriteIonzationNum (amrex::Vector<int> num) {
 #ifdef COLLISION_RECORD
+    static bool const diag_enabled = DiagEnabled("collision_record_diag");
+    if (!diag_enabled) { return; }
+
     amrex::Print() << "produce macro electron: " << num[0]
                    << "\nproduce macro xe ions: " << num[1] << "\n";
 
@@ -96,6 +110,9 @@ ShowAndWriteIonzationNum (amrex::Vector<int> num) {
 void
 AnodeCurrentCalc () {
 #ifdef HALL3D
+    static bool const diag_enabled = DiagEnabled("anode_current_diag");
+    if (!diag_enabled) { return; }
+
     static int times = 0;
     static int gap = 10;
     times++;
@@ -227,6 +244,9 @@ AnodeCurrentCalc () {
 void
 ThrustCalc () {
 #ifdef HALL3D
+    static bool const diag_enabled = DiagEnabled("thrust_diag");
+    if (!diag_enabled) { return; }
+
     static int times = 0;
     static int gap = 10;
     times++;
@@ -307,6 +327,9 @@ ThrustCalc () {
 void
 BeamDivergenceCalc () {
 #ifdef HALL3D
+    static bool const diag_enabled = DiagEnabled("beam_divergence_diag");
+    if (!diag_enabled) { return; }
+
     static int times = 0;
     static int gap = 10;
     times++;
@@ -402,6 +425,9 @@ BeamDivergenceCalc () {
 void
 IEDFCalc () {
 #ifdef HALL3D
+    static bool const diag_enabled = DiagEnabled("iedf_diag");
+    if (!diag_enabled) { return; }
+
     static int times = 0;
     static int gap = 10;
     times++;
@@ -536,6 +562,9 @@ IEDFCalc () {
 void
 ClearHallBoundaryParticleCache () {
 #ifdef HALL3D
+    static bool const diag_enabled = DiagEnabled("clear_hall_boundary_particle_cache_diag");
+    if (!diag_enabled) { return; }
+
     static int times = 0;
     static int gap = 10;
     times++;

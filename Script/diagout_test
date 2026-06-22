@@ -2,7 +2,7 @@
 diagnostics.diags_names = intensive_diag
 intensive_diag.diag_type = Full
 intensive_diag.intervals = 2500
-intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural Ex Ey Ez phi T_electrons T_xe_ions jx jy jz
+intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural T_electrons T_xe_ions phi
 #intensive_diag.fields_to_plot = rho_electrons rho_xe_netural phi
 intensive_diag.format = openpmd
 intensive_diag.write_species = 0

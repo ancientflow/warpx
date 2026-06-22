@@ -2,7 +2,7 @@
 max_step = 12000000
 my_constants.diag_num = 100
 my_constants.reduced_diag_num = 12000
-my_constants.dt = 5.6e-12
+my_constants.dt = 3e-12
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -21,9 +21,9 @@ my_constants.ly = sim_L
 my_constants.lz = sim_L
 
 #工况定义
-my_constants.m_dot = 0.8e-6
+my_constants.m_dot = 0.9e-6
 my_constants.Ic = 0.5
-my_constants.voltage = 150
+my_constants.voltage = 200
 my_constants.ifhole = 0
 my_constants.Tx = 200
 my_constants.Ty = 200
@@ -43,8 +43,8 @@ my_constants.spoke_reverse = 1
 my_constants.spoke_sigma = pi / 8
 
 #粒子参数定义
-my_constants.weight_ratio = 1
-my_constants.w_factor = 2
+my_constants.weight_ratio = 4
+my_constants.w_factor = 8
 my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
 my_constants.xe_weight = elec_weight*weight_ratio
 
@@ -54,7 +54,7 @@ my_constants.m_xe = 2.179e-25
 warpx.poisson_solver = multigrid
 
 #几何
-my_constants.factor = 2
+my_constants.factor = 4
 my_constants.n_cell = 64 * factor
 
 amr.n_cell = n_cell n_cell n_cell
@@ -107,7 +107,7 @@ xe_ions.save_particles_at_zlo = 1
 xe_ions.save_particles_at_zhi = 1
 xe_ions.ndt = 10
 
-xe_netural.ndt = 10
+xe_netural.ndt = 100
 
 my_constants.hall_diag_interval = 10
 my_constants.thrust_diag_path = "thrust_spoke.dat"
@@ -116,6 +116,15 @@ my_constants.iedf_path = "iedf_spoke.dat"
 my_constants.iedf_bins = 200
 my_constants.iedf_min_eV = 0
 my_constants.iedf_max_eV = 500
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 1
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
 
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
@@ -224,11 +233,12 @@ xe_netural.injection_sources = xeinit
 #初始注入
 xe_netural.xeinit.injection_style = external_file
 xe_netural.xeinit.injection_file = spoke_neutral_init/openpmd_005000.bp5
+#xe_netural.xeinit.injection_file = hall_start_256.bp5
 
 
 #碰撞设置
-#FILE = 3d_hall_mcccoll_test
-FILE = ../../Script/3d_hall_mcccoll
+FILE = 3d_hall_mcccoll_test
+#FILE = ../../Script/3d_hall_mcccoll
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file

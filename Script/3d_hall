@@ -109,6 +109,15 @@ my_constants.iedf_bins = 200
 my_constants.iedf_min_eV = 0
 my_constants.iedf_max_eV = 500
 
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 1
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
