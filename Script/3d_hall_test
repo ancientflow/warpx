@@ -59,11 +59,11 @@ geometry.prob_lo = 0.0 0.0 0.0
 geometry.prob_hi = lx ly lz
 
 #边界条件
-boundary.field_lo = pec pec pec
+boundary.field_lo = pec pec neumann
 boundary.field_hi = pec pec pec
 boundary.particle_lo = absorbing absorbing absorbing
 boundary.particle_hi = absorbing absorbing absorbing
-boundary.potential_lo_x = 0
+#boundary.potential_lo_x = 0
 boundary.potential_lo_y = 0
 boundary.potential_lo_z = 0
 boundary.potential_hi_x = 0
@@ -108,7 +108,7 @@ my_constants.iedf_max_eV = 500
 
 # Insert runtime diagnostics switches
 my_constants.particle_number_diag = 1
-my_constants.anode_current_diag = 1
+my_constants.anode_current_diag = 0
 my_constants.clear_hall_boundary_particle_cache_diag = 1
 my_constants.thrust_diag = 0
 my_constants.beam_divergence_diag = 0
@@ -233,4 +233,4 @@ warpx.B_ext_grid_init_style = read_from_file
 warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
 
 #输出定义
-FILE = diagout_test
+#FILE = diagout_test

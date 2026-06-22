@@ -26,7 +26,7 @@ int ParticleSubcyclingNdt (std::string const& species_name);
 void ApplyParticleSubcycling (
     std::string const& species_name, int step, amrex::Real& dt, bool& do_not_push);
 void SetBoundaryPhi ();
-amrex::Vector<std::unique_ptr<amrex::iMultiFab> >
+amrex::Vector<std::unique_ptr<amrex::iMultiFab> > const&
 BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi);
 void SetPhiGuards ();
 void BeforeCollision (int step);

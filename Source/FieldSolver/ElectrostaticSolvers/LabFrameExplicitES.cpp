@@ -67,7 +67,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
     Insert::SetBoundaryPhi();//修正电势
-    auto phi_overset_masks = Insert::BuildPhiOversetMasks(phi_fp);
+    auto const& phi_overset_masks = Insert::BuildPhiOversetMasks(phi_fp);
     std::optional<amrex::Vector<amrex::iMultiFab const *> > phi_overset_mask_ptrs;
     if (!phi_overset_masks.empty()) {
         amrex::Vector<amrex::iMultiFab const *> mask_ptrs;

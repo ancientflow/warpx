@@ -10,7 +10,7 @@
 namespace Insert {
 
 void AnodeVoltage ();
-amrex::Vector<std::unique_ptr<amrex::iMultiFab> >
+amrex::Vector<std::unique_ptr<amrex::iMultiFab> > const&
 BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi);
 void DirichletPhiGuardSet ();
 void VoltageAdjustment ();

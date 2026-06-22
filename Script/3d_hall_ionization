@@ -135,7 +135,7 @@ cathode_electron.velocity.vz.distribution = gaussian
 cathode_electron.velocity.vz.sigma = 592982
 
 #碰撞设置
-#FILE = 3d_hall_mcccoll_test
+FILE = 3d_hall_mcccoll_test
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file
