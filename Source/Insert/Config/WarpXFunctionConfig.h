@@ -15,7 +15,7 @@
 /* Background MCC density coupling. */
 #define MCC_DENSITY
 // #define MCC_DENSITY_AVERAGE_CALC
-// #define MCC_DENSITY_AVERAGE_USE
+#define MCC_DENSITY_AVERAGE_USE
 
 /* Coupled MCC collision behavior. */
 #define MCC_DELETE

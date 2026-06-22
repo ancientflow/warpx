@@ -65,6 +65,15 @@ IsHallAnodeRingNode (
 
     return k == zlo && r_sq >= config.r_min_sq && r_sq <= config.r_max_sq;
 }
+
+#if defined(WARPX_DIM_3D)
+struct PhiOversetMaskCache
+{
+    amrex::Vector<std::unique_ptr<amrex::iMultiFab> > masks;
+    bool initialized = false;
+};
+#endif
+
 #endif
 
 } // namespace
@@ -151,57 +160,64 @@ AnodeVoltage ()
 #endif
 }
 
-amrex::Vector<std::unique_ptr<amrex::iMultiFab> >
+amrex::Vector<std::unique_ptr<amrex::iMultiFab> > const&
 BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi)
 {
-    amrex::Vector<std::unique_ptr<amrex::iMultiFab> > masks;
+    static amrex::Vector<std::unique_ptr<amrex::iMultiFab> > empty_masks;
 
 #if defined(HALL3D) && defined(WARPX_DIM_3D)
+    static PhiOversetMaskCache cache;
     WarpX& warpx_instance = WarpX::GetInstance();
-    masks.reserve(phi.size());
 
-    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
-        auto* phi_field = phi[lev];
-        amrex::BoxArray mask_ba(phi_field->boxArray());
-        mask_ba.convert(amrex::IntVect::TheNodeVector());
-        auto mask = std::make_unique<amrex::iMultiFab>(
-            mask_ba, phi_field->DistributionMap(), 1, 0);
-        mask->setVal(1);
+    if (!cache.initialized) {
+        auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(0));
+        cache.masks.reserve(phi.size());
 
-        auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(lev));
-        amrex::Box domain = warpx_instance.Geom(lev).Domain();
-        domain.surroundingNodes();
-        amrex::Real const problo_x = warpx_instance.Geom(lev).ProbLo(0);
-        amrex::Real const problo_y = warpx_instance.Geom(lev).ProbLo(1);
-        amrex::Real const dx = warpx_instance.Geom(lev).CellSize(0);
-        amrex::Real const dy = warpx_instance.Geom(lev).CellSize(1);
+        for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+            auto* phi_field = phi[lev];
+            amrex::BoxArray mask_ba(phi_field->boxArray());
+            mask_ba.convert(amrex::IntVect::TheNodeVector());
+            auto mask = std::make_unique<amrex::iMultiFab>(
+                mask_ba, phi_field->DistributionMap(), 1, 0);
+            mask->setVal(1);
+
+            amrex::Box domain = warpx_instance.Geom(lev).Domain();
+            domain.surroundingNodes();
+            amrex::Real const problo_x = warpx_instance.Geom(lev).ProbLo(0);
+            amrex::Real const problo_y = warpx_instance.Geom(lev).ProbLo(1);
+            amrex::Real const dx = warpx_instance.Geom(lev).CellSize(0);
+            amrex::Real const dy = warpx_instance.Geom(lev).CellSize(1);
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
-        for (amrex::MFIter mfi(*mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-            amrex::Array4<int> const& mask_arr = mask->array(mfi);
-            amrex::Array4<amrex::Real> const& phi_arr = phi_field->array(mfi);
-            amrex::Box const& box = mfi.tilebox();
-            amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
-                if (IsHallAnodeRingNode(i, j, k,
-                                         domain.smallEnd(2),
-                                         domain.smallEnd(0),
-                                         domain.smallEnd(1),
-                                         problo_x, problo_y, dx, dy, config))
-                {
-                    mask_arr(i, j, k) = 0;
-                    phi_arr(i, j, k) = config.voltage;
-                }
-            });
+            for (amrex::MFIter mfi(*mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                amrex::Array4<int> const& mask_arr = mask->array(mfi);
+                amrex::Array4<amrex::Real> const& phi_arr = phi_field->array(mfi);
+                amrex::Box const& box = mfi.tilebox();
+                amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+                    if (IsHallAnodeRingNode(i, j, k,
+                                             domain.smallEnd(2),
+                                             domain.smallEnd(0),
+                                             domain.smallEnd(1),
+                                             problo_x, problo_y, dx, dy, config))
+                    {
+                        mask_arr(i, j, k) = 0;
+                    }
+                });
+            }
+
+            phi_field->FillBoundary(warpx_instance.Geom(lev).periodicity());
+            cache.masks.push_back(std::move(mask));
         }
 
-        phi_field->FillBoundary(warpx_instance.Geom(lev).periodicity());
-        masks.push_back(std::move(mask));
+        cache.initialized = true;
     }
-#endif
 
-    return masks;
+    return cache.masks;
+#else
+    return empty_masks;
+#endif
 }
 
 void
