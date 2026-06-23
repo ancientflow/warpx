@@ -349,12 +349,13 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
         init_flag = true;
     }
 
-#ifndef MCC_DENSITY_AVERAGE_USE
+#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
     auto& ground_pc = mypc->GetParticleContainer(mypc->getSpeciesID(
         global_background_density[m_ground_rho_index].m_ground_species));
 #endif
 
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && \
+    !defined(IONIZATION_SOURCE_INJECT)
     auto& excitation_pc =
         mypc->GetParticleContainer(mypc->getSpeciesID(m_excitation_product));
     MultiFab& m_excitation_rho = global_rho[m_excitation_rho_index];
@@ -404,7 +405,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
             geom, dt, elec_weight, warpx_instance.maxLevel());
     }
 #endif
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
     amrex::Vector<amrex::Vector<amrex::ParticleReal>> pdata(7);
 #endif
     auto const flvl = species1.finestLevel();
@@ -467,7 +468,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
 #endif
             // npIter++;
             // binIter++;
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
             amrex::Gpu::DeviceVector<int> mask(np, 0);
             int* p_mask = mask.dataPtr();
 #endif
@@ -476,7 +477,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -488,7 +489,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<2>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<2>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -500,7 +501,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<3>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<3>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -512,7 +513,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<4>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<4>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -524,7 +525,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 doBackgroundCollisionsWithinTileCouple<1>(
                     pti, cur_time, ground_density, p_delete, p_particle_num,
                     ncell, inv_cell_size);
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
                 if (m_have_excitation) {
                     ReplaceParticlesEachCell<1>(p_delete, offsets, indices,
                                                 numbins, ground_pc, pti,
@@ -533,7 +534,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                 }
 #endif
             }
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
             if (m_have_excitation) {
                 auto& exc_ptile = excitation_pc.ParticlesAt(lev, pti);
                 int np_exc = exc_ptile.numParticles();
@@ -551,10 +552,9 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
             }
         }
         // secondly perform ionization through the SmartCopyFactory if needed
-#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
         ground_pc.deleteInvalidParticles();
 #endif
-#ifndef IONIZATION_SOURCE_INJECT
         if (ionization_flag) {
             if (depos_order == 1) {
                 doBackgroundIonizationCouple<1>(lev, cost, species1, species2,
@@ -578,7 +578,6 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
                                                 inv_cell_size, elec_weight);
             }
         }
-#endif
     }
 }
 
@@ -818,7 +817,7 @@ void
 CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
     int lev, amrex::LayoutData<amrex::Real>* cost,
     WarpXParticleContainer& species1, WarpXParticleContainer& species2,
-    amrex::Real t, amrex::MultiFab& ground_rho,
+    [[maybe_unused]] amrex::Real t, amrex::MultiFab& ground_rho,
     const amrex::XDim3& inv_cell_size, amrex::ParticleReal elec_weight) {
     using namespace amrex::literals;
 #ifdef MCC_DENSITY_AVERAGE_USE
@@ -837,14 +836,16 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
         m_ionization_processes[0], m_mass1, m_total_collision_prob_ioniz,
         m_nu_max_ioniz);
 
+#ifndef IONIZATION_SOURCE_INJECT
     const amrex::ParticleReal sqrt_kb_m =
         std::sqrt(PhysConst::kb / m_background_mass);
+#endif
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
 
-#ifndef MCC_DENSITY_AVERAGE_USE
+#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
     BackgroundCoupledDensity& m_background_density =
         global_background_density[m_ground_rho_index];
     WarpX& warpx_instance = WarpX::GetInstance();
@@ -868,14 +869,19 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
         const auto np_elec = elec_tile.numParticles();
         const auto np_ion = ion_tile.numParticles();
 
+#ifndef IONIZATION_SOURCE_INJECT
         auto Transform = ImpactIonizationTransformFunc(
             m_ionization_processes[0].getEnergyPenalty(), m_mass1, sqrt_kb_m,
             m_background_temperature_func, t);
+#else
+        auto Transform = Insert::CollisionDetail::IonizationSourceTransformFunc(
+            m_ionization_processes[0].getEnergyPenalty(), m_mass1);
+#endif
 
         // 获取粒子网格信息
         const int box_index = pti.index();
         long numbins = 1;
-#ifndef MCC_DENSITY_AVERAGE_USE
+#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
         auto& ptile = pc.ParticlesAt(lev, pti);
         auto& bin = background_bin[box_index];
         const int* offsets = bin.offsetsPtr();
@@ -892,7 +898,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
         amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
         int* p_delete = num_delete.dataPtr();
 
-#ifndef MCC_DENSITY_AVERAGE_USE
+#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
         // 记录每个cell中的原子数，存储原始数据
         amrex::Gpu::DeviceVector<int> particle_num_in_cell_origin(numbins, 0);
         int *p_particle_num = background_np[box_index].dataPtr(),
@@ -914,7 +920,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
 
         amrex::Box box = fab.box();
         const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, lev, 0._rt);
-#ifndef MCC_DENSITY_AVERAGE_USE
+#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
         const amrex::Dim3 lo = lbound(box);
 #endif
 
@@ -922,7 +928,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
             species1, species2, elec_tile, ion_tile, elec_tile, np_elec, np_ion,
             Filter, CopyElec, CopyIon, Transform, p_delete, rho_arr,
             p_particle_num, xyzmin, box, ground_rho.nGrowVect(), inv_cell_size
-#ifdef MCC_DENSITY_AVERAGE_USE
+#if defined(MCC_DENSITY_AVERAGE_USE) || defined(IONIZATION_SOURCE_INJECT)
             ,
             false
 #endif
@@ -933,7 +939,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                                     num_added, elec_weight);
 #endif
 
-#ifndef MCC_DENSITY_AVERAGE_USE
+#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(IONIZATION_SOURCE_INJECT)
         amrex::Gpu::DeviceScalar<int> all_deleted(0);
         int* p_num = all_deleted.dataPtr();
 
@@ -1018,8 +1024,10 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                           << " particle" << pc.getSpeciesId() + 1 << "\n";
 #endif
 
+#ifndef IONIZATION_SOURCE_INJECT
         setNewParticleIDs(elec_tile, np_elec, num_added);
         setNewParticleIDs(ion_tile, np_ion, num_added);
+#endif
 
         if (cost && WarpX::load_balance_costs_update_algo ==
                         LoadBalanceCostsUpdateAlgo::Timers) {
