@@ -23,6 +23,74 @@ void LabFrameExplicitES::InitData() {
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 }
 
+void LabFrameExplicitES::definePhiExtrapolationCache (
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    if (m_phi_extrapolation_cache.size() != phi.size()) {
+        m_phi_extrapolation_cache.resize(phi.size());
+        m_phi_extrapolation_cache_initialized = false;
+    }
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        if (!m_phi_extrapolation_cache[lev]) {
+            auto const& phi_mf = *phi[lev];
+            m_phi_extrapolation_cache[lev] = std::make_unique<amrex::MultiFab>(
+                phi_mf.boxArray(), phi_mf.DistributionMap(), phi_mf.nComp(),
+                phi_mf.nGrowVect());
+            m_phi_extrapolation_cache[lev]->setVal(0.0_rt);
+            m_phi_extrapolation_cache_initialized = false;
+        }
+    }
+}
+
+void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    if (self_fields_phi_extrapolation_alpha == 0.0_rt) {
+        return;
+    }
+
+    definePhiExtrapolationCache(phi);
+
+    if (!m_phi_extrapolation_cache_initialized) {
+        return;
+    }
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto& phi_mf = *phi[lev];
+        auto& cache_mf = *m_phi_extrapolation_cache[lev];
+        const int ncomp = phi_mf.nComp();
+        const int ngrow = phi_mf.nGrow();
+
+        amrex::MultiFab::Swap(cache_mf, phi_mf, 0, 0, ncomp, ngrow);
+        phi_mf.mult(-self_fields_phi_extrapolation_alpha, 0, ncomp, ngrow);
+        amrex::MultiFab::Saxpy(
+            phi_mf, 1.0_rt + self_fields_phi_extrapolation_alpha,
+            cache_mf, 0, 0, ncomp, ngrow);
+    }
+}
+
+void LabFrameExplicitES::initializePhiExtrapolationHistory (
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    if (self_fields_phi_extrapolation_alpha == 0.0_rt ||
+        m_phi_extrapolation_cache_initialized)
+    {
+        return;
+    }
+
+    definePhiExtrapolationCache(phi);
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto const& phi_mf = *phi[lev];
+        auto& cache_mf = *m_phi_extrapolation_cache[lev];
+        amrex::MultiFab::Copy(
+            cache_mf, phi_mf, 0, 0, phi_mf.nComp(), phi_mf.nGrow());
+    }
+
+    m_phi_extrapolation_cache_initialized = true;
+}
+
 void LabFrameExplicitES::ComputeSpaceChargeField (
     ablastr::fields::MultiFabRegister& fields,
     MultiParticleContainer& mpc,
@@ -64,6 +132,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // Todo: use simpler finite difference form with beta=0
     const std::array<Real, 3> beta = {0._rt};
 
+    preparePhiExtrapolatedInitialGuess(phi_fp);
+
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
     Insert::SetBoundaryPhi();//修正电势
@@ -100,6 +170,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
     // 共置网格guard cell处理
     Insert::SetPhiGuards();
+    initializePhiExtrapolationHistory(phi_fp);
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }

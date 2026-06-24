@@ -40,6 +40,9 @@ void ElectrostaticSolver::ReadParameters () {
         pp_warpx, "self_fields_max_iters", self_fields_max_iters);
    utils::parser::queryWithParser(
         pp_warpx, "self_fields_verbosity", self_fields_verbosity);
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_phi_extrapolation_alpha",
+        self_fields_phi_extrapolation_alpha);
 
     // FFT solver flags
    utils::parser::queryWithParser(
