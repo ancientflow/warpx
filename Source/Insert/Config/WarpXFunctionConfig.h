@@ -33,16 +33,7 @@
 /* Particle push / injection helpers. */
 #define PUSH_GAP
 
-/* Electrostatic phi initial guess extrapolation order: 0, 1, or 2. */
-#ifndef WARPX_PHI_EXTRAPOLATION_ORDER
-#define WARPX_PHI_EXTRAPOLATION_ORDER 1
-#endif
-
 /* Configuration checks. */
-#if WARPX_PHI_EXTRAPOLATION_ORDER < 0 || WARPX_PHI_EXTRAPOLATION_ORDER > 2
-#error "WARPX_PHI_EXTRAPOLATION_ORDER must be 0, 1, or 2"
-#endif
-
 #if defined(MCC_DENSITY_AVERAGE_CALC) && defined(MCC_DENSITY_AVERAGE_USE)
 #error "MCC_DENSITY_AVERAGE_CALC and MCC_DENSITY_AVERAGE_USE are mutually exclusive"
 #endif

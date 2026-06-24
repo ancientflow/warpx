@@ -38,8 +38,15 @@ void ElectrostaticSolver::ReadParameters () {
         pp_warpx, "self_fields_absolute_tolerance", self_fields_absolute_tolerance);
     utils::parser::queryWithParser(
         pp_warpx, "self_fields_max_iters", self_fields_max_iters);
-   utils::parser::queryWithParser(
+    utils::parser::queryWithParser(
         pp_warpx, "self_fields_verbosity", self_fields_verbosity);
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_phi_extrapolation_order",
+        self_fields_phi_extrapolation_order);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        self_fields_phi_extrapolation_order >= 0 &&
+        self_fields_phi_extrapolation_order <= 2,
+        "warpx.self_fields_phi_extrapolation_order must be 0, 1, or 2");
     utils::parser::queryWithParser(
         pp_warpx, "self_fields_phi_extrapolation_alpha",
         self_fields_phi_extrapolation_alpha);
@@ -48,7 +55,7 @@ void ElectrostaticSolver::ReadParameters () {
         self_fields_phi_extrapolation_beta);
 
     // FFT solver flags
-   utils::parser::queryWithParser(
+    utils::parser::queryWithParser(
         pp_warpx, "use_2d_slices_fft_solver", is_igf_2d_slices);
 }
 
