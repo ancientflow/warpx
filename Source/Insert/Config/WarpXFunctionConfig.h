@@ -15,7 +15,8 @@
 /* Background MCC density coupling. */
 #define MCC_DENSITY
 // #define MCC_DENSITY_AVERAGE_CALC
-#define MCC_DENSITY_AVERAGE_USE
+// #define MCC_DENSITY_AVERAGE_USE
+#define MCC_ION_CACHED_RHO
 
 /* Coupled MCC collision behavior. */
 #define MCC_DELETE
@@ -28,7 +29,7 @@
  * IONIZATION_SOURCE_INJECT reads source tables and injects particles from them.
  */
 // #define IONIZATION_SOURCE_RECORD
-#define IONIZATION_SOURCE_INJECT
+// #define IONIZATION_SOURCE_INJECT
 
 /* Particle push / injection helpers. */
 #define PUSH_GAP
@@ -36,6 +37,14 @@
 /* Configuration checks. */
 #if defined(MCC_DENSITY_AVERAGE_CALC) && defined(MCC_DENSITY_AVERAGE_USE)
 #error "MCC_DENSITY_AVERAGE_CALC and MCC_DENSITY_AVERAGE_USE are mutually exclusive"
+#endif
+
+#if defined(MCC_ION_CACHED_RHO) && defined(MCC_DENSITY_AVERAGE_USE)
+#error "MCC_ION_CACHED_RHO requires direct coupled MCC density updates; disable MCC_DENSITY_AVERAGE_USE"
+#endif
+
+#if defined(IONIZATION_SOURCE_INJECT) && !defined(MCC_DENSITY_AVERAGE_USE)
+#error "IONIZATION_SOURCE_INJECT requires MCC_DENSITY_AVERAGE_USE"
 #endif
 
 #if defined(IONIZATION_SOURCE_RECORD) && defined(IONIZATION_SOURCE_INJECT)
