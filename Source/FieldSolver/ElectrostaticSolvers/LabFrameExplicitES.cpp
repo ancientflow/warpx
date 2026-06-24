@@ -10,7 +10,6 @@
 #include "Fluids/MultiFluidContainer_fwd.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
-#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
@@ -68,19 +67,22 @@ void LabFrameExplicitES::definePhiExtrapolationCache (
 void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
     const ablastr::fields::MultiLevelScalarField& phi)
 {
-#if WARPX_PHI_EXTRAPOLATION_ORDER > 0
-
-#if WARPX_PHI_EXTRAPOLATION_ORDER == 1
-    if (self_fields_phi_extrapolation_alpha == 0.0_rt) {
+    if (self_fields_phi_extrapolation_order == 0) {
         return;
     }
-#elif WARPX_PHI_EXTRAPOLATION_ORDER == 2
-    if (self_fields_phi_extrapolation_alpha == 0.0_rt &&
+
+    if (self_fields_phi_extrapolation_order == 1 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt)
+    {
+        return;
+    }
+
+    if (self_fields_phi_extrapolation_order == 2 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt &&
         self_fields_phi_extrapolation_beta == 0.0_rt)
     {
         return;
     }
-#endif
 
     definePhiExtrapolationCache(phi);
 
@@ -88,9 +90,9 @@ void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
         return;
     }
 
-    int const extrapolation_order = (
-        WARPX_PHI_EXTRAPOLATION_ORDER == 2 && m_phi_extrapolation_history_depth >= 3
-    ) ? 2 : 1;
+    int const extrapolation_order =
+        (self_fields_phi_extrapolation_order == 2 && m_phi_extrapolation_history_depth >= 3)
+        ? 2 : 1;
 
     if ((extrapolation_order == 1 && self_fields_phi_extrapolation_alpha == 0.0_rt) ||
         (extrapolation_order == 2 &&
@@ -128,26 +130,27 @@ void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
                 phi_mf, -self_fields_phi_extrapolation_alpha, phi_nm1, 0, 0, ncomp, ngrow);
         }
     }
-#else
-    (void) phi;
-#endif
 }
 
 void LabFrameExplicitES::updatePhiExtrapolationHistory (
     const ablastr::fields::MultiLevelScalarField& phi)
 {
-#if WARPX_PHI_EXTRAPOLATION_ORDER > 0
-#if WARPX_PHI_EXTRAPOLATION_ORDER == 1
-    if (self_fields_phi_extrapolation_alpha == 0.0_rt) {
+    if (self_fields_phi_extrapolation_order == 0) {
         return;
     }
-#elif WARPX_PHI_EXTRAPOLATION_ORDER == 2
-    if (self_fields_phi_extrapolation_alpha == 0.0_rt &&
+
+    if (self_fields_phi_extrapolation_order == 1 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt)
+    {
+        return;
+    }
+
+    if (self_fields_phi_extrapolation_order == 2 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt &&
         self_fields_phi_extrapolation_beta == 0.0_rt)
     {
         return;
     }
-#endif
 
     definePhiExtrapolationCache(phi);
 
@@ -173,9 +176,6 @@ void LabFrameExplicitES::updatePhiExtrapolationHistory (
     if (m_phi_extrapolation_history_depth < 3) {
         ++m_phi_extrapolation_history_depth;
     }
-#else
-    (void) phi;
-#endif
 }
 
 void LabFrameExplicitES::ComputeSpaceChargeField (
