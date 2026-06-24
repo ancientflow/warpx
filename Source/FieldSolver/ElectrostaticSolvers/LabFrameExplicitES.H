@@ -14,6 +14,7 @@
 #include <AMReX_MultiFab.H>
 #include <AMReX_Vector.H>
 
+#include <array>
 #include <memory>
 
 class LabFrameExplicitES final : public ElectrostaticSolver
@@ -48,7 +49,7 @@ private:
         const ablastr::fields::MultiLevelScalarField& phi
     );
 
-    void initializePhiExtrapolationHistory (
+    void updatePhiExtrapolationHistory (
         const ablastr::fields::MultiLevelScalarField& phi
     );
 
@@ -56,8 +57,8 @@ private:
         const ablastr::fields::MultiLevelScalarField& phi
     );
 
-    amrex::Vector<std::unique_ptr<amrex::MultiFab> > m_phi_extrapolation_cache;
-    bool m_phi_extrapolation_cache_initialized = false;
+    std::array<amrex::Vector<std::unique_ptr<amrex::MultiFab> >, 3> m_phi_extrapolation_cache;
+    int m_phi_extrapolation_history_depth = 0;
 
 };
 

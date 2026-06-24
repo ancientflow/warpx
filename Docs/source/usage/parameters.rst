@@ -471,6 +471,23 @@ Overall simulation parameters
     verbose output. When using ``labframe-electromagnetostatic``, this value
     is also used as the default for ``magnetostatic_solver_verbosity``.
 
+.. pp:param:: warpx.self_fields_phi_extrapolation_alpha
+    :type: ``float``
+    :default: 0.0
+
+    Coefficient used in the extrapolated initial guess for the labframe electrostatic
+    potential solve. With first-order extrapolation enabled, the initial guess is
+    :math:`(1+\alpha)\phi_n-\alpha\phi_{n-1}`.
+
+.. pp:param:: warpx.self_fields_phi_extrapolation_beta
+    :type: ``float``
+    :default: 0.0
+
+    Coefficient used by second-order extrapolation of the initial guess for the
+    labframe electrostatic potential solve. With second-order extrapolation enabled,
+    the initial guess is
+    :math:`(1+\alpha+\beta)\phi_n-(\alpha+2\beta)\phi_{n-1}+\beta\phi_{n-2}`.
+
 .. pp:param:: warpx.magnetostatic_solver_required_precision
     :type: ``float``
     :default: value of ``self_fields_required_precision``
