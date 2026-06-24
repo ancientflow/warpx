@@ -938,6 +938,7 @@ void
 MultiParticleContainer::ApplyBoundaryConditions ()
 {
     for (auto& pc : allcontainers) {
+        if (pc->getDoNotPush()) { continue; }
         pc->ApplyBoundaryConditions();
     }
 }
