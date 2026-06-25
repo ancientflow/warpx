@@ -24,6 +24,9 @@ When CLion MCP tools are available, prefer using them for project navigation, fi
 ## Build Commands
 
 Compilation must be performed through CLion. Do not compile WarpX from the command line.
+When validating a build, only build the matching executable target `app_{DIMS}`
+(for example, `app_3d` for `-DWarpX_DIMS=3`), not broad targets such as all
+libraries or all tests.
 
 The cmake build directory is always inside the repository root (or worktree root). Never look for or create a build directory outside of the current working directory.
 
@@ -104,6 +107,8 @@ pre-commit run -a  # run on all files
 - **Python**: Ruff (configured in `pyproject.toml`)
 
 Commits should limit any formatting changes of unchanged code.
+Do not use CLion's formatting/reformat tool; rely on targeted manual edits and
+pre-commit formatting instead.
 
 ## Code Architecture
 

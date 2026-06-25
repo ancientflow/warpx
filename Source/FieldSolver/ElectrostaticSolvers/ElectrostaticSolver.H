@@ -159,6 +159,12 @@ public:
      *  2 : convergence progress at every MLMG iteration
      */
     int self_fields_verbosity = 2;
+    /** Extrapolation order for the phi initial guess: 0, 1, or 2 */
+    int self_fields_phi_extrapolation_order = 0;
+    /** First-order extrapolation coefficient for the phi initial guess */
+    amrex::Real self_fields_phi_extrapolation_alpha = 0.0;
+    /** Second-order extrapolation coefficient for the phi initial guess */
+    amrex::Real self_fields_phi_extrapolation_beta = 0.0;
 
     /** Parameters for FFT Poisson solver aka IGF */
     // 0: full 3D, 1: many 2D z-slices (quasi-3D)
