@@ -14,6 +14,7 @@
 #include "FieldSolver/ImplicitSolvers/ImplicitOptions.H"
 
 #include "Initialization/PlasmaInjector.H"
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/ParticleBoundaries.H"
 #include "SpeciesPhysicalProperties.H"
@@ -35,6 +36,7 @@
 #include <AMReX_GpuAllocators.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_INT.H>
+#include <AMReX_MultiFab.H>
 #include <AMReX_ParIter.H>
 #include <AMReX_Particles.H>
 #include <AMReX_Random.H>
@@ -341,7 +343,16 @@ public:
                         bool local = false, bool reset = false,
                         bool apply_boundary_and_scale_volume = false,
                         bool interpolate_across_levels = true,
-                        int icomp = 0);
+                        int icomp = 0
+#ifdef MCC_ION_CACHED_RHO
+                        ,
+                        bool use_cached_rho = false
+#endif
+                        );
+#ifdef MCC_ION_CACHED_RHO
+    void InitCachedRho (ablastr::fields::MultiLevelScalarField const& rho,
+                        int ndt);
+#endif
     void DepositCharge (amrex::MultiFab* rho, int lev,
                         bool local = false, bool reset = false,
                         bool apply_boundary_and_scale_volume = false,
@@ -641,6 +652,7 @@ public:
     void setDoNotPush (bool flag) { do_not_push = flag; }
     void setDoNotGather (int flag) { do_not_gather = flag; }
     void setDoNotDeposit (int flag) { do_not_deposit = flag; }
+    bool getDoNotPush () const noexcept { return do_not_push; }
 
     bool HasiAttrib (const std::string& name)
     {
@@ -735,6 +747,11 @@ protected:
     amrex::Vector<amrex::FArrayBox> local_Szz;
 
 public:
+
+#ifdef MCC_ION_CACHED_RHO
+    amrex::Vector<amrex::MultiFab> m_cached_rho;
+    int m_cached_rho_ndt = 1;
+#endif
 
     int getIonizationInitialLevel () const noexcept {return ionization_initial_level;}
 

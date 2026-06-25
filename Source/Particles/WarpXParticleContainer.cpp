@@ -1794,12 +1794,40 @@ WarpXParticleContainer::DepositCharge (const ablastr::fields::MultiLevelScalarFi
                                        const bool local, const bool reset,
                                        const bool apply_boundary_and_scale_volume,
                                        const bool interpolate_across_levels,
-                                       const int icomp)
+                                       const int icomp
+#ifdef MCC_ION_CACHED_RHO
+                                       ,
+                                       const bool use_cached_rho
+#endif
+)
 {
     ABLASTR_PROFILE("WarpXParticleContainer::DepositCharge");
 
     // Loop over the refinement levels
     auto const finest_level = static_cast<int>(rho.size() - 1);
+
+#ifdef MCC_ION_CACHED_RHO
+    bool const can_use_cached_rho =
+        use_cached_rho && !interpolate_across_levels && icomp == 0 &&
+        m_cached_rho_ndt > 1 &&
+        m_cached_rho.size() == rho.size();
+    if (can_use_cached_rho) {
+        bool const do_deposit_cached_rho =
+            WarpX::GetInstance().getistep(0) % m_cached_rho_ndt == 0;
+        for (int lev = 0; lev <= finest_level; ++lev) {
+            if (do_deposit_cached_rho) {
+                m_cached_rho[lev].setVal(0.0_rt);
+                DepositCharge(&m_cached_rho[lev], lev, local, reset,
+                              apply_boundary_and_scale_volume, icomp);
+            }
+            amrex::MultiFab::Add(
+                *rho[lev], m_cached_rho[lev], 0, 0, rho[lev]->nComp(),
+                rho[lev]->nGrowVect());
+        }
+        return;
+    }
+#endif
+
     for (int lev = 0; lev <= finest_level; ++lev)
     {
         DepositCharge (
@@ -1829,6 +1857,23 @@ WarpXParticleContainer::DepositCharge (const ablastr::fields::MultiLevelScalarFi
         }
     }
 }
+
+#ifdef MCC_ION_CACHED_RHO
+void
+WarpXParticleContainer::InitCachedRho (
+    ablastr::fields::MultiLevelScalarField const& rho,
+    int const ndt)
+{
+    m_cached_rho_ndt = ndt;
+    m_cached_rho.resize(rho.size());
+    for (int lev = 0; lev < static_cast<int>(rho.size()); ++lev) {
+        m_cached_rho[lev] = amrex::MultiFab(
+            rho[lev]->boxArray(), rho[lev]->DistributionMap(),
+            rho[lev]->nComp(), rho[lev]->nGrowVect());
+        m_cached_rho[lev].setVal(0.0);
+    }
+}
+#endif
 
 void
 WarpXParticleContainer::DepositCharge (amrex::MultiFab* rho,
