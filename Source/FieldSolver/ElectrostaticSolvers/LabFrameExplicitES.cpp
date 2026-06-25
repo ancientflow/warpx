@@ -23,6 +23,161 @@ void LabFrameExplicitES::InitData() {
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 }
 
+void LabFrameExplicitES::definePhiExtrapolationCache (
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    bool reset_history = false;
+
+    for (auto& phi_history : m_phi_extrapolation_cache) {
+        if (phi_history.size() != phi.size()) {
+            phi_history.resize(phi.size());
+            reset_history = true;
+        }
+    }
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto const& phi_mf = *phi[lev];
+        for (auto& phi_history : m_phi_extrapolation_cache) {
+            auto& cache_mf = phi_history[lev];
+            bool const cache_needs_define = (
+                !cache_mf ||
+                cache_mf->nComp() != phi_mf.nComp() ||
+                cache_mf->nGrowVect() != phi_mf.nGrowVect() ||
+                !cache_mf->boxArray().CellEqual(phi_mf.boxArray()) ||
+                !(cache_mf->DistributionMap() == phi_mf.DistributionMap())
+            );
+
+            if (!cache_needs_define) {
+                continue;
+            }
+
+            cache_mf = std::make_unique<amrex::MultiFab>(
+                phi_mf.boxArray(), phi_mf.DistributionMap(), phi_mf.nComp(),
+                phi_mf.nGrowVect());
+            cache_mf->setVal(0.0_rt);
+            reset_history = true;
+        }
+    }
+
+    if (reset_history) {
+        m_phi_extrapolation_history_depth = 0;
+    }
+}
+
+void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    if (self_fields_phi_extrapolation_order == 0) {
+        return;
+    }
+
+    if (self_fields_phi_extrapolation_order == 1 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt)
+    {
+        return;
+    }
+
+    if (self_fields_phi_extrapolation_order == 2 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt &&
+        self_fields_phi_extrapolation_beta == 0.0_rt)
+    {
+        return;
+    }
+
+    definePhiExtrapolationCache(phi);
+
+    if (m_phi_extrapolation_history_depth < 2) {
+        return;
+    }
+
+    int const extrapolation_order =
+        (self_fields_phi_extrapolation_order == 2 && m_phi_extrapolation_history_depth >= 3)
+        ? 2 : 1;
+
+    if ((extrapolation_order == 1 && self_fields_phi_extrapolation_alpha == 0.0_rt) ||
+        (extrapolation_order == 2 &&
+         self_fields_phi_extrapolation_alpha == 0.0_rt &&
+         self_fields_phi_extrapolation_beta == 0.0_rt))
+    {
+        return;
+    }
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto& phi_mf = *phi[lev];
+        auto& phi_n = *m_phi_extrapolation_cache[0][lev];
+        auto& phi_nm1 = *m_phi_extrapolation_cache[1][lev];
+        const int ncomp = phi_mf.nComp();
+        const int ngrow = phi_mf.nGrow();
+
+        if (extrapolation_order == 2) {
+            auto& phi_nm2 = *m_phi_extrapolation_cache[2][lev];
+            amrex::MultiFab::Copy(phi_mf, phi_n, 0, 0, ncomp, ngrow);
+            phi_mf.mult(
+                1.0_rt + self_fields_phi_extrapolation_alpha +
+                self_fields_phi_extrapolation_beta,
+                0, ncomp, ngrow);
+            amrex::MultiFab::Saxpy(
+                phi_mf,
+                -(self_fields_phi_extrapolation_alpha +
+                  2.0_rt * self_fields_phi_extrapolation_beta),
+                phi_nm1, 0, 0, ncomp, ngrow);
+            amrex::MultiFab::Saxpy(
+                phi_mf, self_fields_phi_extrapolation_beta, phi_nm2, 0, 0, ncomp, ngrow);
+        } else {
+            amrex::MultiFab::Copy(phi_mf, phi_n, 0, 0, ncomp, ngrow);
+            phi_mf.mult(1.0_rt + self_fields_phi_extrapolation_alpha, 0, ncomp, ngrow);
+            amrex::MultiFab::Saxpy(
+                phi_mf, -self_fields_phi_extrapolation_alpha, phi_nm1, 0, 0, ncomp, ngrow);
+        }
+    }
+}
+
+void LabFrameExplicitES::updatePhiExtrapolationHistory (
+    const ablastr::fields::MultiLevelScalarField& phi)
+{
+    if (self_fields_phi_extrapolation_order == 0) {
+        return;
+    }
+
+    if (self_fields_phi_extrapolation_order == 1 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt)
+    {
+        return;
+    }
+
+    if (self_fields_phi_extrapolation_order == 2 &&
+        self_fields_phi_extrapolation_alpha == 0.0_rt &&
+        self_fields_phi_extrapolation_beta == 0.0_rt)
+    {
+        return;
+    }
+
+    definePhiExtrapolationCache(phi);
+
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto const& phi_mf = *phi[lev];
+        const int ncomp = phi_mf.nComp();
+        const int ngrow = phi_mf.nGrow();
+
+        if (m_phi_extrapolation_history_depth >= 2) {
+            amrex::MultiFab::Copy(
+                *m_phi_extrapolation_cache[2][lev],
+                *m_phi_extrapolation_cache[1][lev], 0, 0, ncomp, ngrow);
+        }
+        if (m_phi_extrapolation_history_depth >= 1) {
+            amrex::MultiFab::Copy(
+                *m_phi_extrapolation_cache[1][lev],
+                *m_phi_extrapolation_cache[0][lev], 0, 0, ncomp, ngrow);
+        }
+        amrex::MultiFab::Copy(
+            *m_phi_extrapolation_cache[0][lev], phi_mf, 0, 0, ncomp, ngrow);
+    }
+
+    if (m_phi_extrapolation_history_depth < 3) {
+        ++m_phi_extrapolation_history_depth;
+    }
+}
+
 void LabFrameExplicitES::ComputeSpaceChargeField (
     ablastr::fields::MultiFabRegister& fields,
     MultiParticleContainer& mpc,
@@ -64,6 +219,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // Todo: use simpler finite difference form with beta=0
     const std::array<Real, 3> beta = {0._rt};
 
+    preparePhiExtrapolatedInitialGuess(phi_fp);
+
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
     Insert::SetBoundaryPhi();//修正电势
@@ -100,6 +257,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
     // 共置网格guard cell处理
     Insert::SetPhiGuards();
+    updatePhiExtrapolationHistory(phi_fp);
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }

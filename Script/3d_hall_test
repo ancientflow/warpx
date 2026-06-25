@@ -1,5 +1,5 @@
 #全局定义
-max_step = 12000000
+max_step = 10
 my_constants.diag_num = 100
 my_constants.reduced_diag_num = 12000
 my_constants.dt = 5.6e-12
@@ -11,6 +11,10 @@ warpx.self_fields_required_precision = 1e-6
 warpx.sort_intervals = 50
 warpx.use_filter = 0
 warpx.grid_type = collocated
+
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 1
+warpx.self_fields_phi_extrapolation_beta = 0.25
 
 ##几何参数定义
 my_constants.L = 0.05
@@ -52,7 +56,7 @@ amr.max_grid_size = n_cell
 amr.max_level = 0
 
 #内存使用
-amrex.the_arena_init_size = 1024*1024*1024*15 # 20GB内存
+amrex.the_arena_init_size = 1024*1024*1024*6 # 20GB内存
 
 geometry.dims = 3
 geometry.prob_lo = 0.0 0.0 0.0
@@ -60,6 +64,7 @@ geometry.prob_hi = lx ly lz
 
 #边界条件
 boundary.field_lo = pec pec neumann
+#boundary.field_lo = pec pec pec
 boundary.field_hi = pec pec pec
 boundary.particle_lo = absorbing absorbing absorbing
 boundary.particle_hi = absorbing absorbing absorbing
@@ -220,17 +225,17 @@ xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 xe_netural.injection_sources = xeinit
 
 #初始注入
-xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = hall_start_128.bp5
+#xe_netural.xeinit.injection_style = external_file
+#xe_netural.xeinit.injection_file = hall_start_128.bp5
 
 
 #碰撞设置
 #FILE = 3d_hall_mcccoll_test
-FILE = 3d_hall_mcccoll
+#FILE = ../../Script/3d_hall_mcccoll
 
 #电场 磁场定义
-warpx.B_ext_grid_init_style = read_from_file
-warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
+#warpx.B_ext_grid_init_style = read_from_file
+#warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
 
 #输出定义
 #FILE = diagout_test
