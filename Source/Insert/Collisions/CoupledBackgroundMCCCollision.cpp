@@ -910,8 +910,16 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
 #else
         int* p_particle_num = p_delete;
 #endif
+
         auto& fab = ground_rho[box_index];
         auto const& rho_arr = fab.array();
+
+#ifdef MCC_ION_CACHED_RHO
+        auto& ion_fab = species2.m_cached_rho[lev][box_index];
+        auto const& ion_rho_arr = ion_fab.array();
+        amrex::ParticleReal const ion_charge = species2.getCharge();
+#endif
+
         /*
          * The box of ground[pti] is correct after verifying.
          * Maybe it is gotten by the number index.
@@ -993,6 +1001,11 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                             for (int ix = 0; ix <= depos_order; ix++) {
                                 amrex::Gpu::Atomic::AddNoRet(
                                     &rho_arr(lo.x + px + ix, 0, 0), sx[ix] * w);
+#ifdef MCC_ION_CACHED_RHO
+                                amrex::Gpu::Atomic::AddNoRet(
+                                    &ion_rho_arr(lo.x + px + ix, 0, 0),
+                                    - sx[ix] * w * ion_charge);
+#endif
                             }
 #elif defined(WARPX_DIM_XZ)
                         for (int iy = 0; iy <= depos_order; iy++) {
@@ -1000,6 +1013,11 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                 amrex::Gpu::Atomic::AddNoRet(
                                     &rho_arr(lo.x + px + ix, lo.y + py + iy, 0),
                                     sx[ix] * sy[iy] * w);
+#ifdef MCC_ION_CACHED_RHO
+                                amrex::Gpu::Atomic::AddNoRet(
+                                    &ion_rho_arr(lo.x + px + ix, lo.y + py + iy, 0),
+                                    - sx[ix] * sy[iy] * w * ion_charge);
+#endif
                             }
                         }
 #elif defined(WARPX_DIM_3D)
@@ -1010,6 +1028,12 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                         &rho_arr(lo.x + px + ix, lo.y + py + iy,
                                                  lo.z + pz + iz),
                                         sx[ix] * sy[iy] * sz[iz] * w);
+#ifdef MCC_ION_CACHED_RHO
+                                    amrex::Gpu::Atomic::AddNoRet(
+                                        &ion_rho_arr(lo.x + px + ix, lo.y + py + iy,
+                                                 lo.z + pz + iz),
+                                        - sx[ix] * sy[iy] * sz[iz] * w * ion_charge);
+#endif
                                 }
                             }
                         }
