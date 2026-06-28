@@ -2,14 +2,14 @@
 
 #include <BoundaryConditions/WarpX_PEC.H>
 
+#include "Insert/Utils/InsertUtils.h"
+
 #if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
 #include <AMReX_ParmParse.H>
 #include <AMReX_VisMF.H>
 #endif
 
 #ifdef MCC_DENSITY_AVERAGE_CALC
-#include <AMReX_Utility.H>
-
 #include <cctype>
 #include <iomanip>
 #include <sstream>
@@ -66,46 +66,6 @@ FabStepOutputPath (std::string const& base_dir, std::string const& species,
     return os.str();
 }
 
-void
-CreateDirectoryTree (std::string const& dir) {
-    if (dir.empty() || dir == ".") {
-        return;
-    }
-
-    amrex::Vector<std::string> paths;
-    std::string current;
-    auto pos = std::string::size_type{0};
-    if (dir[0] == '/') {
-        current = "/";
-        pos = 1;
-    }
-    while (pos < dir.size()) {
-        auto const next = dir.find('/', pos);
-        auto const part = dir.substr(pos, next - pos);
-        if (!part.empty()) {
-            if (!current.empty() && current != "/") {
-                current += "/";
-            }
-            current += part;
-            paths.push_back(current);
-        }
-        if (next == std::string::npos) {
-            break;
-        }
-        pos = next + 1;
-    }
-
-    if (amrex::ParallelDescriptor::IOProcessor()) {
-        constexpr int permission_flag_rwxrxrx = 0755;
-        for (auto const& path : paths) {
-            if (!amrex::UtilCreateDirectory(path, permission_flag_rwxrxrx)) {
-                amrex::CreateDirectoryFailed(path);
-            }
-        }
-    }
-    amrex::ParallelDescriptor::Barrier();
-}
-
 std::string
 ParentPath (std::string const& path) {
     auto const slash = path.find_last_of('/');
@@ -125,7 +85,7 @@ WriteSingleFabMultiFab (amrex::MultiFab const& mf, std::string const& path,
         mf.boxArray().size() == 1,
         "Background density FAB output requires exactly one FAB for species " +
             species + " at level " + std::to_string(lev) + ".");
-    CreateDirectoryTree(ParentPath(path));
+    Insert::CreateDirectoryTree(ParentPath(path));
     amrex::VisMF::Write(mf, path);
 }
 

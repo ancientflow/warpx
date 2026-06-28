@@ -20,5 +20,6 @@ foreach(D IN LISTS WarpX_DIMS)
         Injection/HallRateModel.cpp
         Injection/IonizationSourceSampler.cpp
         Injection/InsertInjection.cpp
+        Utils/InsertUtils.cpp
     )
 endforeach()

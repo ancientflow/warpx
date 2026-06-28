@@ -4,6 +4,7 @@
 
 #include "Initialization/SampleGaussianFluxDistribution.H"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
@@ -13,7 +14,6 @@
 #include "Particles/Pusher/GetAndSetPosition.H"
 #include "Utils/WarpXConst.H"
 
-#include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>
 
@@ -247,10 +247,7 @@ struct SecondaryEmissionDecision {
 
 struct SecondaryEmissionDecisionFunc {
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_plo;
-    amrex::ParticleReal m_anode_ring_x = 0.0;
-    amrex::ParticleReal m_anode_ring_y = 0.0;
-    amrex::ParticleReal m_anode_ring_rmin = 0.0;
-    amrex::ParticleReal m_anode_ring_rmax = 0.0;
+    HallAnodeRingConfig m_anode_ring;
     amrex::ParticleReal m_mass = PhysConst::m_e;
     amrex::ParticleReal m_absorb_a = 0.0;
     amrex::ParticleReal m_absorb_x0_eV = 1.0;
@@ -276,8 +273,6 @@ struct SecondaryEmissionDecisionFunc {
             return {};
         }
 #if defined(WARPX_DIM_3D)
-        using std::sqrt;
-
         const auto& p = ptd.getSuperParticle(i);
         amrex::ParticleReal x, y, z;
         get_particle_position(p, x, y, z);
@@ -290,21 +285,11 @@ struct SecondaryEmissionDecisionFunc {
         // The boundary buffer stores the scraped particle after it crossed the
         // domain boundary. Backtrace to the actual wall-hit position before
         // applying ring geometry.
-        amrex::ParticleReal x_emit = x;
-        amrex::ParticleReal y_emit = y;
-        if (uz_inc != amrex::ParticleReal(0.0)) {
-            const amrex::ParticleReal dt_back = (z - z_boundary) / uz_inc;
-            if (dt_back >= amrex::ParticleReal(0.0)) {
-                x_emit -= dt_back * ux_inc;
-                y_emit -= dt_back * uy_inc;
-            }
-        }
-
-        const amrex::ParticleReal dx = x_emit - m_anode_ring_x;
-        const amrex::ParticleReal dy = y_emit - m_anode_ring_y;
-        const amrex::ParticleReal r = sqrt(dx * dx + dy * dy);
+        amrex::ParticleReal x_emit, y_emit;
+        BacktraceParticleToZPlane(x, y, z, ux_inc, uy_inc, uz_inc, z_boundary,
+                                  x_emit, y_emit);
         // The anode ring is a hard absorber: classify as behavior 1 directly.
-        if (r >= m_anode_ring_rmin && r <= m_anode_ring_rmax) {
+        if (IsHallAnodeRingHit(x_emit, y_emit, m_anode_ring)) {
             return {};
         }
 
@@ -368,15 +353,9 @@ struct SecondaryEmissionTransform {
         const amrex::ParticleReal uz_inc = src.m_rdata[PIdx::uz][i_src];
         const amrex::ParticleReal z_boundary = m_plo[2];
 
-        amrex::ParticleReal x_emit = x;
-        amrex::ParticleReal y_emit = y;
-        if (uz_inc != amrex::ParticleReal(0.0)) {
-            const amrex::ParticleReal dt_back = (z - z_boundary) / uz_inc;
-            if (dt_back >= amrex::ParticleReal(0.0)) {
-                x_emit -= dt_back * ux_inc;
-                y_emit -= dt_back * uy_inc;
-            }
-        }
+        amrex::ParticleReal x_emit, y_emit;
+        BacktraceParticleToZPlane(x, y, z, ux_inc, uy_inc, uz_inc, z_boundary,
+                                  x_emit, y_emit);
 
         const amrex::ParticleReal xlo = m_plo[0] + m_eps;
         const amrex::ParticleReal xhi = m_phi[0] - m_eps;
@@ -426,10 +405,7 @@ struct SecondaryEmissionTransform {
 
 struct AnodeRingIonFilter {
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_plo;
-    amrex::ParticleReal m_anode_ring_x = 0.0;
-    amrex::ParticleReal m_anode_ring_y = 0.0;
-    amrex::ParticleReal m_anode_ring_rmin = 0.0;
-    amrex::ParticleReal m_anode_ring_rmax = 0.0;
+    HallAnodeRingConfig m_anode_ring;
     bool m_select_ring = true;
 
     template <typename PData>
@@ -440,8 +416,6 @@ struct AnodeRingIonFilter {
             return false;
         }
 #if defined(WARPX_DIM_3D)
-        using std::sqrt;
-
         const auto& p = ptd.getSuperParticle(i);
         amrex::ParticleReal x, y, z;
         get_particle_position(p, x, y, z);
@@ -451,21 +425,11 @@ struct AnodeRingIonFilter {
         const amrex::ParticleReal uz_inc = ptd.m_rdata[PIdx::uz][i];
         const amrex::ParticleReal z_boundary = m_plo[2];
 
-        amrex::ParticleReal x_emit = x;
-        amrex::ParticleReal y_emit = y;
-        if (uz_inc != amrex::ParticleReal(0.0)) {
-            const amrex::ParticleReal dt_back = (z - z_boundary) / uz_inc;
-            if (dt_back >= amrex::ParticleReal(0.0)) {
-                x_emit -= dt_back * ux_inc;
-                y_emit -= dt_back * uy_inc;
-            }
-        }
-
-        const amrex::ParticleReal dx = x_emit - m_anode_ring_x;
-        const amrex::ParticleReal dy = y_emit - m_anode_ring_y;
-        const amrex::ParticleReal r = sqrt(dx * dx + dy * dy);
+        amrex::ParticleReal x_emit, y_emit;
+        BacktraceParticleToZPlane(x, y, z, ux_inc, uy_inc, uz_inc, z_boundary,
+                                  x_emit, y_emit);
         const bool is_ring_hit =
-            r >= m_anode_ring_rmin && r <= m_anode_ring_rmax;
+            IsHallAnodeRingHit(x_emit, y_emit, m_anode_ring);
         return m_select_ring ? is_ring_hit : !is_ring_hit;
 #else
         amrex::ignore_unused(ptd, i);
@@ -495,15 +459,9 @@ struct AnodeIonEmissionTransform {
         const amrex::ParticleReal uz_inc = src.m_rdata[PIdx::uz][i_src];
         const amrex::ParticleReal z_boundary = m_plo[2];
 
-        amrex::ParticleReal x_emit = x;
-        amrex::ParticleReal y_emit = y;
-        if (uz_inc != amrex::ParticleReal(0.0)) {
-            const amrex::ParticleReal dt_back = (z - z_boundary) / uz_inc;
-            if (dt_back >= amrex::ParticleReal(0.0)) {
-                x_emit -= dt_back * ux_inc;
-                y_emit -= dt_back * uy_inc;
-            }
-        }
+        amrex::ParticleReal x_emit, y_emit;
+        BacktraceParticleToZPlane(x, y, z, ux_inc, uy_inc, uz_inc, z_boundary,
+                                  x_emit, y_emit);
 
         const amrex::ParticleReal xlo = m_plo[0] + m_eps;
         const amrex::ParticleReal xhi = m_phi[0] - m_eps;
@@ -565,18 +523,8 @@ SecondaryEmission () {
             min_dx = std::min(min_dx, dx[idim]);
         }
 
-        amrex::ParticleReal l_factor, anode_length;
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.get("l_factor", l_factor);
-        pp_mc.get("L", anode_length);
-
-        // Use the same scaled anode-ring geometry as anode current collection.
-        const amrex::ParticleReal anode_ring_center =
-            anode_length / l_factor / amrex::ParticleReal(2.0);
-        const amrex::ParticleReal anode_ring_inner_radius =
-            amrex::ParticleReal(0.021) / amrex::ParticleReal(2.0) / l_factor;
-        const amrex::ParticleReal anode_ring_outer_radius =
-            amrex::ParticleReal(0.031) / amrex::ParticleReal(2.0) / l_factor;
+        HallAnodeRingConfig const anode_ring =
+            ReadHallAnodeRingConfig(warpx_instance.Geom(0));
 
         constexpr amrex::ParticleReal absorb_a = amrex::ParticleReal(0.5);
         constexpr amrex::ParticleReal absorb_x0_eV = amrex::ParticleReal(43.5);
@@ -594,10 +542,7 @@ SecondaryEmission () {
 
         const SecondaryEmissionDecisionFunc decision_func{
             plo,
-            anode_ring_center,
-            anode_ring_center,
-            anode_ring_inner_radius,
-            anode_ring_outer_radius,
+            anode_ring,
             elec_pc.getMass(),
             absorb_a,
             absorb_x0_eV,
@@ -647,29 +592,16 @@ AnodeIonNeutralization () {
 
         auto& ion_pc = mypc.GetParticleContainerFromName("xe_ions");
 
-        amrex::ParticleReal l_factor, anode_length;
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.get("l_factor", l_factor);
-        pp_mc.get("L", anode_length);
-
-        const amrex::ParticleReal anode_ring_center =
-            anode_length / l_factor / amrex::ParticleReal(2.0);
-        const amrex::ParticleReal anode_ring_inner_radius =
-            amrex::ParticleReal(0.021) / amrex::ParticleReal(2.0) / l_factor;
-        const amrex::ParticleReal anode_ring_outer_radius =
-            amrex::ParticleReal(0.031) / amrex::ParticleReal(2.0) / l_factor;
+        HallAnodeRingConfig const anode_ring =
+            ReadHallAnodeRingConfig(warpx_instance.Geom(0));
 
         constexpr amrex::ParticleReal ion_temperature_eV =
             amrex::ParticleReal(3.0);
         const amrex::ParticleReal ion_vth = static_cast<amrex::ParticleReal>(
             std::sqrt(ion_temperature_eV * PhysConst::q_e / ion_pc.getMass()));
 
-        const AnodeRingIonFilter ring_filter{
-            plo, anode_ring_center, anode_ring_center,
-            anode_ring_inner_radius, anode_ring_outer_radius, true};
-        const AnodeRingIonFilter non_ring_filter{
-            plo, anode_ring_center, anode_ring_center,
-            anode_ring_inner_radius, anode_ring_outer_radius, false};
+        const AnodeRingIonFilter ring_filter{plo, anode_ring, true};
+        const AnodeRingIonFilter non_ring_filter{plo, anode_ring, false};
         const AnodeIonEmissionTransform neutral_transform{
             plo, phi, amrex::ParticleReal(0.1 * min_dx), atom_vth};
         const AnodeIonEmissionTransform ion_transform{

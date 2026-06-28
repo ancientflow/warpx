@@ -1,10 +1,12 @@
-                                                                                                                                                                                                                                                                                                                                                                                    #include "IonizationSourceTable.h"
+#include "IonizationSourceTable.h"
 
 #if defined(IONIZATION_SOURCE_RECORD)
 
 #include "Utils/TextMsg.H"
 #include "Utils/WarpXConst.H"
 #include "WarpX.H"
+
+#include "Insert/Utils/InsertUtils.h"
 
 #include <AMReX_Array.H>
 #include <AMReX_BoxArray.H>
@@ -17,7 +19,6 @@
 #include <AMReX_Print.H>
 #include <AMReX_REAL.H>
 #include <AMReX_RealBox.H>
-#include <AMReX_Utility.H>
 #include <ablastr/warn_manager/WarnManager.H>
 
 #include <algorithm>
@@ -33,17 +34,6 @@ namespace {
 using namespace amrex::literals;
 
 constexpr amrex::Real pi = 3.141592653589793238462643383279502884_rt;
-
-void
-CreateDirectory (std::string const& dir) {
-    if (amrex::ParallelDescriptor::IOProcessor()) {
-        constexpr int permission_flag_rwxrxrx = 0755;
-        if (!amrex::UtilCreateDirectory(dir, permission_flag_rwxrxrx)) {
-            amrex::CreateDirectoryFailed(dir);
-        }
-    }
-    amrex::ParallelDescriptor::Barrier();
-}
 
 struct IonizationSourceTable {
     static constexpr int nr = IONIZATION_SOURCE_NR;
@@ -330,7 +320,7 @@ struct IonizationSourceTable {
             cell_cdf.back() = 1.0_rt;
         }
 
-        CreateDirectory("ionization_source_fab");
+        Insert::CreateDirectoryTree("ionization_source_fab");
         writeMetadata("ionization_source_fab/metadata.txt", a_tot);
         writeArray("ionization_source_fab/node_source_count", h_node_count,
                    nz + 1, nr + 1);
