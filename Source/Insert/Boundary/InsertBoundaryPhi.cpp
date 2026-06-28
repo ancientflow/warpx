@@ -3,51 +3,19 @@
 #include "WarpX.H"
 
 #include "Fields.H"
-#include "Utils/WarpXConst.H"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Utils/InsertUtils.h"
+#include "Utils/WarpXConst.H"
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MultiFab.H>
-#include <AMReX_ParmParse.H>
 
 #include <iostream>
 
 namespace {
 
 #ifdef HALL3D
-struct HallAnodeRingConfig
-{
-    amrex::Real voltage;
-    amrex::Real center_x;
-    amrex::Real center_y;
-    amrex::Real r_min_sq;
-    amrex::Real r_max_sq;
-};
-
-HallAnodeRingConfig
-ReadHallAnodeRingConfig (amrex::Geometry const& geom)
-{
-    amrex::ParmParse pp_mc("my_constants");
-    auto l_factor = static_cast<amrex::Real>(1.0);
-    auto voltage = static_cast<amrex::Real>(0.0);
-    pp_mc.get("l_factor", l_factor);
-    pp_mc.query("voltage", voltage);
-
-    amrex::Real const r_min =
-        static_cast<amrex::Real>(0.021) / (static_cast<amrex::Real>(2.0) * l_factor);
-    amrex::Real const r_max =
-        static_cast<amrex::Real>(0.031) / (static_cast<amrex::Real>(2.0) * l_factor);
-
-    return HallAnodeRingConfig{
-        voltage,
-        static_cast<amrex::Real>(0.5) * (geom.ProbLo(0) + geom.ProbHi(0)),
-        static_cast<amrex::Real>(0.5) * (geom.ProbLo(1) + geom.ProbHi(1)),
-        r_min * r_min,
-        r_max * r_max
-    };
-}
-
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 bool
 IsHallAnodeRingNode (
@@ -55,15 +23,11 @@ IsHallAnodeRingNode (
     int zlo, int xlo, int ylo,
     amrex::Real problo_x, amrex::Real problo_y,
     amrex::Real dx, amrex::Real dy,
-    HallAnodeRingConfig const config)
+    Insert::HallAnodeRingConfig const config)
 {
     amrex::Real const x = problo_x + (i - xlo) * dx;
     amrex::Real const y = problo_y + (j - ylo) * dy;
-    amrex::Real const r_sq =
-        (x - config.center_x) * (x - config.center_x) +
-        (y - config.center_y) * (y - config.center_y);
-
-    return k == zlo && r_sq >= config.r_min_sq && r_sq <= config.r_max_sq;
+    return k == zlo && Insert::IsHallAnodeRingHit(x, y, config);
 }
 
 #if defined(WARPX_DIM_3D)

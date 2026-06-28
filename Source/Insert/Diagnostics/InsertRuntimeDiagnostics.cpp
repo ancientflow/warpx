@@ -5,6 +5,7 @@
 
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
 #include "Utils/WarpXConst.H"
@@ -29,6 +30,11 @@
 using namespace amrex::literals;
 
 namespace {
+
+using Insert::BacktraceParticleToZPlane;
+using Insert::HallAnodeRingConfig;
+using Insert::IsHallAnodeRingHit;
+using Insert::ReadHallAnodeRingConfig;
 
 constexpr int xlo_boundary = 0;
 constexpr int xhi_boundary = 1;
@@ -79,10 +85,7 @@ struct ZMinWallChargeGrid
     amrex::Real dx;
     amrex::Real dy;
     amrex::Real zmin;
-    amrex::ParticleReal anode_x;
-    amrex::ParticleReal anode_y;
-    amrex::ParticleReal anode_rmin_sq;
-    amrex::ParticleReal anode_rmax_sq;
+    HallAnodeRingConfig anode_ring;
 };
 
 ZMinWallChargeGrid
@@ -94,24 +97,6 @@ MakeZMinWallChargeGrid (WarpX& warpx_instance, amrex::MultiFab const& rho)
         "zmin wall charge deposition requires at least two rho_fp nodes in x and y.");
 
     auto const& geom = warpx_instance.Geom(0);
-    amrex::ParmParse pp_mc("my_constants");
-    amrex::ParticleReal l_factor = 1.0_prt;
-    amrex::ParticleReal length = static_cast<amrex::ParticleReal>(
-        geom.ProbHi(0) - geom.ProbLo(0));
-    pp_mc.query("l_factor", l_factor);
-    pp_mc.query("L", length);
-
-    amrex::ParticleReal const anode_x =
-        static_cast<amrex::ParticleReal>(geom.ProbLo(0)) +
-        length / l_factor / amrex::ParticleReal(2.0);
-    amrex::ParticleReal const anode_y =
-        static_cast<amrex::ParticleReal>(geom.ProbLo(1)) +
-        length / l_factor / amrex::ParticleReal(2.0);
-    amrex::ParticleReal const anode_rmin =
-        amrex::ParticleReal(0.021) / amrex::ParticleReal(2.0) / l_factor;
-    amrex::ParticleReal const anode_rmax =
-        amrex::ParticleReal(0.031) / amrex::ParticleReal(2.0) / l_factor;
-
     return ZMinWallChargeGrid{
         rho_box.length(0),
         rho_box.length(1),
@@ -122,51 +107,7 @@ MakeZMinWallChargeGrid (WarpX& warpx_instance, amrex::MultiFab const& rho)
         geom.CellSize(0),
         geom.CellSize(1),
         geom.ProbLo(2),
-        anode_x,
-        anode_y,
-        anode_rmin * anode_rmin,
-        anode_rmax * anode_rmax};
-}
-
-void
-CreateDirectoryTree (std::string const& dir)
-{
-    if (dir.empty() || dir == ".") {
-        return;
-    }
-
-    amrex::Vector<std::string> paths;
-    std::string current;
-    auto pos = std::string::size_type{0};
-    if (dir[0] == '/') {
-        current = "/";
-        pos = 1;
-    }
-    while (pos < dir.size()) {
-        auto const next = dir.find('/', pos);
-        auto const part = dir.substr(pos, next - pos);
-        if (!part.empty()) {
-            if (!current.empty() && current != "/") {
-                current += "/";
-            }
-            current += part;
-            paths.push_back(current);
-        }
-        if (next == std::string::npos) {
-            break;
-        }
-        pos = next + 1;
-    }
-
-    if (amrex::ParallelDescriptor::IOProcessor()) {
-        constexpr int permission_flag_rwxrxrx = 0755;
-        for (auto const& path : paths) {
-            if (!amrex::UtilCreateDirectory(path, permission_flag_rwxrxrx)) {
-                amrex::CreateDirectoryFailed(path);
-            }
-        }
-    }
-    amrex::ParallelDescriptor::Barrier();
+        ReadHallAnodeRingConfig(geom)};
 }
 
 std::string
@@ -184,10 +125,7 @@ IsZMinAnodeParticle (amrex::ParticleReal const x,
                      amrex::ParticleReal const y,
                      ZMinWallChargeGrid const grid) noexcept
 {
-    amrex::ParticleReal const dx = x - grid.anode_x;
-    amrex::ParticleReal const dy = y - grid.anode_y;
-    amrex::ParticleReal const r_sq = dx * dx + dy * dy;
-    return r_sq >= grid.anode_rmin_sq && r_sq <= grid.anode_rmax_sq;
+    return IsHallAnodeRingHit(x, y, grid.anode_ring);
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -242,6 +180,39 @@ DepositZMinWallChargeToNodes (
                                    charge * wx_right * wy_right);
 }
 
+struct ZMinWallChargeDepositFunctor
+{
+    amrex::ParticleReal const* AMREX_RESTRICT px;
+    amrex::ParticleReal const* AMREX_RESTRICT py;
+    amrex::ParticleReal const* AMREX_RESTRICT pw;
+    amrex::ParticleReal const* AMREX_RESTRICT pz;
+    amrex::ParticleReal const* AMREX_RESTRICT pvx;
+    amrex::ParticleReal const* AMREX_RESTRICT pvy;
+    amrex::ParticleReal const* AMREX_RESTRICT pvz;
+    amrex::ParticleReal species_charge;
+    ZMinWallChargeGrid grid;
+    amrex::Real* AMREX_RESTRICT wall_charge;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (long const ip) const noexcept
+    {
+        amrex::ParticleReal x_hit, y_hit;
+        if (!BacktraceParticleToZPlane(px[ip], py[ip], pz[ip], pvx[ip],
+                                       pvy[ip], pvz[ip], grid.zmin, x_hit,
+                                       y_hit))
+        {
+            return;
+        }
+
+        if (IsZMinAnodeParticle(x_hit, y_hit, grid)) {
+            return;
+        }
+
+        DepositZMinWallChargeToNodes(wall_charge, grid, x_hit, y_hit,
+                                     species_charge * pw[ip]);
+    }
+};
+
 void
 DepositSpeciesZMinWallCharge (
     WarpXParticleContainer::Base* const particles,
@@ -264,27 +235,10 @@ DepositSpeciesZMinWallCharge (
         auto pvz = arr[PIdx::uz].dataPtr();
         int const np = pti.numParticles();
 
-        amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-            amrex::ParticleReal const vz = pvz[ip];
-            if (vz == amrex::ParticleReal(0.0)) {
-                return;
-            }
-
-            amrex::ParticleReal const dt_back =
-                (pz[ip] - grid.zmin) / vz;
-            if (dt_back < amrex::ParticleReal(0.0)) {
-                return;
-            }
-
-            amrex::ParticleReal const x_hit = px[ip] - dt_back * pvx[ip];
-            amrex::ParticleReal const y_hit = py[ip] - dt_back * pvy[ip];
-            if (IsZMinAnodeParticle(x_hit, y_hit, grid)) {
-                return;
-            }
-
-            DepositZMinWallChargeToNodes(wall_charge, grid, x_hit, y_hit,
-                                         species_charge * pw[ip]);
-        });
+        ZMinWallChargeDepositFunctor const deposit{
+            px, py, pw, pz, pvx, pvy, pvz, species_charge, grid,
+            wall_charge};
+        amrex::ParallelFor(np, deposit);
     }
 }
 
@@ -314,6 +268,191 @@ WriteZMinWallCharge (
     }
     wall_file << "\n";
 }
+
+constexpr int anode_current_zmin_electron_index = 0;
+constexpr int anode_current_zmin_ion_index = 1;
+constexpr int anode_current_anode_electron_index = 2;
+constexpr int anode_current_anode_electron_cut_index = 3;
+constexpr int anode_current_data_size = 4;
+
+struct AnodeElectronCurrentFunctor
+{
+    amrex::ParticleReal const* AMREX_RESTRICT px;
+    amrex::ParticleReal const* AMREX_RESTRICT py;
+    amrex::ParticleReal const* AMREX_RESTRICT pw;
+    amrex::ParticleReal const* AMREX_RESTRICT pz;
+    amrex::ParticleReal const* AMREX_RESTRICT pvx;
+    amrex::ParticleReal const* AMREX_RESTRICT pvy;
+    amrex::ParticleReal const* AMREX_RESTRICT pvz;
+    amrex::ParticleReal zmin;
+    HallAnodeRingConfig anode_ring;
+    amrex::Real* AMREX_RESTRICT data;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (long const ip) const noexcept
+    {
+        amrex::ParticleReal const w = pw[ip];
+        if (IsHallAnodeRingHit(px[ip], py[ip], anode_ring)) {
+            amrex::Gpu::Atomic::Add(
+                &data[anode_current_anode_electron_index], w);
+        }
+
+        amrex::ParticleReal x_hit, y_hit;
+        if (BacktraceParticleToZPlane(px[ip], py[ip], pz[ip], pvx[ip],
+                                      pvy[ip], pvz[ip], zmin, x_hit, y_hit) &&
+            IsHallAnodeRingHit(x_hit, y_hit, anode_ring))
+        {
+            amrex::Gpu::Atomic::Add(
+                &data[anode_current_anode_electron_cut_index], w);
+        }
+        amrex::Gpu::Atomic::Add(&data[anode_current_zmin_electron_index], w);
+    }
+};
+
+struct AnodeIonCurrentFunctor
+{
+    amrex::ParticleReal const* AMREX_RESTRICT px;
+    amrex::ParticleReal const* AMREX_RESTRICT py;
+    amrex::ParticleReal const* AMREX_RESTRICT pw;
+    amrex::ParticleReal const* AMREX_RESTRICT pz;
+    amrex::ParticleReal const* AMREX_RESTRICT pvx;
+    amrex::ParticleReal const* AMREX_RESTRICT pvy;
+    amrex::ParticleReal const* AMREX_RESTRICT pvz;
+    amrex::ParticleReal zmin;
+    HallAnodeRingConfig anode_ring;
+    amrex::Real* AMREX_RESTRICT data;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (long const ip) const noexcept
+    {
+        amrex::ParticleReal x_hit, y_hit;
+        if (BacktraceParticleToZPlane(px[ip], py[ip], pz[ip], pvx[ip],
+                                      pvy[ip], pvz[ip], zmin, x_hit, y_hit) &&
+            IsHallAnodeRingHit(x_hit, y_hit, anode_ring))
+        {
+            amrex::Gpu::Atomic::Add(&data[anode_current_zmin_ion_index],
+                                    pw[ip]);
+        }
+    }
+};
+
+struct OutletIonParticleData
+{
+    amrex::ParticleReal const* AMREX_RESTRICT pw;
+    amrex::ParticleReal const* AMREX_RESTRICT pvx;
+    amrex::ParticleReal const* AMREX_RESTRICT pvy;
+    amrex::ParticleReal const* AMREX_RESTRICT pvz;
+};
+
+template <typename Accumulator>
+struct OutletIonParticleFunctor
+{
+    OutletIonParticleData particles;
+    Accumulator accumulator;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (long const ip) const noexcept
+    {
+        accumulator(particles, ip);
+    }
+};
+
+template <typename Accumulator>
+void
+AccumulateOutletIonBoundaryParticles (ParticleBoundaryBuffer& boundary_buffer,
+                                      Accumulator const& accumulator)
+{
+    for (int const outlet_boundary : outlet_boundaries) {
+        auto* xe_ions =
+            boundary_buffer.getParticleBufferPointer("xe_ions", outlet_boundary);
+        if (xe_ions != nullptr && xe_ions->isDefined()) {
+            for (auto pti = WarpXParIter(*xe_ions, 0); pti.isValid(); ++pti) {
+                auto& arr = pti.GetStructOfArrays().GetRealData();
+                OutletIonParticleData const particles{
+                    arr[PIdx::w].dataPtr(),
+                    arr[PIdx::ux].dataPtr(),
+                    arr[PIdx::uy].dataPtr(),
+                    arr[PIdx::uz].dataPtr()};
+                int const np = pti.numParticles();
+
+                OutletIonParticleFunctor<Accumulator> const functor{
+                    particles, accumulator};
+                amrex::ParallelFor(np, functor);
+            }
+        }
+    }
+}
+
+struct ThrustAccumulator
+{
+    amrex::Real* AMREX_RESTRICT data;
+    amrex::Real ion_mass;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (OutletIonParticleData const& particles,
+                     long const ip) const noexcept
+    {
+        amrex::Real const w = particles.pw[ip];
+        amrex::Real const vz = particles.pvz[ip];
+        amrex::Gpu::Atomic::Add(&data[0], w);
+        amrex::Gpu::Atomic::Add(&data[1], w * ion_mass * vz);
+    }
+};
+
+struct BeamDivergenceAccumulator
+{
+    amrex::Real* AMREX_RESTRICT data;
+    amrex::Real ion_mass;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (OutletIonParticleData const& particles,
+                     long const ip) const noexcept
+    {
+        using std::sqrt;
+
+        amrex::Real const w = particles.pw[ip];
+        amrex::Real const vx = particles.pvx[ip];
+        amrex::Real const vy = particles.pvy[ip];
+        amrex::Real const vz = particles.pvz[ip];
+        amrex::Real const v_perp = sqrt(vx * vx + vy * vy);
+        amrex::Gpu::Atomic::Add(&data[0], w);
+        amrex::Gpu::Atomic::Add(&data[1], w * ion_mass * vz);
+        amrex::Gpu::Atomic::Add(&data[2], w * ion_mass * v_perp);
+    }
+};
+
+struct IEDFAccumulator
+{
+    amrex::Real* AMREX_RESTRICT iedf;
+    amrex::Real* AMREX_RESTRICT total;
+    amrex::Real ion_mass;
+    amrex::Real e_charge;
+    amrex::Real inv_bin_width;
+    amrex::Real e_min;
+    amrex::Real e_max;
+    int num_bins;
+
+    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+    void operator() (OutletIonParticleData const& particles,
+                     long const ip) const noexcept
+    {
+        amrex::Real const w = particles.pw[ip];
+        amrex::Real const vx = particles.pvx[ip];
+        amrex::Real const vy = particles.pvy[ip];
+        amrex::Real const vz = particles.pvz[ip];
+        amrex::Real const v2 = vx * vx + vy * vy + vz * vz;
+        amrex::Real const energy_eV =
+            amrex::Real(0.5) * ion_mass * v2 / e_charge;
+
+        amrex::Gpu::Atomic::Add(total, w);
+        if (energy_eV >= e_min && energy_eV < e_max) {
+            int const bin = static_cast<int>((energy_eV - e_min) * inv_bin_width);
+            if (bin >= 0 && bin < num_bins) {
+                amrex::Gpu::Atomic::Add(&iedf[bin], w);
+            }
+        }
+    }
+};
 #endif
 
 } // namespace
@@ -401,19 +540,15 @@ AnodeCurrentCalc () {
         auto* xe_ion_zmin =
             mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
 
-        constexpr int data_size = 4;
-        amrex::Gpu::DeviceVector<amrex::Real> device_charge(data_size, 0.0_rt);
-        amrex::Vector<amrex::Real> host_charge(data_size, 0.0_rt);
+        amrex::Gpu::DeviceVector<amrex::Real> device_charge(
+            anode_current_data_size, 0.0_rt);
+        amrex::Vector<amrex::Real> host_charge(
+            anode_current_data_size, 0.0_rt);
         amrex::Real* device_ptr = device_charge.dataPtr();
-
-        amrex::ParticleReal l_factor, half_L, L, rn1, rn2;
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.get("l_factor", l_factor);
-        pp_mc.get("L", L);
-
-        half_L = L / l_factor / 2;
-        rn1 = 0.021 / 2 / l_factor;
-        rn2 = 0.031 / 2 / l_factor;
+        HallAnodeRingConfig const anode_ring =
+            ReadHallAnodeRingConfig(warpx_instance.Geom(0));
+        amrex::ParticleReal const zmin =
+            static_cast<amrex::ParticleReal>(warpx_instance.Geom(0).ProbLo(2));
 
         if (elec_zmin != nullptr && elec_zmin->isDefined()) {
             for (auto pti = WarpXParIter(*elec_zmin, 0); pti.isValid(); ++pti) {
@@ -427,25 +562,10 @@ AnodeCurrentCalc () {
                 auto pvz = arr[PIdx::uz].dataPtr();
                 int np = pti.numParticles();
 
-                amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                    amrex::ParticleReal x = px[ip], y = py[ip], w = pw[ip],
-                                        z = pz[ip], vx = pvx[ip], vy = pvy[ip],
-                                        vz = pvz[ip];
-                    amrex::ParticleReal dt = z / vz;
-                    x -= half_L;
-                    y -= half_L;
-                    amrex::ParticleReal r = std::sqrt(x * x + y * y);
-                    if (r >= rn1 && r <= rn2) {
-                        amrex::Gpu::Atomic::Add(&device_ptr[data_size - 2], w);
-                    }
-                    x -= dt * vx;
-                    y -= dt * vy;
-                    r = std::sqrt(x * x + y * y);
-                    if (r >= rn1 && r <= rn2) {
-                        amrex::Gpu::Atomic::Add(&device_ptr[data_size - 1], w);
-                    }
-                    amrex::Gpu::Atomic::Add(&device_ptr[0], w);
-                });
+                AnodeElectronCurrentFunctor const current{
+                    px, py, pw, pz, pvx, pvy, pvz, zmin, anode_ring,
+                    device_ptr};
+                amrex::ParallelFor(np, current);
             }
         }
 
@@ -462,20 +582,10 @@ AnodeCurrentCalc () {
                 auto pvz = arr[PIdx::uz].dataPtr();
                 int np = pti.numParticles();
 
-                amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                    amrex::ParticleReal x = px[ip], y = py[ip], w = pw[ip],
-                                        z = pz[ip], vx = pvx[ip], vy = pvy[ip],
-                                        vz = pvz[ip];
-                    amrex::ParticleReal dt = z / vz;
-                    x -= half_L;
-                    y -= half_L;
-                    x -= dt * vx;
-                    y -= dt * vy;
-                    amrex::ParticleReal r = std::sqrt(x * x + y * y);
-                    if (r >= rn1 && r <= rn2) {
-                        amrex::Gpu::Atomic::Add(&device_ptr[1], w);
-                    }
-                });
+                AnodeIonCurrentFunctor const current{
+                    px, py, pw, pz, pvx, pvy, pvz, zmin, anode_ring,
+                    device_ptr};
+                amrex::ParallelFor(np, current);
             }
         }
 
@@ -515,7 +625,7 @@ ZMinWallChargeDeposit () {
         if (zmin_wall_charge_dir.empty()) {
             zmin_wall_charge_dir = "zmin_wall_charge";
         }
-        CreateDirectoryTree(zmin_wall_charge_dir);
+        Insert::CreateDirectoryTree(zmin_wall_charge_dir);
 
         ifinit = true;
     }
@@ -611,27 +721,8 @@ ThrustCalc () {
                 "xe_ions");
         const amrex::Real ion_mass = ion_pc.getMass();
 
-        for (int const outlet_boundary : outlet_boundaries) {
-            auto* xe_ions =
-                mybpc.getParticleBufferPointer("xe_ions", outlet_boundary);
-            if (xe_ions != nullptr && xe_ions->isDefined()) {
-                for (auto pti = WarpXParIter(*xe_ions, 0); pti.isValid();
-                     ++pti) {
-                    auto& arr = pti.GetStructOfArrays().GetRealData();
-                    auto pw = arr[PIdx::w].dataPtr();
-                    auto pvz = arr[PIdx::uz].dataPtr();
-                    int np = pti.numParticles();
-
-                    amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                        amrex::Real const w = pw[ip];
-                        amrex::Real const vz = pvz[ip];
-                        amrex::Gpu::Atomic::Add(&data_ptr[0], w);
-                        amrex::Gpu::Atomic::Add(&data_ptr[1],
-                                                w * ion_mass * vz);
-                    });
-                }
-            }
-        }
+        AccumulateOutletIonBoundaryParticles(
+            mybpc, ThrustAccumulator{data_ptr, ion_mass});
 
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_data.begin(),
                          device_data.end(), host_data.begin());
@@ -696,34 +787,8 @@ BeamDivergenceCalc () {
                 "xe_ions");
         const amrex::Real ion_mass = ion_pc.getMass();
 
-        for (int const outlet_boundary : outlet_boundaries) {
-            auto* xe_ions =
-                mybpc.getParticleBufferPointer("xe_ions", outlet_boundary);
-            if (xe_ions != nullptr && xe_ions->isDefined()) {
-                for (auto pti = WarpXParIter(*xe_ions, 0); pti.isValid();
-                     ++pti) {
-                    auto& arr = pti.GetStructOfArrays().GetRealData();
-                    auto pw = arr[PIdx::w].dataPtr();
-                    auto pvx = arr[PIdx::ux].dataPtr();
-                    auto pvy = arr[PIdx::uy].dataPtr();
-                    auto pvz = arr[PIdx::uz].dataPtr();
-                    int np = pti.numParticles();
-
-                    amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                        amrex::Real const w = pw[ip];
-                        amrex::Real const vx = pvx[ip];
-                        amrex::Real const vy = pvy[ip];
-                        amrex::Real const vz = pvz[ip];
-                        amrex::Real const v_perp = std::sqrt(vx * vx + vy * vy);
-                        amrex::Gpu::Atomic::Add(&data_ptr[0], w);
-                        amrex::Gpu::Atomic::Add(&data_ptr[1],
-                                                w * ion_mass * vz);
-                        amrex::Gpu::Atomic::Add(&data_ptr[2],
-                                                w * ion_mass * v_perp);
-                    });
-                }
-            }
-        }
+        AccumulateOutletIonBoundaryParticles(
+            mybpc, BeamDivergenceAccumulator{data_ptr, ion_mass});
 
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_data.begin(),
                          device_data.end(), host_data.begin());
@@ -812,40 +877,10 @@ IEDFCalc () {
         const amrex::Real e_max = iedf_max_eV;
         const int num_bins = iedf_bins;
 
-        for (int const outlet_boundary : outlet_boundaries) {
-            auto* xe_ions =
-                mybpc.getParticleBufferPointer("xe_ions", outlet_boundary);
-            if (xe_ions != nullptr && xe_ions->isDefined()) {
-                for (auto pti = WarpXParIter(*xe_ions, 0); pti.isValid();
-                     ++pti) {
-                    auto& arr = pti.GetStructOfArrays().GetRealData();
-                    auto pw = arr[PIdx::w].dataPtr();
-                    auto pvx = arr[PIdx::ux].dataPtr();
-                    auto pvy = arr[PIdx::uy].dataPtr();
-                    auto pvz = arr[PIdx::uz].dataPtr();
-                    int np = pti.numParticles();
-
-                    amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(long ip) {
-                        amrex::Real const w = pw[ip];
-                        amrex::Real const vx = pvx[ip];
-                        amrex::Real const vy = pvy[ip];
-                        amrex::Real const vz = pvz[ip];
-                        amrex::Real const v2 = vx * vx + vy * vy + vz * vz;
-                        amrex::Real const energy_eV =
-                            amrex::Real(0.5) * ion_mass * v2 / e_charge;
-
-                        amrex::Gpu::Atomic::Add(total_ptr, w);
-                        if (energy_eV >= e_min && energy_eV < e_max) {
-                            int const bin = static_cast<int>(
-                                (energy_eV - e_min) * inv_bin_width);
-                            if (bin >= 0 && bin < num_bins) {
-                                amrex::Gpu::Atomic::Add(&iedf_ptr[bin], w);
-                            }
-                        }
-                    });
-                }
-            }
-        }
+        AccumulateOutletIonBoundaryParticles(
+            mybpc,
+            IEDFAccumulator{iedf_ptr, total_ptr, ion_mass, e_charge,
+                            inv_bin_width, e_min, e_max, num_bins});
 
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_iedf.begin(),
                          device_iedf.end(), host_iedf.begin());
