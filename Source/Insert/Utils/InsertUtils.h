@@ -1,9 +1,13 @@
 #pragma once
 
+#include "Utils/Parser/ParserUtils.H"
+
 #include <AMReX_Extension.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_GpuQualifiers.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_REAL.H>
+#include <AMReX_Random.H>
 
 #include <string>
 
@@ -22,7 +26,37 @@ struct HallAnodeRingConfig
 
 void CreateDirectoryTree (std::string const& dir);
 
+std::string ParentPath (std::string const& path);
+
+std::string PathJoin (std::string const& dir, std::string const& filename);
+
+std::string ToLower (std::string value);
+
+amrex::RandomEngine MakeRandomEngine ();
+
+amrex::ParticleReal TwoPi ();
+
 HallAnodeRingConfig ReadHallAnodeRingConfig (amrex::Geometry const& geom);
+
+template <typename T>
+T
+GetWithParser (amrex::ParmParse const& pp, std::string const& prefix,
+               char const* name)
+{
+    T value{};
+    utils::parser::getWithParser(pp, prefix, name, value);
+    return value;
+}
+
+template <typename T>
+T
+QueryWithParser (amrex::ParmParse const& pp, std::string const& prefix,
+                 char const* name, T default_value)
+{
+    auto value = default_value;
+    utils::parser::queryWithParser(pp, prefix, name, value);
+    return value;
+}
 
 template <typename T>
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE bool

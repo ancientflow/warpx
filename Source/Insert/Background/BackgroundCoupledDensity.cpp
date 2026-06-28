@@ -66,18 +66,6 @@ FabStepOutputPath (std::string const& base_dir, std::string const& species,
     return os.str();
 }
 
-std::string
-ParentPath (std::string const& path) {
-    auto const slash = path.find_last_of('/');
-    if (slash == std::string::npos) {
-        return ".";
-    }
-    if (slash == 0) {
-        return "/";
-    }
-    return path.substr(0, slash);
-}
-
 void
 WriteSingleFabMultiFab (amrex::MultiFab const& mf, std::string const& path,
                         std::string const& species, int lev) {
@@ -85,7 +73,7 @@ WriteSingleFabMultiFab (amrex::MultiFab const& mf, std::string const& path,
         mf.boxArray().size() == 1,
         "Background density FAB output requires exactly one FAB for species " +
             species + " at level " + std::to_string(lev) + ".");
-    Insert::CreateDirectoryTree(ParentPath(path));
+    Insert::CreateDirectoryTree(Insert::ParentPath(path));
     amrex::VisMF::Write(mf, path);
 }
 

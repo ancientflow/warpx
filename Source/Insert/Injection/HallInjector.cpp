@@ -4,6 +4,7 @@
 
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Injection/HallCoordinateDistribution.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
 
@@ -52,36 +53,6 @@ private:
     amrex::ParticleReal m_macro_weight;
 };
 #endif
-
-amrex::Real
-GetReal (
-    amrex::ParmParse const& pp, std::string const& prefix,
-    char const* name)
-{
-    amrex::Real value = 0.0;
-    utils::parser::getWithParser(pp, prefix, name, value);
-    return value;
-}
-
-amrex::Real
-QueryReal (
-    amrex::ParmParse const& pp, std::string const& prefix,
-    char const* name, amrex::Real default_value)
-{
-    auto value = default_value;
-    utils::parser::queryWithParser(pp, prefix, name, value);
-    return value;
-}
-
-int
-QueryInt (
-    amrex::ParmParse const& pp, std::string const& prefix,
-    char const* name, int default_value)
-{
-    auto value = default_value;
-    utils::parser::queryWithParser(pp, prefix, name, value);
-    return value;
-}
 
 bool
 HasParameter (std::string const& name)
@@ -164,8 +135,10 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
     for (auto const& species_name : ReadSourceSpecies(pp, source_name)) {
         const auto species_prefix = source_name + "." + species_name;
         const auto weight = static_cast<amrex::ParticleReal>(
-            QueryReal(pp, species_prefix, "weight",
-                      QueryReal(pp, source_name, "macro_weight", 1.0)));
+            QueryWithParser<amrex::Real>(
+                pp, species_prefix, "weight",
+                QueryWithParser<amrex::Real>(
+                    pp, source_name, "macro_weight", 1.0)));
         const auto velocity_prefix =
             HasParameter(species_prefix + ".velocity.coordinate_system") ||
                     HasParameter(species_prefix + ".velocity.vx.distribution") ||
@@ -179,9 +152,9 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
     }
 
     const auto x_offset = static_cast<amrex::ParticleReal>(
-        QueryReal(pp, source_name, "x_offset", 0.0));
+        QueryWithParser<amrex::Real>(pp, source_name, "x_offset", 0.0));
     const auto y_offset = static_cast<amrex::ParticleReal>(
-        QueryReal(pp, source_name, "y_offset", 0.0));
+        QueryWithParser<amrex::Real>(pp, source_name, "y_offset", 0.0));
     HallInjectionSource source(
         source_name, std::move(rate_model), std::move(position),
         std::move(species_configs), x_offset, y_offset);
@@ -197,18 +170,20 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
     if (utils::parser::query(pp, position_prefix, "coupled_distribution",
                              coupled_distribution)) {
         HallHoleArrayPlaneConfig hole_config;
-        hole_config.hole_count = QueryInt(pp, source_name, "hole_count", 48);
+        hole_config.hole_count =
+            QueryWithParser<int>(pp, source_name, "hole_count", 48);
         hole_config.hole_radius = static_cast<amrex::ParticleReal>(
-            GetReal(pp, source_name, "hole_radius"));
+            GetWithParser<amrex::Real>(pp, source_name, "hole_radius"));
         amrex::Real ring_radius = 0.0;
         if (!utils::parser::queryWithParser(
                 pp, source_name, "hole_ring_radius", ring_radius)) {
-            ring_radius = GetReal(pp, source_name, "ring_radius");
+            ring_radius =
+                GetWithParser<amrex::Real>(pp, source_name, "ring_radius");
         }
         hole_config.ring_radius =
             static_cast<amrex::ParticleReal>(ring_radius);
         hole_config.z = static_cast<amrex::ParticleReal>(
-            QueryReal(pp, source_name, "z", 0.0));
+            QueryWithParser<amrex::Real>(pp, source_name, "z", 0.0));
         source.setHoleArrayPlane(hole_config);
     }
 
