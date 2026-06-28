@@ -16,7 +16,6 @@
 #define MCC_DENSITY
 // #define MCC_DENSITY_AVERAGE_CALC
 // #define MCC_DENSITY_AVERAGE_USE
-#define MCC_ION_CACHED_RHO
 
 /* Coupled MCC collision behavior. */
 #define MCC_DELETE
@@ -33,6 +32,8 @@
 
 /* Particle push / injection helpers. */
 #define PUSH_GAP
+
+#include "Insert/Config/WarpXOptimizationConfig.h"
 
 /* Configuration checks. */
 #if defined(MCC_DENSITY_AVERAGE_CALC) && defined(MCC_DENSITY_AVERAGE_USE)

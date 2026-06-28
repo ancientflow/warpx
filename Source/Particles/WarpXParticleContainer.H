@@ -14,7 +14,7 @@
 #include "FieldSolver/ImplicitSolvers/ImplicitOptions.H"
 
 #include "Initialization/PlasmaInjector.H"
-#include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Config/WarpXOptimizationConfig.h"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/ParticleBoundaries.H"
 #include "SpeciesPhysicalProperties.H"

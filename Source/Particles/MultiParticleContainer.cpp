@@ -11,6 +11,7 @@
  */
 #include "MultiParticleContainer.H"
 
+#include "Insert/Config/WarpXOptimizationConfig.h"
 #ifdef MCC_ION_CACHED_RHO
 #include "Insert/Core/WarpXInsert.h"
 #endif
