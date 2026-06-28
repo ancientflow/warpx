@@ -11,6 +11,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Collisions/IonizationSourceTable.cpp
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Fields/ECDIChargeFilter.cpp
+        Fields/SpectralBoundarySchur.cpp
         Injection/DistributionSampler1D.cpp
         Injection/HallCoordinateDistribution.cpp
         Injection/HallCoordinateTransform.cpp
