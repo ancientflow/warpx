@@ -127,6 +127,7 @@ AfterDiagnostics () {
     // SecondaryEmission();
     // AnodeIonNeutralization();
     AnodeCurrentCalc();
+    ZMinWallChargeDeposit();
     ThrustCalc();
     BeamDivergenceCalc();
     IEDFCalc();
