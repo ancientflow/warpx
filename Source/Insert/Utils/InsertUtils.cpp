@@ -2,8 +2,13 @@
 
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
+#include <AMReX_Math.H>
+#include <AMReX_Random.H>
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
+
+#include <algorithm>
+#include <cctype>
 
 namespace Insert {
 
@@ -46,6 +51,53 @@ CreateDirectoryTree (std::string const& dir)
         }
     }
     amrex::ParallelDescriptor::Barrier();
+}
+
+std::string
+ParentPath (std::string const& path)
+{
+    auto const slash = path.find_last_of('/');
+    if (slash == std::string::npos) {
+        return ".";
+    }
+    if (slash == 0) {
+        return "/";
+    }
+    return path.substr(0, slash);
+}
+
+std::string
+PathJoin (std::string const& dir, std::string const& filename)
+{
+    if (!dir.empty() && dir.back() == '/') {
+        return dir + filename;
+    }
+    return dir + "/" + filename;
+}
+
+std::string
+ToLower (std::string value)
+{
+    std::transform(
+        value.begin(), value.end(), value.begin(),
+        [] (unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+amrex::RandomEngine
+MakeRandomEngine ()
+{
+#ifdef AMREX_USE_GPU
+    return amrex::RandomEngine(nullptr);
+#else
+    return amrex::RandomEngine{};
+#endif
+}
+
+amrex::ParticleReal
+TwoPi ()
+{
+    return amrex::ParticleReal(2.0) * amrex::Math::pi<amrex::ParticleReal>();
 }
 
 HallAnodeRingConfig

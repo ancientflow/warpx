@@ -1,5 +1,6 @@
 #include "IonizationSourceSampler.h"
 
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/TextMsg.H"
 
 #include <AMReX_Math.H>
@@ -24,15 +25,6 @@ struct ArrayData
     int ncol = 0;
     std::vector<amrex::Real> values;
 };
-
-std::string
-PathJoin (std::string const& directory, char const* filename)
-{
-    if (!directory.empty() && directory.back() == '/') {
-        return directory + filename;
-    }
-    return directory + "/" + filename;
-}
 
 ArrayData
 ReadArray (std::string const& path)

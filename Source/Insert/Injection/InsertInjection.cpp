@@ -5,6 +5,7 @@
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Injection/DistributionSampler1D.H"
 #include "Insert/Injection/HallInjector.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/ParticleBoundaryBuffer.H"
 
@@ -19,19 +20,6 @@
 #include <iostream>
 
 namespace Insert {
-
-namespace {
-
-amrex::RandomEngine
-MakeRandomEngine () {
-#ifdef AMREX_USE_GPU
-    return amrex::RandomEngine(nullptr);
-#else
-    return amrex::RandomEngine{};
-#endif
-}
-
-} // namespace
 
 #ifdef BENCHMARK_2D
 namespace {

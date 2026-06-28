@@ -1,5 +1,6 @@
 #include "HallDistribution1D.h"
 
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
 #include "Utils/WarpXConst.H"
@@ -10,7 +11,6 @@
 #include <AMReX_Random.H>
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
@@ -19,21 +19,6 @@
 
 namespace Insert {
 namespace {
-
-std::string
-ToLower (std::string value)
-{
-    std::transform(
-        value.begin(), value.end(), value.begin(),
-        [] (unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
-amrex::ParticleReal
-TwoPi ()
-{
-    return amrex::ParticleReal(2.0) * amrex::Math::pi<amrex::ParticleReal>();
-}
 
 amrex::ParticleReal
 PeriodicDistance (amrex::ParticleReal x, amrex::ParticleReal center) noexcept
@@ -226,33 +211,6 @@ ValidatePositiveSigma (amrex::ParticleReal sigma, std::string const& name)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(sigma > amrex::ParticleReal(0.0),
                                      name + " requires sigma > 0.");
-}
-
-amrex::ParticleReal
-GetReal (amrex::ParmParse const& pp, std::string const& prefix,
-         char const* name)
-{
-    amrex::ParticleReal value = amrex::ParticleReal(0.0);
-    utils::parser::getWithParser(pp, prefix, name, value);
-    return value;
-}
-
-amrex::ParticleReal
-QueryReal (amrex::ParmParse const& pp, std::string const& prefix,
-           char const* name, amrex::ParticleReal default_value)
-{
-    auto value = default_value;
-    utils::parser::queryWithParser(pp, prefix, name, value);
-    return value;
-}
-
-int
-QueryInt (amrex::ParmParse const& pp, std::string const& prefix,
-          char const* name, int default_value)
-{
-    auto value = default_value;
-    utils::parser::queryWithParser(pp, prefix, name, value);
-    return value;
 }
 
 bool
@@ -687,52 +645,61 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
 
     if (distribution == "constant") {
         return std::make_unique<HallConstantDistribution1D>(
-            GetReal(pp, prefix, "value"));
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "value"));
     }
     if (distribution == "uniform") {
         return std::make_unique<HallUniformDistribution1D>(
-            GetReal(pp, prefix, "min"), GetReal(pp, prefix, "max"));
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "min"),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "max"));
     }
     if (distribution == "area_uniform") {
         return std::make_unique<HallAreaUniformDistribution1D>(
-            GetReal(pp, prefix, "min"), GetReal(pp, prefix, "max"));
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "min"),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "max"));
     }
     if (distribution == "gaussian") {
         return std::make_unique<HallGaussianDistribution1D>(
-            QueryReal(pp, prefix, "mean", amrex::ParticleReal(0.0)),
-            GetReal(pp, prefix, "sigma"));
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "mean", amrex::ParticleReal(0.0)),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "positive_gaussian") {
         return std::make_unique<HallPositiveGaussianDistribution1D>(
-            QueryReal(pp, prefix, "mean", amrex::ParticleReal(0.0)),
-            GetReal(pp, prefix, "sigma"));
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "mean", amrex::ParticleReal(0.0)),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "single_spoke") {
         const auto center =
-            QueryReal(pp, prefix, "center",
-                      QueryReal(pp, prefix, "spoke_center",
-                                amrex::Math::pi<amrex::ParticleReal>()));
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "center",
+                QueryWithParser<amrex::ParticleReal>(
+                    pp, prefix, "spoke_center",
+                    amrex::Math::pi<amrex::ParticleReal>()));
         return std::make_unique<HallSingleSpokeDistribution1D>(
             center, GetSigmaWithFallback(pp, prefix),
-            QueryInt(pp, prefix, "num_bins", 1024));
+            QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
     if (distribution == "multi_spoke") {
         return std::make_unique<HallMultiSpokeDistribution1D>(
-            QueryInt(pp, prefix, "spoke_count", 1),
+            QueryWithParser<int>(pp, prefix, "spoke_count", 1),
             GetSigmaWithFallback(pp, prefix),
-            QueryReal(pp, prefix, "spoke_phase", amrex::ParticleReal(0.0)),
-            QueryInt(pp, prefix, "num_bins", 1024));
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "spoke_phase", amrex::ParticleReal(0.0)),
+            QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
     if (distribution == "neutral_spoke" ||
         distribution == "neutral_spoke_depletion") {
         return std::make_unique<HallNeutralSpokeDistribution1D>(
-            GetReal(pp, prefix, "ion_width"),
-            QueryReal(pp, prefix, "min_ratio", amrex::ParticleReal(0.25)),
-            QueryReal(pp, prefix, "drop_exponent", amrex::ParticleReal(4.0)),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "ion_width"),
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "min_ratio", amrex::ParticleReal(0.25)),
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "drop_exponent", amrex::ParticleReal(4.0)),
             QueryPhaseWithFallback(pp, prefix),
             QueryBoolWithAliases(
                 pp, prefix, {"reverse", "reverse_phase", "phase_reverse"}, false),
-            QueryInt(pp, prefix, "num_bins", 1024));
+            QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
     if (distribution == "discrete") {
         std::vector<amrex::ParticleReal> values;
@@ -758,7 +725,7 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
         }
         return std::make_unique<HallTabulatedDistribution1D>(
             std::move(values), std::move(pdf),
-            QueryInt(pp, prefix, "num_bins", 1024));
+            QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
     if (distribution == "parser") {
         const auto axis_name = AxisNameFromPrefix(prefix);
@@ -770,8 +737,10 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
                                               expression);
         }
         return std::make_unique<HallParserDistribution1D>(
-            GetReal(pp, prefix, "min"), GetReal(pp, prefix, "max"),
-            QueryInt(pp, prefix, "num_bins", 1024), axis_name, expression);
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "min"),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "max"),
+            QueryWithParser<int>(pp, prefix, "num_bins", 1024),
+            axis_name, expression);
     }
 
     WARPX_ABORT_WITH_MESSAGE("Unknown HallDistribution1D type: " +

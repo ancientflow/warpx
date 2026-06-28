@@ -1,23 +1,14 @@
 #include "HallCoordinateTransform.h"
 
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/TextMsg.H"
 
 #include <AMReX_Math.H>
 
-#include <algorithm>
-#include <cctype>
 #include <cmath>
 
 namespace Insert {
 namespace {
-
-std::string
-ToLower (std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
 
 amrex::XDim3
 Normalize (amrex::XDim3 value)

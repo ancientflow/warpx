@@ -2,10 +2,10 @@
 
 #include "WarpX.H"
 
+#include "Insert/Utils/InsertUtils.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Utils/TextMsg.H"
 
-#include <AMReX_Math.H>
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>
 #include <AMReX_Vector.H>
@@ -16,22 +16,6 @@
 
 namespace Insert {
 namespace {
-
-amrex::RandomEngine
-MakeRandomEngine ()
-{
-#ifdef AMREX_USE_GPU
-    return amrex::RandomEngine(nullptr);
-#else
-    return amrex::RandomEngine{};
-#endif
-}
-
-amrex::ParticleReal
-TwoPi ()
-{
-    return amrex::ParticleReal(2.0) * amrex::Math::pi<amrex::ParticleReal>();
-}
 
 int
 RandomHoleStart (int hole_count, amrex::RandomEngine const& engine)

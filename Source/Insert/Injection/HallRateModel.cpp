@@ -1,45 +1,16 @@
 #include "HallRateModel.h"
 
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
 #include "Utils/WarpXConst.H"
 
 #include <AMReX.H>
 
-#include <algorithm>
-#include <cctype>
 #include <cmath>
 
 namespace Insert {
 namespace {
-
-std::string
-ToLower (std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
-
-amrex::Real
-GetReal (
-    amrex::ParmParse const& pp, std::string const& prefix,
-    char const* name)
-{
-    amrex::Real value = 0.0;
-    utils::parser::getWithParser(pp, prefix, name, value);
-    return value;
-}
-
-amrex::Real
-QueryReal (
-    amrex::ParmParse const& pp, std::string const& prefix,
-    char const* name, amrex::Real default_value)
-{
-    auto value = default_value;
-    utils::parser::queryWithParser(pp, prefix, name, value);
-    return value;
-}
 
 void
 AssertPositive (amrex::Real value, std::string const& name)
@@ -147,26 +118,26 @@ MakeHallRateModel (
 
     if (rate == "fixed_count") {
         return std::make_unique<HallFixedCountRateModel>(
-            GetReal(pp, prefix, "count"));
+            GetWithParser<amrex::Real>(pp, prefix, "count"));
     }
     if (rate == "density_volume") {
         return std::make_unique<HallDensityVolumeRateModel>(
-            GetReal(pp, prefix, "density"),
-            GetReal(pp, prefix, "volume"),
-            GetReal(pp, prefix, "macro_weight"));
+            GetWithParser<amrex::Real>(pp, prefix, "density"),
+            GetWithParser<amrex::Real>(pp, prefix, "volume"),
+            GetWithParser<amrex::Real>(pp, prefix, "macro_weight"));
     }
     if (rate == "current") {
         return std::make_unique<HallCurrentRateModel>(
-            GetReal(pp, prefix, "current"),
-            GetReal(pp, prefix, "macro_weight"),
-            QueryReal(pp, prefix, "l_factor", 1.0));
+            GetWithParser<amrex::Real>(pp, prefix, "current"),
+            GetWithParser<amrex::Real>(pp, prefix, "macro_weight"),
+            QueryWithParser<amrex::Real>(pp, prefix, "l_factor", 1.0));
     }
     if (rate == "mass_flow") {
         return std::make_unique<HallMassFlowRateModel>(
-            GetReal(pp, prefix, "mass_flow"),
-            GetReal(pp, prefix, "mass"),
-            GetReal(pp, prefix, "macro_weight"),
-            QueryReal(pp, prefix, "l_factor", 1.0));
+            GetWithParser<amrex::Real>(pp, prefix, "mass_flow"),
+            GetWithParser<amrex::Real>(pp, prefix, "mass"),
+            GetWithParser<amrex::Real>(pp, prefix, "macro_weight"),
+            QueryWithParser<amrex::Real>(pp, prefix, "l_factor", 1.0));
     }
 
     WARPX_ABORT_WITH_MESSAGE("Unknown HallRateModel type: " + rate);
