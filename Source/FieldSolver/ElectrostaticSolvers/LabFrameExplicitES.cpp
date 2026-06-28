@@ -15,6 +15,7 @@
 #include "WarpX.H"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
+#include "Insert/Fields/SpectralBoundarySchur.h"
 
 using namespace amrex;
 
@@ -264,6 +265,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     else {
         if (IsPythonCallbackInstalled("poissonsolver")) { computeE(Efield_fp, phi_fp, beta); }
     }
+    Insert::ApplyElectrostaticBoundaryCorrection(phi_fp);
 }
 
 /* \brief Compute the potential by solving Poisson's equation with
