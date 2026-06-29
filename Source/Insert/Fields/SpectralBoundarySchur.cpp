@@ -2,6 +2,8 @@
 
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
+#include "Insert/Boundary/ZMinWallCharge.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
 #include "Utils/WarpXConst.H"
 #include "WarpX.H"
 
@@ -92,6 +94,22 @@ IsHallAnodeRingNode (
     return k == zlo && r_sq >= config.r_min_sq && r_sq <= config.r_max_sq;
 }
 #endif
+
+bool
+UseZMinWallChargeSource (std::string const& source)
+{
+    return source == "zmin_wall_charge" ||
+           source == "zmin_wall_charge_density" ||
+           source == "zmin_wall_charge_deposit";
+}
+
+bool
+UseConstantSigmaSource (std::string const& source)
+{
+    return source == "sigma_s_device_vector" ||
+           source == "constant" ||
+           source == "constant_sigma_s";
+}
 
 struct SchurConfig
 {
@@ -910,8 +928,9 @@ SpectralBoundarySchur::Enabled ()
 /**
  * Apply the configured zmin Schur correction path to WarpX level-0 fields.
  *
- * This convenience entry creates a constant `sigma_s` device vector from runtime
- * input. External wall-charge deposition can call `SolveAndReconstruct` directly.
+ * This convenience entry creates the configured `sigma_s` device vector from
+ * runtime input. External wall-charge deposition can call `SolveAndReconstruct`
+ * directly.
  *
  * @param phi Multi-level nodal potential field.
  */
@@ -947,9 +966,20 @@ SpectralBoundarySchur::ApplyZMinCorrection (
     int const nx_face = domain.length(0);
     int const ny_face = domain.length(1);
 
-    amrex::Gpu::DeviceVector<amrex::Real> sigma_s_device(
-        static_cast<std::size_t>(nx_face) * ny_face, config.sigma_s);
-    SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
+    if (UseZMinWallChargeSource(config.source)) {
+        ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(warpx.Geom(0));
+        if (grid.nx != nx_face || grid.ny != ny_face) {
+            amrex::Abort("insert.schur_boundary zmin wall-charge grid size mismatch");
+        }
+        auto sigma_s_device = DepositZMinWallChargeDensity(warpx, grid);
+        SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
+    } else if (UseConstantSigmaSource(config.source)) {
+        amrex::Gpu::DeviceVector<amrex::Real> sigma_s_device(
+            static_cast<std::size_t>(nx_face) * ny_face, config.sigma_s);
+        SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
+    } else {
+        amrex::Abort("unknown insert.schur_boundary.source");
+    }
 #else
     amrex::Abort("insert.schur_boundary requires WarpX_DIMS=3");
 #endif
