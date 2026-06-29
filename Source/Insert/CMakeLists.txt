@@ -7,6 +7,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Background/InsertBackgroundDensity.cpp
         Boundary/InsertBoundaryParticles.cpp
         Boundary/InsertBoundaryPhi.cpp
+        Boundary/ZMinWallCharge.cpp
         Collisions/CoupledBackgroundMCCCollision.cpp
         Collisions/IonizationSourceTable.cpp
         Diagnostics/InsertRuntimeDiagnostics.cpp
