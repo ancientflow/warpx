@@ -501,15 +501,8 @@ struct AnodeIonEmissionTransform {
 void
 SecondaryEmission () {
 #ifdef HALL3D
-    static int times = 0;
-    static const int gap = 10;
-    times++;
-
-    if (times == gap) {
-        times = 0;
-
-        WarpX& warpx_instance = WarpX::GetInstance();
-
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
 
         auto& mypc = warpx_instance.GetPartContainer();
@@ -563,15 +556,8 @@ SecondaryEmission () {
 void
 AnodeIonNeutralization () {
 #ifdef HALL3D
-    static int times = 0;
-    static const int gap = 10;
-    times++;
-
-    if (times == gap) {
-        times = 0;
-
-        WarpX& warpx_instance = WarpX::GetInstance();
-
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
 
         auto& mypc = warpx_instance.GetPartContainer();

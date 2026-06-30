@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -47,17 +48,9 @@ constexpr int zhi_boundary = 5;
 constexpr int outlet_boundaries[] = {xlo_boundary, xhi_boundary, ylo_boundary,
                                      yhi_boundary, zhi_boundary};
 
-int
-HallDiagInterval () {
-    int gap = 10;
-    amrex::ParmParse pp_mc("my_constants");
-    pp_mc.query("hall_diag_interval", gap);
-    return std::max(gap, 1);
-}
-
 amrex::Real
 SampleDt (amrex::Real const time, amrex::Real& last_sample_time,
-          int const gap) {
+           int const gap) {
     amrex::Real sample_dt = time - last_sample_time;
     if (sample_dt <= 0.0_rt) {
         sample_dt =
@@ -352,15 +345,10 @@ AnodeCurrentCalc () {
     static bool const diag_enabled = DiagEnabled("anode_current_diag");
     if (!diag_enabled) { return; }
 
-    static int times = 0;
-    static int gap = 10;
-    times++;
-
     static bool ifinit = false;
     static std::string anode_current_path = "anode_current.dat";
 
     if (!ifinit) {
-        gap = HallDiagInterval();
         amrex::ParmParse pp_mc("my_constants");
         pp_mc.query("anode_current_path", anode_current_path);
 
@@ -374,9 +362,8 @@ AnodeCurrentCalc () {
         ifinit = true;
     }
 
-    if (times == gap) {
-        times = 0;
-        WarpX& warpx_instance = WarpX::GetInstance();
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
 
         auto* elec_zmin =
@@ -458,14 +445,17 @@ ZMinWallChargeDeposit () {
     if (!diag_enabled) { return; }
 
     static bool ifinit = false;
-    static int interval = 100;
+    static int write_interval = 100;
     static std::string zmin_wall_charge_dir = "zmin_wall_charge";
+    static amrex::Vector<amrex::Real> accumulated_wall_charge;
+    static bool has_accumulated_wall_charge = false;
 
     if (!ifinit) {
         amrex::ParmParse pp_mc("my_constants");
-        pp_mc.query("zmin_wall_charge_interval", interval);
+        pp_mc.query("zmin_wall_charge_interval", write_interval);
+        pp_mc.query("zmin_wall_charge_write_interval", write_interval);
         pp_mc.query("zmin_wall_charge_dir", zmin_wall_charge_dir);
-        interval = std::max(interval, 1);
+        write_interval = std::max(write_interval, 1);
         if (zmin_wall_charge_dir.empty()) {
             zmin_wall_charge_dir = "zmin_wall_charge";
         }
@@ -476,7 +466,8 @@ ZMinWallChargeDeposit () {
 
     WarpX& warpx_instance = WarpX::GetInstance();
     int const step = warpx_instance.getistep(0);
-    if (step % interval == 0) {
+    // Boundary particle caches are cleared on the shared Hall diagnostic cadence.
+    if (DoBoundaryParticleDiag(step)) {
         ZMinWallChargeGrid const grid =
             MakeZMinWallChargeGrid(warpx_instance.Geom(0));
         long const data_size = ZMinWallChargeSize(grid);
@@ -492,9 +483,25 @@ ZMinWallChargeDeposit () {
             amrex::ParallelDescriptor::IOProcessorNumber());
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
+            if (accumulated_wall_charge.size() != host_wall_charge.size()) {
+                accumulated_wall_charge.assign(host_wall_charge.size(), 0.0_rt);
+            }
+            for (std::size_t i = 0; i < host_wall_charge.size(); ++i) {
+                accumulated_wall_charge[i] += host_wall_charge[i];
+            }
+            has_accumulated_wall_charge = true;
+        }
+    }
+
+    if (step % write_interval == 0) {
+        ZMinWallChargeGrid const grid =
+            MakeZMinWallChargeGrid(warpx_instance.Geom(0));
+        if (has_accumulated_wall_charge &&
+            amrex::ParallelDescriptor::IOProcessor())
+        {
             WriteZMinWallCharge(
                 ZMinWallChargeOutputPath(zmin_wall_charge_dir, step),
-                host_wall_charge, grid, step, warpx_instance.gett_new(0));
+                accumulated_wall_charge, grid, step, warpx_instance.gett_new(0));
         }
     }
 #endif
@@ -506,16 +513,11 @@ ThrustCalc () {
     static bool const diag_enabled = DiagEnabled("thrust_diag");
     if (!diag_enabled) { return; }
 
-    static int times = 0;
-    static int gap = 10;
-    times++;
-
     static bool ifinit = false;
     static std::string thrust_diag_path = "thrust.dat";
     static amrex::Real last_sample_time = 0.0_rt;
 
     if (!ifinit) {
-        gap = HallDiagInterval();
         amrex::ParmParse pp_mc("my_constants");
         pp_mc.query("thrust_diag_path", thrust_diag_path);
 
@@ -528,9 +530,8 @@ ThrustCalc () {
         ifinit = true;
     }
 
-    if (times == gap) {
-        times = 0;
-        WarpX& warpx_instance = WarpX::GetInstance();
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
         constexpr int data_size = 2;
         amrex::Gpu::DeviceVector<amrex::Real> device_data(data_size, 0.0_rt);
@@ -552,7 +553,8 @@ ThrustCalc () {
             amrex::ParallelDescriptor::IOProcessorNumber());
 
         const amrex::Real time = warpx_instance.gett_new(0);
-        const amrex::Real sample_dt = SampleDt(time, last_sample_time, gap);
+        const amrex::Real sample_dt = SampleDt(
+            time, last_sample_time, BoundaryParticleDiagInterval());
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
             const amrex::Real thrust = host_data[1] / sample_dt;
@@ -570,16 +572,11 @@ BeamDivergenceCalc () {
     static bool const diag_enabled = DiagEnabled("beam_divergence_diag");
     if (!diag_enabled) { return; }
 
-    static int times = 0;
-    static int gap = 10;
-    times++;
-
     static bool ifinit = false;
     static std::string beam_divergence_path = "beam_divergence.dat";
     static amrex::Real last_sample_time = 0.0_rt;
 
     if (!ifinit) {
-        gap = HallDiagInterval();
         amrex::ParmParse pp_mc("my_constants");
         pp_mc.query("beam_divergence_path", beam_divergence_path);
 
@@ -594,9 +591,8 @@ BeamDivergenceCalc () {
         ifinit = true;
     }
 
-    if (times == gap) {
-        times = 0;
-        WarpX& warpx_instance = WarpX::GetInstance();
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
         constexpr int data_size = 3;
         amrex::Gpu::DeviceVector<amrex::Real> device_data(data_size, 0.0_rt);
@@ -618,7 +614,8 @@ BeamDivergenceCalc () {
             amrex::ParallelDescriptor::IOProcessorNumber());
 
         const amrex::Real time = warpx_instance.gett_new(0);
-        const amrex::Real sample_dt = SampleDt(time, last_sample_time, gap);
+        const amrex::Real sample_dt = SampleDt(
+            time, last_sample_time, BoundaryParticleDiagInterval());
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
             const amrex::Real divergence_angle =
@@ -642,10 +639,6 @@ IEDFCalc () {
     static bool const diag_enabled = DiagEnabled("iedf_diag");
     if (!diag_enabled) { return; }
 
-    static int times = 0;
-    static int gap = 10;
-    times++;
-
     static bool ifinit = false;
     static std::string iedf_path = "iedf.dat";
     static int iedf_bins = 200;
@@ -654,7 +647,6 @@ IEDFCalc () {
     static amrex::Real last_sample_time = 0.0_rt;
 
     if (!ifinit) {
-        gap = HallDiagInterval();
         amrex::ParmParse pp_mc("my_constants");
         pp_mc.query("iedf_path", iedf_path);
         pp_mc.query("iedf_bins", iedf_bins);
@@ -675,9 +667,8 @@ IEDFCalc () {
         ifinit = true;
     }
 
-    if (times == gap) {
-        times = 0;
-        WarpX& warpx_instance = WarpX::GetInstance();
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
         amrex::Gpu::DeviceVector<amrex::Real> device_iedf(iedf_bins, 0.0_rt);
         amrex::Gpu::DeviceVector<amrex::Real> device_total(1, 0.0_rt);
@@ -715,7 +706,8 @@ IEDFCalc () {
             amrex::ParallelDescriptor::IOProcessorNumber());
 
         const amrex::Real time = warpx_instance.gett_new(0);
-        const amrex::Real sample_dt = SampleDt(time, last_sample_time, gap);
+        const amrex::Real sample_dt = SampleDt(
+            time, last_sample_time, BoundaryParticleDiagInterval());
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
             const amrex::Real bin_width = (iedf_max_eV - iedf_min_eV) /
@@ -746,22 +738,13 @@ IEDFCalc () {
 void
 ClearHallBoundaryParticleCache () {
 #ifdef HALL3D
-    static bool const diag_enabled = DiagEnabled("clear_hall_boundary_particle_cache_diag");
+    static bool const diag_enabled =
+        DiagEnabled("clear_hall_boundary_particle_cache_diag");
     if (!diag_enabled) { return; }
 
-    static int times = 0;
-    static int gap = 10;
-    times++;
-
-    static bool ifinit = false;
-    if (!ifinit) {
-        gap = HallDiagInterval();
-        ifinit = true;
-    }
-
-    if (times == gap) {
-        times = 0;
-        WarpX::GetInstance().GetParticleBoundaryBuffer().clearParticles();
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
+        warpx_instance.GetParticleBoundaryBuffer().clearParticles();
     }
 #endif
 }
