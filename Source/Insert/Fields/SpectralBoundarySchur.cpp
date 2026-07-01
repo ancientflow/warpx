@@ -4,6 +4,7 @@
 #include "Fields.H"
 #include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Utils/WarpXConst.H"
 #include "WarpX.H"
 
@@ -943,8 +944,9 @@ SpectralBoundarySchur::ApplyZMinCorrection (
     int const ny_face = domain.length(1);
 
     ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(warpx.Geom(0));
-    auto sigma_s_device = GetAccumulatedZMinWallChargeDensity(grid);
-    SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
+    InitializeAccumulatedZMinWallChargeDensity(ZMinWallChargeSize(grid));
+    SolveAndReconstruct(
+        warpx.Geom(0), g_accumulated_wall_charge_density, nx_face, ny_face);
 #endif
 #else
     amrex::Abort("insert.schur_boundary requires WarpX_DIMS=3");
