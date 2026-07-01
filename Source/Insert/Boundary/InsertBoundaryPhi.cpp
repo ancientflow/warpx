@@ -3,13 +3,17 @@
 #include "WarpX.H"
 
 #include "Fields.H"
+#include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/WarpXConst.H"
 
+#include <AMReX_BLassert.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_ParallelDescriptor.H>
 
 #include <iostream>
 
@@ -255,6 +259,83 @@ DirichletPhiGuardSet ()
                     rho_arr(i, j, k) * dx[2] * dx[2] / PhysConst::epsilon_0;
             }
 #endif
+        });
+    }
+#endif
+}
+
+void
+HallThrusterPhiGuardSet ()
+{
+#ifdef HALL3D
+    WarpX& warpx_instance = WarpX::GetInstance();
+    auto phi = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
+
+    auto const zmin_bc = WarpX::field_boundary_lo[WARPX_ZINDEX];
+    bool const is_dirichlet = zmin_bc == FieldBoundaryType::PEC;
+    bool const is_neumann = zmin_bc == FieldBoundaryType::Neumann;
+    if (!is_dirichlet && !is_neumann) {
+        return;
+    }
+
+    amrex::Geometry const& geom = warpx_instance.Geom(0);
+    amrex::Box domain = geom.Domain();
+    domain.surroundingNodes();
+    int const xlo = domain.smallEnd(0);
+    int const ylo = domain.smallEnd(1);
+    int const zlo = domain.smallEnd(2);
+
+    amrex::Real const problo_x = geom.ProbLo(0);
+    amrex::Real const problo_y = geom.ProbLo(1);
+    amrex::Real const dx = geom.CellSize(0);
+    amrex::Real const dy = geom.CellSize(1);
+    amrex::Real const dz = geom.CellSize(2);
+    auto const anode_config = ReadHallAnodeRingConfig(geom);
+
+    amrex::Real const* wall_charge_density = nullptr;
+    int nx_face = 0;
+    if (is_neumann) {
+        if (amrex::ParallelDescriptor::NProcs() != 1) {
+            amrex::Abort("Hall zmin phi guard correction requires one MPI rank");
+        }
+
+        ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(geom);
+        InitializeAccumulatedZMinWallChargeDensity(ZMinWallChargeSize(grid));
+        wall_charge_density = g_accumulated_wall_charge_density.dataPtr();
+        nx_face = grid.nx;
+    }
+
+    amrex::Real const inv_epsilon0 =
+        amrex::Real(1.0) / PhysConst::epsilon_0;
+
+    for (amrex::MFIter mfi(*phi, amrex::TilingIfNotGPU()); mfi.isValid();
+         ++mfi)
+    {
+        amrex::Box const& box = mfi.validbox();
+        if (box.smallEnd(2) > zlo || box.bigEnd(2) < zlo) {
+            continue;
+        }
+
+        amrex::Array4<amrex::Real> const& phi_arr = phi->array(mfi);
+        amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+            if (k != zlo) {
+                return;
+            }
+
+            if (IsHallAnodeRingNode(i, j, k, zlo, xlo, ylo, problo_x,
+                                    problo_y, dx, dy, anode_config))
+            {
+                phi_arr(i, j, k - 1) = anode_config.voltage;
+                return;
+            }
+
+            if (is_neumann) {
+                int const wall_idx = (j - ylo) * nx_face + (i - xlo);
+                amrex::Real const sigma_s = wall_charge_density[wall_idx];
+                phi_arr(i, j, k - 1) =
+                    phi_arr(i, j, k + 1) -
+                    amrex::Real(2.0) * dz * sigma_s * inv_epsilon0;
+            }
         });
     }
 #endif
