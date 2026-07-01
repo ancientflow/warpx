@@ -199,7 +199,6 @@ namespace Insert {
 ```text
 insert.schur_boundary.enabled = 0/1
 insert.schur_boundary.face = zmin
-insert.schur_boundary.source = sigma_s_device_vector
 insert.schur_boundary.max_iter = 100
 insert.schur_boundary.rel_tol = 1e-10
 insert.schur_boundary.abs_tol = 0.0
@@ -306,10 +305,7 @@ g_rhs = g_target(i,j) - normal_grad_warpx
 g_target = -sigma_s(i,j) / epsilon0
 ```
 
-其中 `sigma_s(i,j)` 来自外部已经沉积完成的 zmin 面表面电荷密度数组。
-WarpX 当前尚未支持壁面电荷沉积，因此第一版验证路径可继续使用常数或解析
-`sigma_s`；正式接入时 Schur 模块只读取传入的表面电荷密度，不实现粒子到壁面
-的沉积逻辑。
+其中 `sigma_s(i,j)` 来自 `ZMinWallChargeDeposit` 已累计的 zmin 面壁面电荷。
 
 第一版实际接入接口按 x 快变的 device 数组读取：
 
@@ -570,7 +566,7 @@ u_N = Schur 求得的边界未知量
 - 新建 Schur 模块和入口；
 - 只支持 3D、level 0、无 EB；
 - 输入为 x 快变的 zmin 面 `amrex::Gpu::DeviceVector<amrex::Real>` 表面电荷密度；
-- 可继续支持解析或常数 `sigma_s` 作为验证数据源；
+- Schur 入口只读取已累计的 zmin 壁面电荷作为 `sigma_s` 数据源；
 - CG + CPU DST；在 `cpu_serial` 后端中，可先把 device RHS 拷贝到 host 后求解；
 - 求解到边界未知量 `u_N` 为止，暂不重建 `phi_corr`，暂不叠加 `Efield_fp`；
 - 每个方向的模态数固定为该方向参与 DST 的节点个数，不提供运行时截断；
