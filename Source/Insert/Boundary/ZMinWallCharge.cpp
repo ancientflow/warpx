@@ -14,6 +14,7 @@
 #include <AMReX_GpuAtomic.H>
 #include <AMReX_Math.H>
 
+#include <cstddef>
 #include <limits>
 
 namespace {
@@ -193,9 +194,6 @@ DepositZMinWallCharge (WarpX& warpx_instance, ZMinWallChargeGrid const& grid)
 {
 #ifdef HALL3D
     long const data_size = ZMinWallChargeSize(grid);
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-        data_size <= static_cast<long>(std::numeric_limits<int>::max()),
-        "zmin wall charge array is too large for MPI reduction.");
 
     amrex::Gpu::DeviceVector<amrex::Real> device_wall_charge(data_size,
                                                              amrex::Real(0.0));
@@ -225,63 +223,30 @@ DepositZMinWallCharge (WarpX& warpx_instance, ZMinWallChargeGrid const& grid)
 }
 
 amrex::Gpu::DeviceVector<amrex::Real>
-DepositZMinWallChargeDensity (WarpX& warpx_instance,
-                              ZMinWallChargeGrid const& grid)
+GetAccumulatedZMinWallChargeDensity (ZMinWallChargeGrid const& grid)
 {
 #ifdef HALL3D
-    auto device_sigma = DepositZMinWallCharge(warpx_instance, grid);
-    amrex::Real* const sigma_ptr = device_sigma.dataPtr();
-    amrex::Real const inv_area = amrex::Real(1.0) / (grid.dx * grid.dy);
-    int const data_size = static_cast<int>(ZMinWallChargeSize(grid));
-
-    amrex::ParallelFor(data_size, [=] AMREX_GPU_DEVICE(int const i) {
-        sigma_ptr[i] *= inv_area;
-    });
-
-    return device_sigma;
-#else
-    (void)warpx_instance;
-    (void)grid;
-    return amrex::Gpu::DeviceVector<amrex::Real>{};
-#endif
-}
-
-amrex::Gpu::DeviceVector<amrex::Real>
-GetTotalZMinWallChargeDensity (WarpX& warpx_instance,
-                               ZMinWallChargeGrid const& grid)
-{
-#ifdef HALL3D
-    // Start from the particles currently held in the boundary buffer (this
-    // step and any particles since the last cache clear).
-    auto device_sigma = DepositZMinWallCharge(warpx_instance, grid);
-
-    // Add the accumulated wall charge from previous diagnostic intervals so
-    // that the Schur correction sees the full wall-charge history.
+    long const data_size_long = ZMinWallChargeSize(grid);
     auto const& accumulated = GetAccumulatedZMinWallCharge();
+
+    amrex::Gpu::DeviceVector<amrex::Real> device_sigma(
+        static_cast<std::size_t>(data_size_long), amrex::Real(0.0));
     if (!accumulated.empty()) {
-        amrex::Gpu::DeviceVector<amrex::Real> d_accumulated(accumulated.size());
         amrex::Gpu::copy(amrex::Gpu::hostToDevice,
                          accumulated.begin(), accumulated.end(),
-                         d_accumulated.begin());
-        amrex::Real* const sigma_ptr = device_sigma.dataPtr();
-        amrex::Real const* acc_ptr = d_accumulated.dataPtr();
-        int const data_size = static_cast<int>(accumulated.size());
-        amrex::ParallelFor(data_size, [=] AMREX_GPU_DEVICE(int const i) {
-            sigma_ptr[i] += acc_ptr[i];
-        });
+                         device_sigma.begin());
     }
 
-    // Convert total charge to surface charge density.
+    // Convert accumulated charge to surface charge density.
     amrex::Real* const sigma_ptr = device_sigma.dataPtr();
     amrex::Real const inv_area = amrex::Real(1.0) / (grid.dx * grid.dy);
-    int const data_size = static_cast<int>(ZMinWallChargeSize(grid));
+    int const data_size = static_cast<int>(data_size_long);
     amrex::ParallelFor(data_size, [=] AMREX_GPU_DEVICE(int const i) {
         sigma_ptr[i] *= inv_area;
     });
 
     return device_sigma;
 #else
-    (void)warpx_instance;
     (void)grid;
     return amrex::Gpu::DeviceVector<amrex::Real>{};
 #endif

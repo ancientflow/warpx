@@ -32,20 +32,14 @@ long ZMinWallChargeSize (ZMinWallChargeGrid const& grid);
 amrex::Gpu::DeviceVector<amrex::Real>
 DepositZMinWallCharge (WarpX& warpx_instance, ZMinWallChargeGrid const& grid);
 
-amrex::Gpu::DeviceVector<amrex::Real>
-DepositZMinWallChargeDensity (WarpX& warpx_instance,
-                              ZMinWallChargeGrid const& grid);
-
 /**
- * Return the zmin surface charge density including both the particles currently
- * held in the boundary buffer and the accumulated wall-charge history.
+ * Return the zmin surface charge density from accumulated wall-charge history.
  *
  * This is the source term that should be used by the Schur boundary correction
- * so that it reflects the full accumulated wall charge rather than only the
- * most recent interval.
+ * so that it reflects only the wall charge deposited through
+ * ZMinWallChargeDeposit.
  */
 amrex::Gpu::DeviceVector<amrex::Real>
-GetTotalZMinWallChargeDensity (WarpX& warpx_instance,
-                               ZMinWallChargeGrid const& grid);
+GetAccumulatedZMinWallChargeDensity (ZMinWallChargeGrid const& grid);
 
 } // namespace Insert

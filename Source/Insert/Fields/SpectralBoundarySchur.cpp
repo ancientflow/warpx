@@ -95,22 +95,6 @@ IsHallAnodeRingNode (
 }
 #endif
 
-bool
-UseZMinWallChargeSource (std::string const& source)
-{
-    return source == "zmin_wall_charge" ||
-           source == "zmin_wall_charge_density" ||
-           source == "zmin_wall_charge_deposit";
-}
-
-bool
-UseConstantSigmaSource (std::string const& source)
-{
-    return source == "sigma_s_device_vector" ||
-           source == "constant" ||
-           source == "constant_sigma_s";
-}
-
 struct SchurConfig
 {
     bool enabled = false;
@@ -118,10 +102,8 @@ struct SchurConfig
     int max_iter = 30;
     amrex::Real rel_tol = static_cast<amrex::Real>(1.0e-6);
     amrex::Real abs_tol = static_cast<amrex::Real>(0.0);
-    amrex::Real sigma_s = static_cast<amrex::Real>(0.0);
     std::string face = "zmin";
     std::string backend = "cpu_serial";
-    std::string source = "sigma_s_device_vector";
 };
 
 struct SchurState
@@ -165,10 +147,8 @@ ReadConfig ()
         pp.query("max_iter", state.config.max_iter);
         pp.query("rel_tol", state.config.rel_tol);
         pp.query("abs_tol", state.config.abs_tol);
-        pp.query("sigma_s", state.config.sigma_s);
         pp.query("face", state.config.face);
         pp.query("backend", state.config.backend);
-        pp.query("source", state.config.source);
         state.config_read = true;
     }
     return state.config;
@@ -555,12 +535,11 @@ SolveCG (
  *
  * @param neumann_mask Output interior-face bool mask stored as `char`.
  * @param rhs Output compact RHS over true mask entries.
- * @param sigma_s Full-face surface charge density. Empty means use constant config value.
+ * @param sigma_s Full-face surface charge density from accumulated zmin wall charge.
  * @param geom Level geometry.
  * @param nx_internal Number of x interior nodes.
  * @param ny_internal Number of y interior nodes.
  * @param nx_face Full zmin face node count in x.
- * @param config Schur configuration.
  */
 void
 BuildMaskAndRhs (
@@ -570,8 +549,7 @@ BuildMaskAndRhs (
     amrex::Geometry const& geom,
     int nx_internal,
     int ny_internal,
-    int nx_face,
-    SchurConfig const& config)
+    int nx_face)
 {
     amrex::Box domain = geom.Domain();
     domain.surroundingNodes();
@@ -611,8 +589,7 @@ BuildMaskAndRhs (
             if (is_neumann) {
                 neumann_mask[Index2D(i, j, nx_internal)] = static_cast<char>(1);
                 amrex::Real const sigma =
-                    sigma_s.empty() ? config.sigma_s :
-                                      sigma_s[Index2D(gi - xlo, gj - ylo, nx_face)];
+                    sigma_s[Index2D(gi - xlo, gj - ylo, nx_face)];
                 // sigma_s = -epsilon0 * dphi/dn, so dphi/dn = -sigma_s/epsilon0.
                 rhs.push_back(-sigma / PhysConst::epsilon_0);
             }
@@ -890,7 +867,7 @@ SolveAndReconstructHost (
     std::vector<amrex::Real> rhs;
     BuildMaskAndRhs(
         neumann_mask, rhs, sigma_s, geom,
-        nx_internal, ny_internal, nx_face, config);
+        nx_internal, ny_internal, nx_face);
 
     auto& state = State();
     state.nx_internal = nx_internal;
@@ -926,11 +903,7 @@ SpectralBoundarySchur::Enabled ()
 }
 
 /**
- * Apply the configured zmin Schur correction path to WarpX level-0 fields.
- *
- * This convenience entry creates the configured `sigma_s` device vector from
- * runtime input. External wall-charge deposition can call `SolveAndReconstruct`
- * directly.
+ * Apply the zmin Schur correction from accumulated wall-charge density.
  *
  * @param phi Multi-level nodal potential field.
  */
@@ -960,26 +933,19 @@ SpectralBoundarySchur::ApplyZMinCorrection (
         amrex::Abort("insert.schur_boundary cpu_serial backend requires one MPI rank");
     }
 
+#ifndef HALL3D
+    amrex::Abort("insert.schur_boundary requires HALL3D zmin wall-charge deposition");
+#else
     WarpX& warpx = WarpX::GetInstance();
     amrex::Box domain = warpx.Geom(0).Domain();
     domain.surroundingNodes();
     int const nx_face = domain.length(0);
     int const ny_face = domain.length(1);
 
-    if (UseZMinWallChargeSource(config.source)) {
-        ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(warpx.Geom(0));
-        if (grid.nx != nx_face || grid.ny != ny_face) {
-            amrex::Abort("insert.schur_boundary zmin wall-charge grid size mismatch");
-        }
-        auto sigma_s_device = GetTotalZMinWallChargeDensity(warpx, grid);
-        SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
-    } else if (UseConstantSigmaSource(config.source)) {
-        amrex::Gpu::DeviceVector<amrex::Real> sigma_s_device(
-            static_cast<std::size_t>(nx_face) * ny_face, config.sigma_s);
-        SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
-    } else {
-        amrex::Abort("unknown insert.schur_boundary.source");
-    }
+    ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(warpx.Geom(0));
+    auto sigma_s_device = GetAccumulatedZMinWallChargeDensity(grid);
+    SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
+#endif
 #else
     amrex::Abort("insert.schur_boundary requires WarpX_DIMS=3");
 #endif
