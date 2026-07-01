@@ -8,6 +8,7 @@
 #include "Fields.H"
 #include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/WarpXConst.H"
 #include "WarpX.H"
 
@@ -801,6 +802,26 @@ SolveAndReconstructDevice (
 
 #endif
 
+void
+AddPhiCorrectionToPotential (
+    ablastr::fields::MultiLevelScalarField const& phi)
+{
+    auto const* const phi_corr = State().phi_corr.get();
+    if (phi_corr == nullptr) {
+        return;
+    }
+
+    auto& phi_mf = *phi[0];
+    if (!phi_mf.boxArray().CellEqual(phi_corr->boxArray()) ||
+        !(phi_mf.DistributionMap() == phi_corr->DistributionMap()))
+    {
+        amrex::Abort("insert.schur_boundary phi_corr layout does not match phi");
+    }
+
+    amrex::MultiFab::Saxpy(phi_mf, static_cast<amrex::Real>(1.0), *phi_corr,
+                           0, 0, 1, 0);
+}
+
 } // namespace
 
 namespace Insert {
@@ -852,8 +873,20 @@ SpectralBoundarySchur::ApplyZMinCorrection (
 
     ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(warpx.Geom(0));
     InitializeAccumulatedZMinWallChargeDensity(ZMinWallChargeSize(grid));
-    SolveAndReconstruct(warpx.Geom(0), g_accumulated_wall_charge_density,
-                        nx_face, ny_face);
+
+    auto& state = State();
+    int const step = warpx.getistep(0);
+    // Zmin wall charge is accumulated in AfterDiagnostics() after istep has
+    // advanced.  The next field solve sees that same step value, so the Schur
+    // update follows the Hall diagnostic cadence directly.
+    if (state.phi_corr == nullptr ||
+        step % BoundaryParticleDiagInterval() == 0)
+    {
+        SolveAndReconstruct(warpx.Geom(0), g_accumulated_wall_charge_density,
+                            nx_face, ny_face);
+    }
+
+    AddPhiCorrectionToPotential(phi);
 #else
     amrex::Abort("insert.schur_boundary requires WarpX_DIMS=3");
 #endif
