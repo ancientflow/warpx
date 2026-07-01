@@ -48,6 +48,12 @@ constexpr int zhi_boundary = 5;
 constexpr int outlet_boundaries[] = {xlo_boundary, xhi_boundary, ylo_boundary,
                                      yhi_boundary, zhi_boundary};
 
+// Persistent accumulated zmin wall-charge storage, shared with the Schur boundary
+// correction so that the correction reflects the full wall-charge history rather
+// than only the particles currently held in the boundary buffer.
+amrex::Vector<amrex::Real> g_accumulated_wall_charge;
+bool g_has_accumulated_wall_charge = false;
+
 amrex::Real
 SampleDt (amrex::Real const time, amrex::Real& last_sample_time,
            int const gap) {
@@ -438,35 +444,51 @@ AnodeCurrentCalc () {
 #endif
 }
 
+/**
+ * Access the accumulated zmin wall-charge history.
+ *
+ * This vector is maintained by ZMinWallChargeDeposit and is shared with the
+ * Schur boundary correction so that the correction can reflect the full
+ * accumulated wall charge rather than only the particles currently cached in
+ * the boundary buffer.
+ *
+ * @return Host vector with accumulated zmin wall charge per face node.
+ */
+amrex::Vector<amrex::Real> const&
+GetAccumulatedZMinWallCharge ()
+{
+    return g_accumulated_wall_charge;
+}
+
 void
 ZMinWallChargeDeposit () {
 #ifdef HALL3D
     static bool const diag_enabled = DiagEnabled("zmin_wall_charge_diag");
-    if (!diag_enabled) { return; }
 
     static bool ifinit = false;
     static int write_interval = 100;
     static std::string zmin_wall_charge_dir = "zmin_wall_charge";
-    static amrex::Vector<amrex::Real> accumulated_wall_charge;
-    static bool has_accumulated_wall_charge = false;
 
     if (!ifinit) {
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.query("zmin_wall_charge_interval", write_interval);
-        pp_mc.query("zmin_wall_charge_write_interval", write_interval);
-        pp_mc.query("zmin_wall_charge_dir", zmin_wall_charge_dir);
-        write_interval = std::max(write_interval, 1);
-        if (zmin_wall_charge_dir.empty()) {
-            zmin_wall_charge_dir = "zmin_wall_charge";
+        if (diag_enabled) {
+            amrex::ParmParse pp_mc("my_constants");
+            pp_mc.query("zmin_wall_charge_interval", write_interval);
+            pp_mc.query("zmin_wall_charge_write_interval", write_interval);
+            pp_mc.query("zmin_wall_charge_dir", zmin_wall_charge_dir);
+            write_interval = std::max(write_interval, 1);
+            if (zmin_wall_charge_dir.empty()) {
+                zmin_wall_charge_dir = "zmin_wall_charge";
+            }
+            Insert::CreateDirectoryTree(zmin_wall_charge_dir);
         }
-        Insert::CreateDirectoryTree(zmin_wall_charge_dir);
 
         ifinit = true;
     }
 
     WarpX& warpx_instance = WarpX::GetInstance();
     int const step = warpx_instance.getistep(0);
-    // Boundary particle caches are cleared on the shared Hall diagnostic cadence.
+    // Always maintain the accumulated wall charge on the Hall diagnostic cadence
+    // so that the Schur boundary correction can use the full wall-charge history.
     if (DoBoundaryParticleDiag(step)) {
         ZMinWallChargeGrid const grid =
             MakeZMinWallChargeGrid(warpx_instance.Geom(0));
@@ -483,25 +505,25 @@ ZMinWallChargeDeposit () {
             amrex::ParallelDescriptor::IOProcessorNumber());
 
         if (amrex::ParallelDescriptor::IOProcessor()) {
-            if (accumulated_wall_charge.size() != host_wall_charge.size()) {
-                accumulated_wall_charge.assign(host_wall_charge.size(), 0.0_rt);
+            if (g_accumulated_wall_charge.size() != host_wall_charge.size()) {
+                g_accumulated_wall_charge.assign(host_wall_charge.size(), 0.0_rt);
             }
-            for (std::size_t i = 0; i < host_wall_charge.size(); ++i) {
-                accumulated_wall_charge[i] += host_wall_charge[i];
+            for (amrex::Long i = 0; i < host_wall_charge.size(); ++i) {
+                g_accumulated_wall_charge[i] += host_wall_charge[i];
             }
-            has_accumulated_wall_charge = true;
+            g_has_accumulated_wall_charge = true;
         }
     }
 
-    if (step % write_interval == 0) {
+    if (diag_enabled && step % write_interval == 0) {
         ZMinWallChargeGrid const grid =
             MakeZMinWallChargeGrid(warpx_instance.Geom(0));
-        if (has_accumulated_wall_charge &&
+        if (g_has_accumulated_wall_charge &&
             amrex::ParallelDescriptor::IOProcessor())
         {
             WriteZMinWallCharge(
                 ZMinWallChargeOutputPath(zmin_wall_charge_dir, step),
-                accumulated_wall_charge, grid, step, warpx_instance.gett_new(0));
+                g_accumulated_wall_charge, grid, step, warpx_instance.gett_new(0));
         }
     }
 #endif

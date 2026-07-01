@@ -115,8 +115,8 @@ struct SchurConfig
 {
     bool enabled = false;
     bool rebuild_volume_field = false;
-    int max_iter = 100;
-    amrex::Real rel_tol = static_cast<amrex::Real>(1.0e-10);
+    int max_iter = 30;
+    amrex::Real rel_tol = static_cast<amrex::Real>(1.0e-6);
     amrex::Real abs_tol = static_cast<amrex::Real>(0.0);
     amrex::Real sigma_s = static_cast<amrex::Real>(0.0);
     std::string face = "zmin";
@@ -971,7 +971,7 @@ SpectralBoundarySchur::ApplyZMinCorrection (
         if (grid.nx != nx_face || grid.ny != ny_face) {
             amrex::Abort("insert.schur_boundary zmin wall-charge grid size mismatch");
         }
-        auto sigma_s_device = DepositZMinWallChargeDensity(warpx, grid);
+        auto sigma_s_device = GetTotalZMinWallChargeDensity(warpx, grid);
         SolveAndReconstruct(warpx.Geom(0), sigma_s_device, nx_face, ny_face);
     } else if (UseConstantSigmaSource(config.source)) {
         amrex::Gpu::DeviceVector<amrex::Real> sigma_s_device(
