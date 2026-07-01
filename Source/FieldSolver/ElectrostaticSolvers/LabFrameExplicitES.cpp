@@ -13,9 +13,12 @@
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
+#include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
+#ifdef HALL3D
 #include "Insert/Fields/SpectralBoundarySchur.h"
+#endif
 
 using namespace amrex;
 
@@ -265,7 +268,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     else {
         if (IsPythonCallbackInstalled("poissonsolver")) { computeE(Efield_fp, phi_fp, beta); }
     }
+#ifdef HALL3D
     Insert::ApplyElectrostaticBoundaryCorrection(phi_fp);
+#endif
 }
 
 /* \brief Compute the potential by solving Poisson's equation with
