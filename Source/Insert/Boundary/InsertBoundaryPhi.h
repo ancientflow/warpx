@@ -13,6 +13,7 @@ void AnodeVoltage ();
 amrex::Vector<std::unique_ptr<amrex::iMultiFab> > const&
 BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi);
 void DirichletPhiGuardSet ();
+void HallThrusterPhiGuardSet ();
 void VoltageAdjustment ();
 
 } // namespace Insert
