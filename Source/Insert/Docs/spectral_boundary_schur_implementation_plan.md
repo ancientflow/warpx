@@ -429,13 +429,7 @@ Efield_fp += E_corr
 2. 若当前构建没有启用 `WarpX_FFT`，第一版可先实现 CPU-only 验证路径；
 3. 后续再补 GPU/多 MPI rank 的并行面 transform。
 
-第一版建议明确限制：
-
-```text
-insert.schur_boundary.backend = cpu_serial
-```
-
-并在运行时检查：
+第一版建议明确限制并在运行时检查：
 
 - zmin 面是否完整落在单进程或已经 gather 到 IOProcessor；
 - transform 大小是否等于内部节点数；

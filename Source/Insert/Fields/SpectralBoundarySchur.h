@@ -5,8 +5,6 @@
 #include <AMReX_GpuContainers.H>
 #include <AMReX_REAL.H>
 
-#include <vector>
-
 namespace amrex
 {
 class Geometry;
@@ -32,9 +30,6 @@ namespace SpectralBoundarySchur
         int nx_face,
         int ny_face);
 
-    std::vector<amrex::Real> const& BoundaryUnknowns ();
-    std::vector<amrex::Real> const& BoundaryFace ();
-    std::vector<amrex::Real> const& BoundarySpectrum ();
     amrex::MultiFab const* PhiCorrection ();
 }
 
