@@ -3,7 +3,9 @@
 #include "WarpX.H"
 
 #include "Initialization/SampleGaussianFluxDistribution.H"
+#include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/MultiParticleContainer.H"
@@ -334,6 +336,9 @@ struct SecondaryEmissionTransform {
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_phi;
     amrex::ParticleReal m_eps = 0.0;
     amrex::ParticleReal m_vth = 0.0;
+    ZMinWallChargeGrid m_wall_charge_grid;
+    amrex::Real* AMREX_RESTRICT m_wall_charge_density = nullptr;
+    amrex::Real m_charge_density_per_weight = amrex::Real(0.0);
 
     template <typename DstData, typename SrcData>
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE void
@@ -353,10 +358,12 @@ struct SecondaryEmissionTransform {
         const amrex::ParticleReal uz_inc = src.m_rdata[PIdx::uz][i_src];
         const amrex::ParticleReal z_boundary = m_plo[2];
 
-        amrex::ParticleReal x_emit, y_emit;
+        amrex::ParticleReal x_hit, y_hit;
         BacktraceParticleToZPlane(x, y, z, ux_inc, uy_inc, uz_inc, z_boundary,
-                                  x_emit, y_emit);
+                                  x_hit, y_hit);
 
+        amrex::ParticleReal x_emit = x_hit;
+        amrex::ParticleReal y_emit = y_hit;
         const amrex::ParticleReal xlo = m_plo[0] + m_eps;
         const amrex::ParticleReal xhi = m_phi[0] - m_eps;
         const amrex::ParticleReal ylo = m_plo[1] + m_eps;
@@ -378,6 +385,17 @@ struct SecondaryEmissionTransform {
         dst.m_rdata[PIdx::y][i_dst] = y_emit;
         dst.m_rdata[PIdx::z][i_dst] = z_boundary + m_eps;
 
+        if (m_wall_charge_density != nullptr) {
+            amrex::Real const emitted_charge_density =
+                static_cast<amrex::Real>(src.m_rdata[PIdx::w][i_src]) *
+                m_charge_density_per_weight;
+            // Electrons have negative charge, so subtracting emitted charge
+            // raises the wall charge density.
+            DepositZMinWallChargeToNodes(m_wall_charge_density,
+                                         m_wall_charge_grid, x_hit, y_hit,
+                                         -emitted_charge_density);
+        }
+
         // Reflection keeps the incident tangential velocity and flips the
         // normal component back into the domain.
         if (behavior == static_cast<int>(SecondaryEmissionBehavior::Reflect)) {
@@ -398,7 +416,9 @@ struct SecondaryEmissionTransform {
             abs(amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine));
 #else
         amrex::ignore_unused(dst, src, i_src, i_dst, behavior, emission_index,
-                             emit_count, engine);
+                             emit_count, engine, m_wall_charge_grid,
+                             m_wall_charge_density,
+                             m_charge_density_per_weight);
 #endif
     }
 };
@@ -533,6 +553,17 @@ SecondaryEmission () {
             static_cast<amrex::ParticleReal>(std::sqrt(
                 emission_temperature_eV * PhysConst::q_e / elec_pc.getMass()));
 
+        ZMinWallChargeGrid wall_charge_grid{};
+        amrex::Real* wall_charge_density = nullptr;
+        amrex::Real charge_density_per_weight = amrex::Real(0.0);
+        if (!g_accumulated_wall_charge_density.empty()) {
+            wall_charge_grid = MakeZMinWallChargeGrid(warpx_instance.Geom(0));
+            wall_charge_density = g_accumulated_wall_charge_density.dataPtr();
+            charge_density_per_weight =
+                static_cast<amrex::Real>(elec_pc.getCharge()) /
+                (wall_charge_grid.dx * wall_charge_grid.dy);
+        }
+
         const SecondaryEmissionDecisionFunc decision_func{
             plo,
             anode_ring,
@@ -544,7 +575,13 @@ SecondaryEmission () {
             emit_one_a,
             emit_one_x0_eV};
         const SecondaryEmissionTransform transform{
-            plo, phi, amrex::ParticleReal(0.1 * min_dx), emission_vth};
+            plo,
+            phi,
+            amrex::ParticleReal(0.1 * min_dx),
+            emission_vth,
+            wall_charge_grid,
+            wall_charge_density,
+            charge_density_per_weight};
 
         amrex::Long num_added = VariableCountCopyTransformBoundaryBuffer(
             mybpc, "electrons", 4, elec_pc, decision_func, transform);
