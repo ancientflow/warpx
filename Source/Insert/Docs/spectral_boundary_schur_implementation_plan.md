@@ -54,16 +54,16 @@
 g_{\text{target}} - \partial_n \phi_{\text{warpx}}.
 \]
 
-若物理模型以表面电荷给出：
+若物理模型以沉积到壁面的表面电荷密度给出，则本文档约定：
 
 \[
-\sigma_s = -\epsilon_0 \partial_n \phi,
+\partial_n \phi = \frac{\sigma_s}{\epsilon_0},
 \]
 
-则：
+即：
 
 \[
-g_{\text{target}} = -\frac{\sigma_s}{\epsilon_0}.
+g_{\text{target}} = \frac{\sigma_s}{\epsilon_0}.
 \]
 
 zmin 面外法向为：
@@ -74,7 +74,8 @@ n=-\hat{z},
 \partial_n = -\partial_z.
 \]
 
-所以实现中如果用正 z 方向差分估计 \(\partial_z\phi\)，需要显式处理符号：
+所以实现中如果用正 z 方向差分估计 \(\partial_z\phi\)，需要显式处理符号；
+上述约定等价于 \(\partial_z\phi = -\sigma_s/\epsilon_0\)。
 
 \[
 \partial_n \phi_{\text{warpx}}
@@ -141,7 +142,7 @@ g_{\text{target}} - \partial_n \phi_{\text{warpx}}
 
 \[
 g_N =
--\frac{\sigma_s}{\epsilon_0}
+\frac{\sigma_s}{\epsilon_0}
 - \partial_n \phi_{\text{warpx}}.
 \]
 
@@ -238,7 +239,7 @@ sigma_s_device[i + nx_face * j] = sigma_s(i,j)
 
 `nx_face` 和 `ny_face` 必须与 Schur 模块使用的 zmin 面节点布局一致。数组值为
 已经沉积完成的表面电荷密度，单位按
-\(\sigma_s = -\epsilon_0 \partial_n\phi\) 解释。
+\(\partial_n\phi = \sigma_s/\epsilon_0\) 解释。
 
 表面通量来源可以分阶段实现：
 
@@ -302,10 +303,12 @@ g_rhs = g_target(i,j) - normal_grad_warpx
 若输入为表面电荷：
 
 ```text
-g_target = -sigma_s(i,j) / epsilon0
+g_target = sigma_s(i,j) / epsilon0
 ```
 
 其中 `sigma_s(i,j)` 来自 `ZMinWallChargeDeposit` 已累计的 zmin 面壁面电荷。
+当前实现路径中 WarpX 已在 zmin 非阳极陶瓷面施加齐次 Neumann，因此
+`normal_grad_warpx = 0`，Schur RHS 直接使用 `g_target`。
 
 第一版实际接入接口按 x 快变的 device 数组读取：
 
@@ -339,7 +342,7 @@ P_N Lambda P_N^T u_N = g_rhs
 
 这里不乘 \(\epsilon_0\)，因为 RHS 已经是法向导数单位。如果直接用
 \(\sigma_s\) 作为 RHS，则算子与 RHS 需要统一改写为
-\(\epsilon_0\Lambda u = -\sigma_s - \epsilon_0\partial_n\phi_{\text{warpx}}\)。
+\(\epsilon_0\Lambda u = \sigma_s - \epsilon_0\partial_n\phi_{\text{warpx}}\)。
 
 这里使用全模态 Schur 算子，不做模态截断。这样 \(P_N\Lambda P_N^T\) 保持完整
 边界 Schur 系统的对称正定结构。

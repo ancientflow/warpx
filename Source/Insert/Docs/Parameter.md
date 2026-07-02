@@ -97,8 +97,14 @@ my_constants.zmin_wall_charge_write_interval = 100
 <zmin_wall_charge_dir>/zmin_wall_charge_00000100.dat
 ```
 
-文件内容是从运行开始累计到当前写出步的 zmin 壁面电荷数组，单位为库仑。
-数组按 y 节点为行、x 节点为列写出，x 是最快变化索引。
+文件内容是从运行开始累计到当前写出步的 zmin 壁面电荷密度
+`sigma_s(x,y)`，单位为 `C/m^2`。沉积使用粒子的物理电荷符号：电子贡献为负，
+离子贡献为正。数组按 y 节点为行、x 节点为列写出，x 是最快变化索引。
+
+当该累计量用于 zmin 非齐次 Neumann 边界时，约定 zmin 面外法向
+`n = -z`，并施加 `dphi/dn = sigma_s/epsilon0`，等价于
+`dphi/dz = -sigma_s/epsilon0`。因此 `InsertBoundaryPhi` 的 guard cell 更新为
+`phi(k0-1) = phi(k0+1) + 2*dz*sigma_s/epsilon0`。
 
 ### 推力
 

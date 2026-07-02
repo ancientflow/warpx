@@ -332,8 +332,9 @@ HallThrusterPhiGuardSet ()
             if (is_neumann) {
                 int const wall_idx = (j - ylo) * nx_face + (i - xlo);
                 amrex::Real const sigma_s = wall_charge_density[wall_idx];
+                // zmin outward normal n=-z, so dphi/dz = -sigma_s/epsilon0.
                 phi_arr(i, j, k - 1) =
-                    phi_arr(i, j, k + 1) -
+                    phi_arr(i, j, k + 1) +
                     amrex::Real(2.0) * dz * sigma_s * inv_epsilon0;
             }
         });
