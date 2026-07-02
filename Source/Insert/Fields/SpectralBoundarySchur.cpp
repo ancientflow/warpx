@@ -543,8 +543,9 @@ SolveCGDevice (amrex::Gpu::DeviceVector<amrex::Real>& x,
  * Build the Neumann mask and full-face Schur right-hand side on device.
  *
  * WarpX already applies the anode Dirichlet potential and homogeneous Neumann
- * condition on the remaining ceramic surface. The Schur RHS is therefore just
- * the target nonhomogeneous normal derivative from `sigma_s`.
+ * condition on the remaining ceramic surface. With the zmin outward normal
+ * n=-z, the accumulated wall charge density sets dphi/dn = sigma_s/epsilon0.
+ * The Schur RHS is therefore just this target nonhomogeneous normal derivative.
  *
  * @param neumann_mask Output interior-face mask.
  * @param rhs Output full interior RHS with zero Dirichlet/anode entries.
@@ -602,9 +603,9 @@ BuildMaskAndRhsDevice (
         if (is_neumann) {
             amrex::Real const sigma =
                 sigma_ptr[Index2D(gi - xlo, gj - ylo, nx_face)];
-            // sigma_s = -epsilon0 * dphi/dn, so dphi/dn = -sigma_s/epsilon0.
+            // With zmin outward normal n=-z, dphi/dn = sigma_s/epsilon0.
             mask_ptr[idx] = 1;
-            rhs_ptr[idx] = -sigma * inv_epsilon0;
+            rhs_ptr[idx] = sigma * inv_epsilon0;
         } else {
             mask_ptr[idx] = 0;
             rhs_ptr[idx] = static_cast<amrex::Real>(0.0);
