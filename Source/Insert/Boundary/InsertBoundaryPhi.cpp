@@ -10,6 +10,8 @@
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_ParallelDescriptor.H>
+#include <AMReX_Reduce.H>
 
 #include <iostream>
 
@@ -50,30 +52,33 @@ VoltageAdjustment ()
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     WarpX& warpx_instance = WarpX::GetInstance();
     auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
-    amrex::Real phisum = 0;
 
-    static amrex::MultiFab mf(phi_field->boxArray(), phi_field->DistributionMap(),
-                              phi_field->nComp(), phi_field->nGrow());
-    static bool DotInit = false;
-    if (!DotInit) {
-        mf.setVal(0);
-        for (amrex::MFIter mfi(mf, amrex::TilingIfNotGPU()); mfi.isValid();
-             ++mfi) {
-            const amrex::Box& box = mfi.tilebox();
-            amrex::Array4<amrex::Real> const& arr = mf.array(mfi);
-            amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j) {
-                if (i == 491) {
-                    arr(i, j, 0) = 0.48;
-                } else if (i == 492) {
-                    arr(i, j, 0) = 0.52;
-                }
-            });
+    amrex::ReduceOps<amrex::ReduceOpSum> reduce_ops;
+    amrex::ReduceData<amrex::Real> reduce_data(reduce_ops);
+    for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        amrex::Box const& box = mfi.tilebox();
+        amrex::Array4<amrex::Real const> const& phi = phi_field->const_array(mfi);
+        for (int correction_col = 0; correction_col < 2; ++correction_col) {
+            int const correction_i = correction_col == 0 ? 491 : 492;
+            amrex::Real const correction_weight =
+                correction_col == 0 ? amrex::Real(0.48) : amrex::Real(0.52);
+            amrex::Box column_box = box;
+            column_box.setSmall(0, correction_i);
+            column_box.setBig(0, correction_i);
+            if (!box.intersects(column_box)) {
+                continue;
+            }
+            reduce_ops.eval(
+                column_box, reduce_data,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) -> amrex::GpuTuple<amrex::Real> {
+                    return {correction_weight * phi(i, j, k)};
+                });
         }
-        DotInit = true;
     }
-    phisum = amrex::MultiFab::Dot(mf, 0, *phi_field, 0, 1, 0);
 
-    phisum /= 256;
+    amrex::Real phisum = amrex::get<0>(reduce_data.value());
+    amrex::ParallelDescriptor::ReduceRealSum(phisum);
+    phisum /= amrex::Real(256.0);
 
     std::cout << "voltage adjustment: " << phisum << std::endl;
 
