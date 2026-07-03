@@ -1,5 +1,6 @@
 #include "ECDIChargeFilter.h"
 
+#include "Insert/Config/WarpXSimulationConfig.h"
 #include "WarpX.H"
 
 #include <ablastr/profiler/ProfilerWrapper.H>
@@ -214,9 +215,9 @@ ApplyECDIChargeFilter (
 {
     ABLASTR_PROFILE("Insert::ApplyECDIChargeFilter");
 
-#if !defined(WARPX_DIM_3D)
+#if !defined(HALL3D)
     amrex::ignore_unused(rho, geom, options, diagnostics);
-    WARPX_ABORT_WITH_MESSAGE("Insert ECDI charge filter currently supports only WARPX_DIM_3D.");
+    WARPX_ABORT_WITH_MESSAGE("Insert ECDI charge filter currently supports only HALL3D.");
 #else
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         options.axis == "z",
@@ -355,6 +356,10 @@ FilterRhoForECDIControl (
     ablastr::fields::MultiLevelScalarField const& rho_fp,
     int const max_level)
 {
+#ifndef HALL3D
+    amrex::ignore_unused(rho_fp, max_level);
+    return;
+#else
     ECDIChargeFilterOptions const options = ReadECDIChargeFilterOptions();
     if (!options.enabled) {
         return;
@@ -389,6 +394,7 @@ FilterRhoForECDIControl (
     if (options.diagnostics) {
         PrintDiagnostics(diagnostics);
     }
+#endif
 }
 
 } // namespace Insert

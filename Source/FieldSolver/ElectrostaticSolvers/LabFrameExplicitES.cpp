@@ -7,14 +7,17 @@
  * License: BSD-3-Clause-LBNL
  */
 #include "LabFrameExplicitES.H"
-#include "Fluids/MultiFluidContainer_fwd.H"
+
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
+#include "Fluids/MultiFluidContainer_fwd.H"
+#include "Insert/Boundary/InsertBoundaryPhi.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Core/WarpXInsert.h"
+#include "Insert/Fields/ECDIChargeFilter.h"
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#include "Insert/Core/WarpXInsert.h"
-#include "Insert/Fields/ECDIChargeFilter.h"
 
 using namespace amrex;
 
@@ -213,7 +216,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
 #endif
 
+#ifdef HALL3D
     Insert::FilterRhoForECDIControl(rho_fp, max_level);
+#endif
 
     // beta is zero in lab frame
     // Todo: use simpler finite difference form with beta=0
@@ -255,6 +260,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 
     }
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
+    Insert::VoltageAdjustment();
+#endif
     // 共置网格guard cell处理
     Insert::SetPhiGuards();
     updatePhiExtrapolationHistory(phi_fp);
