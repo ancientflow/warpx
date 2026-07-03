@@ -27,25 +27,30 @@ namespace {
 int
 ElectronsCollection (WarpX& warpx_instance) {
     auto& boundary_buffer = warpx_instance.GetParticleBoundaryBuffer();
-    int e_xlo =
-            boundary_buffer.getNumParticlesInContainer("electrons", 0, false),
-        xe_xlo =
-            boundary_buffer.getNumParticlesInContainer("xe_ions", 0, false);
+    int const e_xlo =
+        boundary_buffer.getNumParticlesInContainer("electrons", 0, false);
+    int const xe_xlo =
+        boundary_buffer.getNumParticlesInContainer("xe_ions", 0, false);
     return std::max(e_xlo - xe_xlo, 0);
 }
 
 void
 ParticleInjection (WarpX& warpx_instance) {
-    static const int nx = 512, ny = 256, nppc = 75;
-    static const double lx = 0.025, ly = 0.0128, NPlasma = 5e16, s0 = 5.23e23,
-                        const_dt = 5e-12;
+    static constexpr int nx = 512;
+    static constexpr int ny = 256;
+    static constexpr int nppc = 75;
+    static constexpr double lx = 0.025;
+    static constexpr double ly = 0.0128;
+    static constexpr double NPlasma = 5e16;
+    static constexpr double s0 = 5.23e23;
+    static constexpr double const_dt = 5e-12;
 
-    static const int once_injection = 1000;
+    static constexpr int once_injection = 1000;
     static double rest_macro_particles = 0;
-    static const double one_step_real_particles =
+    static constexpr double one_step_real_particles =
         s0 * const_dt * 0.0128 * 2 / 3.1415926 * 0.0075;
-    static const amrex::Real global_weight = NPlasma / nx / ny * lx * ly / nppc;
-    static const double one_step_macro_particles =
+    static constexpr amrex::Real global_weight = NPlasma / nx / ny * lx * ly / nppc;
+    static constexpr double one_step_macro_particles =
         one_step_real_particles / global_weight;
 
     int this_step_pair = 0;
@@ -57,11 +62,11 @@ ParticleInjection (WarpX& warpx_instance) {
     }
 
     auto& mypc = warpx_instance.GetPartContainer();
-    auto& electons_pc =
+    auto& electrons_pc =
         mypc.GetParticleContainer(mypc.getSpeciesID("electrons"));
     auto& xe_pc = mypc.GetParticleContainer(mypc.getSpeciesID("xe_ions"));
 
-    const amrex::Vector<amrex::Vector<int>> nattr;
+    amrex::Vector<amrex::Vector<int>> const nattr;
     amrex::RandomEngine uniform_engine(MakeRandomEngine());
     amrex::RandomEngine normal_engine(MakeRandomEngine());
 
@@ -108,7 +113,7 @@ ParticleInjection (WarpX& warpx_instance) {
     }
 
     if (electron_size > 0) {
-        electons_pc.AddNParticles(0, electron_size, pxe, pye, pze, vxe, vye,
+        electrons_pc.AddNParticles(0, electron_size, pxe, pye, pze, vxe, vye,
                                   vze, 1, {we}, 0, nattr, false);
         if (this_step_cathode_electron > 0) {
             auto& boundary_buffer = warpx_instance.GetParticleBoundaryBuffer();
