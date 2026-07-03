@@ -21,7 +21,7 @@
 
 namespace Insert {
 
-#ifdef BENCHMARK_2D
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
 namespace {
 
 int
@@ -517,6 +517,14 @@ LegacyXeFastInjection () {
                             vz, 1, {pw}, 0, nattr, 0);
         amrex::Print() << "Injection Xe Atom\n";
     }
+#endif
+}
+
+void
+Benchmark2DParticleInjection ()
+{
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
+    ParticleInjection(WarpX::GetInstance());
 #endif
 }
 

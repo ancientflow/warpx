@@ -47,9 +47,9 @@ namespace Insert {
 void
 VoltageAdjustment ()
 {
-#ifdef BENCHMARK_2D
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     WarpX& warpx_instance = WarpX::GetInstance();
-    auto phi_field = warpx_instance.m_fields.get(FieldType::phi_fp, 0);
+    auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
     amrex::Real phisum = 0;
 
     static amrex::MultiFab mf(phi_field->boxArray(), phi_field->DistributionMap(),
@@ -187,7 +187,7 @@ BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi)
 void
 DirichletPhiGuardSet ()
 {
-#ifndef WAVE1D
+#ifdef HALL3D
     using namespace amrex::literals;
 
     WarpX& warpx_instance = WarpX::GetInstance();
