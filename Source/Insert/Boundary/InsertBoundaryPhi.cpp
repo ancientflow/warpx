@@ -265,8 +265,11 @@ HallThrusterPhiGuardSet ()
             if (IsHallAnodeRingNode(i, j, k, zlo, xlo, ylo, problo_x,
                                     problo_y, dx, dy, anode_config))
             {
+                // Make WarpX's centered boundary difference match the
+                // Dirichlet intrinsic flux (phi_boundary - phi_next) / dz.
                 phi_arr(i, j, k - 1) =
-                    use_schur ? amrex::Real(0.0) : anode_config.voltage;
+                    amrex::Real(2.0) * phi_arr(i, j, k) -
+                    phi_arr(i, j, k + 1);
                 return;
             }
 
