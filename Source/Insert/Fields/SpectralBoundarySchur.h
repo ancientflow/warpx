@@ -25,7 +25,8 @@ namespace SpectralBoundarySchur
 
     void SolveAndReconstruct (
         amrex::Geometry const& geom,
-        amrex::MultiFab const& sigma_s_mf);
+        amrex::MultiFab const& sigma_s_mf,
+        amrex::MultiFab const& base_phi);
 
     amrex::MultiFab const* PhiCorrection ();
 }

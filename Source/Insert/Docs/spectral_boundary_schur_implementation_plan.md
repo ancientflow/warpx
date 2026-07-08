@@ -284,9 +284,9 @@ NeumannMask(i,j) = false  if node belongs to Gamma_D or transverse boundary endp
 ```text
 1. WarpX deposit rho
 2. Insert::SetBoundaryPhi() 设置阳极电势
-3. Insert::BuildPhiOversetMasks() 固定阳极 Dirichlet 节点
-4. WarpX/AMReX Poisson 求解 phi_warpx
-5. WarpX 根据 phi_warpx 计算 Efield_fp
+3. WarpX/AMReX Poisson 求解 phi_warpx
+4. Schur 修正中将阳极环作为 0V Dirichlet correction
+5. WarpX 根据组合后的 phi 计算 Efield_fp
 ```
 
 这些步骤已经处理 zmin 阳极电势，不在 Schur 模块中重复。
@@ -498,7 +498,7 @@ mask 会导致模式耦合，所以该预处理只是近似。
 
 - 将阳极几何配置从 `InsertBoundaryPhi.cpp` 的匿名命名空间迁出；
 - 新增 `Boundary/HallAnodeGeometry.h/.cpp` 或等价小工具；
-- `AnodeVoltage()`、`BuildPhiOversetMasks()`、Schur mask 构造共用同一判断函数；
+- `AnodeVoltage()` 和 Schur mask 构造共用同一判断函数；
 - 新增 Schur 模块只依赖该几何工具和 WarpX 场数据。
 
 不建议调整：

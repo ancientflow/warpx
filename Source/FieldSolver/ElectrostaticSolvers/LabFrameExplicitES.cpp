@@ -209,16 +209,6 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
     Insert::SetBoundaryPhi();//修正电势
-    auto const& phi_overset_masks = Insert::BuildPhiOversetMasks(phi_fp);
-    std::optional<amrex::Vector<amrex::iMultiFab const *> > phi_overset_mask_ptrs;
-    if (!phi_overset_masks.empty()) {
-        amrex::Vector<amrex::iMultiFab const *> mask_ptrs;
-        mask_ptrs.reserve(phi_overset_masks.size());
-        for (auto const& mask : phi_overset_masks) {
-            mask_ptrs.push_back(mask.get());
-        }
-        phi_overset_mask_ptrs = mask_ptrs;
-    }
 
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
@@ -235,13 +225,18 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         // Use the AMREX MLMG or the FFT (IGF) solver otherwise
         computePhi(rho_fp, phi_fp, beta, self_fields_required_precision,
                    self_fields_absolute_tolerance, self_fields_max_iters,
-                   self_fields_verbosity, is_igf_2d_slices, Efield_fp,
-                   phi_overset_mask_ptrs);
+                   self_fields_verbosity, is_igf_2d_slices, Efield_fp);
 #endif
 
     }
     // 共置网格guard cell处理
+#ifdef HALL3D
+    if (!Insert::SpectralBoundarySchur::Enabled()) {
+        Insert::SetPhiGuards();
+    }
+#else
     Insert::SetPhiGuards();
+#endif
     // Keep extrapolation history on the uncorrected Poisson potential.
     // The Schur correction is only added below for field evaluation.
     updatePhiExtrapolationHistory(phi_fp);

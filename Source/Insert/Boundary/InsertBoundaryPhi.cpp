@@ -7,6 +7,7 @@
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Fields/SpectralBoundarySchur.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/WarpXConst.H"
 
@@ -35,14 +36,6 @@ IsHallAnodeRingNode (
     amrex::Real const y = problo_y + (j - ylo) * dy;
     return k == zlo && Insert::IsHallAnodeRingHit(x, y, config);
 }
-
-#if defined(WARPX_DIM_3D)
-struct PhiOversetMaskCache
-{
-    amrex::Vector<std::unique_ptr<amrex::iMultiFab> > masks;
-    bool initialized = false;
-};
-#endif
 
 #endif
 
@@ -127,66 +120,6 @@ AnodeVoltage ()
         }
     }
     phi_field->FillBoundary(warpx_instance.Geom(0).periodicity());
-#endif
-}
-
-amrex::Vector<std::unique_ptr<amrex::iMultiFab> > const&
-BuildPhiOversetMasks (ablastr::fields::MultiLevelScalarField const& phi)
-{
-    static amrex::Vector<std::unique_ptr<amrex::iMultiFab> > empty_masks;
-
-#if defined(HALL3D) && defined(WARPX_DIM_3D)
-    static PhiOversetMaskCache cache;
-    WarpX& warpx_instance = WarpX::GetInstance();
-
-    if (!cache.initialized) {
-        auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(0));
-        cache.masks.reserve(phi.size());
-
-        for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
-            auto* phi_field = phi[lev];
-            amrex::BoxArray mask_ba(phi_field->boxArray());
-            mask_ba.convert(amrex::IntVect::TheNodeVector());
-            auto mask = std::make_unique<amrex::iMultiFab>(
-                mask_ba, phi_field->DistributionMap(), 1, 0);
-            mask->setVal(1);
-
-            amrex::Box domain = warpx_instance.Geom(lev).Domain();
-            domain.surroundingNodes();
-            amrex::Real const problo_x = warpx_instance.Geom(lev).ProbLo(0);
-            amrex::Real const problo_y = warpx_instance.Geom(lev).ProbLo(1);
-            amrex::Real const dx = warpx_instance.Geom(lev).CellSize(0);
-            amrex::Real const dy = warpx_instance.Geom(lev).CellSize(1);
-
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
-            for (amrex::MFIter mfi(*mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
-                amrex::Array4<int> const& mask_arr = mask->array(mfi);
-                amrex::Array4<amrex::Real> const& phi_arr = phi_field->array(mfi);
-                amrex::Box const& box = mfi.tilebox();
-                amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
-                    if (IsHallAnodeRingNode(i, j, k,
-                                             domain.smallEnd(2),
-                                             domain.smallEnd(0),
-                                             domain.smallEnd(1),
-                                             problo_x, problo_y, dx, dy, config))
-                    {
-                        mask_arr(i, j, k) = 0;
-                    }
-                });
-            }
-
-            phi_field->FillBoundary(warpx_instance.Geom(lev).periodicity());
-            cache.masks.push_back(std::move(mask));
-        }
-
-        cache.initialized = true;
-    }
-
-    return cache.masks;
-#else
-    return empty_masks;
 #endif
 }
 
@@ -276,7 +209,8 @@ HallThrusterPhiGuardSet ()
     auto const zmin_bc = WarpX::field_boundary_lo[WARPX_ZINDEX];
     bool const is_dirichlet = zmin_bc == FieldBoundaryType::PEC;
     bool const is_neumann = zmin_bc == FieldBoundaryType::Neumann;
-    if (!is_dirichlet && !is_neumann) {
+    bool const use_schur = SpectralBoundarySchur::Enabled();
+    if (!is_dirichlet && !is_neumann && !use_schur) {
         return;
     }
 
@@ -295,7 +229,8 @@ HallThrusterPhiGuardSet ()
     auto const anode_config = ReadHallAnodeRingConfig(geom);
 
     amrex::Array4<amrex::Real const> wall_charge_density;
-    if (is_neumann) {
+    bool const use_wall_charge_guard = is_neumann || use_schur;
+    if (use_wall_charge_guard) {
         if (amrex::ParallelDescriptor::NProcs() != 1) {
             amrex::Abort("Hall zmin phi guard correction requires one MPI rank");
         }
@@ -330,11 +265,12 @@ HallThrusterPhiGuardSet ()
             if (IsHallAnodeRingNode(i, j, k, zlo, xlo, ylo, problo_x,
                                     problo_y, dx, dy, anode_config))
             {
-                phi_arr(i, j, k - 1) = anode_config.voltage;
+                phi_arr(i, j, k - 1) =
+                    use_schur ? amrex::Real(0.0) : anode_config.voltage;
                 return;
             }
 
-            if (is_neumann) {
+            if (use_wall_charge_guard) {
                 amrex::Real const sigma_s =
                     wall_charge_density(i - xlo, j - ylo, 0);
                 // zmin outward normal n=-z, so dphi/dz = -sigma_s/epsilon0.
