@@ -1,16 +1,20 @@
 #pragma once
 
 #include <AMReX.H>
+#include <AMReX_Array4.H>
+#include <AMReX_Box.H>
 #include <AMReX_GpuAtomic.H>
-#include <AMReX_GpuContainers.H>
 #include <AMReX_Math.H>
 #include <AMReX_REAL.H>
+
+#include <memory>
 
 class WarpX;
 
 namespace amrex
 {
 class Geometry;
+class MultiFab;
 }
 
 namespace Insert {
@@ -30,13 +34,13 @@ struct ZMinWallChargeGrid
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void
-DepositZMinWallChargeToNodes (amrex::Real* const AMREX_RESTRICT wall_charge,
-                              ZMinWallChargeGrid const grid,
-                              amrex::ParticleReal const x,
-                              amrex::ParticleReal const y,
-                              amrex::ParticleReal const charge) noexcept
+DepositZMinWallChargeToNodes (amrex::Array4<amrex::Real> const& wall_charge,
+                               ZMinWallChargeGrid const grid,
+                               amrex::ParticleReal const x,
+                               amrex::ParticleReal const y,
+                               amrex::ParticleReal const charge) noexcept
 {
-    if (wall_charge == nullptr || grid.nx < 2 || grid.ny < 2) {
+    if (grid.nx < 2 || grid.ny < 2) {
         return;
     }
 
@@ -66,28 +70,23 @@ DepositZMinWallChargeToNodes (amrex::Real* const AMREX_RESTRICT wall_charge,
 
     amrex::Real const wx_left = amrex::Real(1.0) - wx_right;
     amrex::Real const wy_left = amrex::Real(1.0) - wy_right;
-    long const offset_ll =
-        static_cast<long>(j_left) * static_cast<long>(grid.nx) +
-        static_cast<long>(i_left);
-    long const offset_lr = offset_ll + 1;
-    long const offset_ul = offset_ll + static_cast<long>(grid.nx);
-    long const offset_ur = offset_ul + 1;
-
-    amrex::HostDevice::Atomic::Add(&wall_charge[offset_ll],
+    amrex::HostDevice::Atomic::Add(&wall_charge(i_left, j_left, 0),
                                    charge * wx_left * wy_left);
-    amrex::HostDevice::Atomic::Add(&wall_charge[offset_lr],
+    amrex::HostDevice::Atomic::Add(&wall_charge(i_left + 1, j_left, 0),
                                    charge * wx_right * wy_left);
-    amrex::HostDevice::Atomic::Add(&wall_charge[offset_ul],
+    amrex::HostDevice::Atomic::Add(&wall_charge(i_left, j_left + 1, 0),
                                    charge * wx_left * wy_right);
-    amrex::HostDevice::Atomic::Add(&wall_charge[offset_ur],
+    amrex::HostDevice::Atomic::Add(&wall_charge(i_left + 1, j_left + 1, 0),
                                    charge * wx_right * wy_right);
 }
 
 ZMinWallChargeGrid MakeZMinWallChargeGrid (amrex::Geometry const& geom);
 
+amrex::Box MakeZMinWallChargeBox (ZMinWallChargeGrid const& grid);
+
 long ZMinWallChargeSize (ZMinWallChargeGrid const& grid);
 
-amrex::Gpu::DeviceVector<amrex::Real>
+std::unique_ptr<amrex::MultiFab>
 DepositZMinWallCharge (WarpX& warpx_instance, ZMinWallChargeGrid const& grid);
 
 } // namespace Insert

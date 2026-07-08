@@ -16,6 +16,9 @@
 #include "Particles/Pusher/GetAndSetPosition.H"
 #include "Utils/WarpXConst.H"
 
+#include <AMReX_Array4.H>
+#include <AMReX_MFIter.H>
+#include <AMReX_MultiFab.H>
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>
 
@@ -337,7 +340,8 @@ struct SecondaryEmissionTransform {
     amrex::ParticleReal m_eps = 0.0;
     amrex::ParticleReal m_vth = 0.0;
     ZMinWallChargeGrid m_wall_charge_grid;
-    amrex::Real* AMREX_RESTRICT m_wall_charge_density = nullptr;
+    amrex::Array4<amrex::Real> m_wall_charge_density;
+    bool m_deposit_wall_charge = false;
     amrex::Real m_charge_density_per_weight = amrex::Real(0.0);
 
     template <typename DstData, typename SrcData>
@@ -385,7 +389,7 @@ struct SecondaryEmissionTransform {
         dst.m_rdata[PIdx::y][i_dst] = y_emit;
         dst.m_rdata[PIdx::z][i_dst] = z_boundary + m_eps;
 
-        if (m_wall_charge_density != nullptr) {
+        if (m_deposit_wall_charge) {
             amrex::Real const emitted_charge_density =
                 static_cast<amrex::Real>(src.m_rdata[PIdx::w][i_src]) *
                 m_charge_density_per_weight;
@@ -554,11 +558,18 @@ SecondaryEmission () {
                 emission_temperature_eV * PhysConst::q_e / elec_pc.getMass()));
 
         ZMinWallChargeGrid wall_charge_grid{};
-        amrex::Real* wall_charge_density = nullptr;
+        amrex::Array4<amrex::Real> wall_charge_density;
+        bool deposit_wall_charge = false;
         amrex::Real charge_density_per_weight = amrex::Real(0.0);
-        if (!g_accumulated_wall_charge_density.empty()) {
+        if (g_accumulated_wall_charge_density != nullptr) {
             wall_charge_grid = MakeZMinWallChargeGrid(warpx_instance.Geom(0));
-            wall_charge_density = g_accumulated_wall_charge_density.dataPtr();
+            for (amrex::MFIter mfi(*g_accumulated_wall_charge_density);
+                 mfi.isValid(); ++mfi)
+            {
+                wall_charge_density =
+                    g_accumulated_wall_charge_density->array(mfi);
+            }
+            deposit_wall_charge = true;
             charge_density_per_weight =
                 static_cast<amrex::Real>(elec_pc.getCharge()) /
                 (wall_charge_grid.dx * wall_charge_grid.dy);
@@ -581,6 +592,7 @@ SecondaryEmission () {
             emission_vth,
             wall_charge_grid,
             wall_charge_density,
+            deposit_wall_charge,
             charge_density_per_weight};
 
         amrex::Long num_added = VariableCountCopyTransformBoundaryBuffer(
