@@ -300,22 +300,70 @@ UpdateCGDirectionMF (amrex::MultiFab& p, amrex::MultiFab const& r,
 }
 
 /**
+ * Compute the zmin outward intrinsic boundary flux of the MLMG base solution.
+ *
+ * This is the Dirichlet-to-Neumann flux induced by the MLMG discrete operator,
+ * not the guard-cell-centered derivative later used by WarpX field evaluation.
+ */
+void
+BuildBaseBoundaryFluxMF (amrex::MultiFab& base_boundary_flux,
+                         amrex::MultiFab const& base_phi,
+                         amrex::Geometry const& geom) {
+    base_boundary_flux.setVal(static_cast<amrex::Real>(0.0));
+
+    amrex::Box domain = geom.Domain();
+    domain.surroundingNodes();
+    int const xlo = domain.smallEnd(0);
+    int const ylo = domain.smallEnd(1);
+    int const zlo = domain.smallEnd(2);
+    amrex::Real const inv_dz = static_cast<amrex::Real>(1.0) / geom.CellSize(2);
+
+    amrex::Array4<amrex::Real> base_flux_arr;
+    for (amrex::MFIter mfi(base_boundary_flux); mfi.isValid(); ++mfi) {
+        base_flux_arr = base_boundary_flux.array(mfi);
+    }
+
+    amrex::Box const face_box(
+        amrex::IntVect(xlo + 1, ylo + 1, zlo),
+        amrex::IntVect(domain.bigEnd(0) - 1, domain.bigEnd(1) - 1, zlo));
+
+    for (amrex::MFIter mfi(base_phi); mfi.isValid(); ++mfi) {
+        amrex::Box const write_box = mfi.validbox() & face_box;
+        if (!write_box.ok()) {
+            continue;
+        }
+
+        amrex::Array4<amrex::Real const> const& phi_arr =
+            base_phi.const_array(mfi);
+        amrex::ParallelFor(
+            write_box, [=] AMREX_GPU_DEVICE (int i, int j, int)
+            {
+                base_flux_arr(i - xlo - 1, j - ylo - 1, 0) =
+                    (phi_arr(i, j, zlo) - phi_arr(i, j, zlo + 1)) * inv_dz;
+            });
+    }
+}
+
+/**
  * Build the Neumann mask and full-face Schur right-hand side.
  *
- * WarpX already applies the anode Dirichlet potential and homogeneous Neumann
- * condition on the remaining ceramic surface. With the zmin outward normal
- * n=-z, the accumulated wall charge density sets dphi/dn = sigma_s/epsilon0.
- * The Schur RHS is therefore just this target nonhomogeneous normal derivative.
+ * The Schur correction is zero on the anode ring. On the remaining ceramic
+ * surface, it supplies the difference between the target wall-charge normal
+ * derivative and the intrinsic boundary flux already present in the MLMG base
+ * solve.
  *
  * @param neumann_mask Output interior-face mask as 0/1 reals.
  * @param rhs Output full interior RHS with zero Dirichlet/anode entries.
  * @param sigma_s_mf Full-face surface charge density slab.
+ * @param base_boundary_flux MLMG base-solution outward intrinsic boundary flux.
  * @param geom Level geometry.
  */
 void
 BuildMaskAndRhsMF (
     amrex::MultiFab& neumann_mask, amrex::MultiFab& rhs,
-    amrex::MultiFab const& sigma_s_mf, amrex::Geometry const& geom) {
+    amrex::MultiFab const& sigma_s_mf,
+    amrex::MultiFab const& base_boundary_flux,
+    amrex::Geometry const& geom) {
     amrex::Box domain = geom.Domain();
     domain.surroundingNodes();
     int const xlo = domain.smallEnd(0);
@@ -331,6 +379,10 @@ BuildMaskAndRhsMF (
     amrex::Array4<amrex::Real const> sigma_arr;
     for (amrex::MFIter mfi(sigma_s_mf); mfi.isValid(); ++mfi) {
         sigma_arr = sigma_s_mf.const_array(mfi);
+    }
+    amrex::Array4<amrex::Real const> base_flux_arr;
+    for (amrex::MFIter mfi(base_boundary_flux); mfi.isValid(); ++mfi) {
+        base_flux_arr = base_boundary_flux.const_array(mfi);
     }
 
     // Only interior transverse nodes enter the sine basis. Dirichlet/anode
@@ -357,7 +409,8 @@ BuildMaskAndRhsMF (
                     amrex::Real const sigma = sigma_arr(gi - xlo, gj - ylo, 0);
                     // With zmin outward normal n=-z, dphi/dn = sigma_s/epsilon0.
                     mask_arr(i, j, 0) = static_cast<amrex::Real>(1.0);
-                    rhs_arr(i, j, 0) = sigma * inv_epsilon0;
+                    rhs_arr(i, j, 0) =
+                        sigma * inv_epsilon0 - base_flux_arr(i, j, 0);
                 } else {
                     mask_arr(i, j, 0) = static_cast<amrex::Real>(0.0);
                     rhs_arr(i, j, 0) = static_cast<amrex::Real>(0.0);
@@ -580,10 +633,12 @@ ReconstructPhiCorrection (amrex::Geometry const& geom,
  *
  * @param geom Level geometry.
  * @param sigma_s_mf Surface charge density on the full zmin face.
+ * @param base_phi Current MLMG base potential.
  */
 void
 SolveAndReconstructMF (amrex::Geometry const& geom,
-                       amrex::MultiFab const& sigma_s_mf) {
+                       amrex::MultiFab const& sigma_s_mf,
+                       amrex::MultiFab const& base_phi) {
     SchurConfig const& config = ReadConfig();
 
     amrex::Box const sigma_box = sigma_s_mf.boxArray().minimalBox();
@@ -608,7 +663,12 @@ SolveAndReconstructMF (amrex::Geometry const& geom,
 
     amrex::MultiFab rhs(state.neumann_mask->boxArray(),
                         state.neumann_mask->DistributionMap(), 1, 0);
-    BuildMaskAndRhsMF(*state.neumann_mask, rhs, sigma_s_mf, geom);
+    amrex::MultiFab base_boundary_flux(
+        state.neumann_mask->boxArray(), state.neumann_mask->DistributionMap(),
+        1, 0);
+    BuildBaseBoundaryFluxMF(base_boundary_flux, base_phi, geom);
+    BuildMaskAndRhsMF(*state.neumann_mask, rhs, sigma_s_mf,
+                      base_boundary_flux, geom);
     SolveCGMF(*state.u_face, rhs, *state.neumann_mask, r2x, geom, config);
     ReconstructPhiCorrection(geom, *state.u_face, r2x, nx_internal,
                              ny_internal);
@@ -684,16 +744,8 @@ SpectralBoundarySchur::ApplyZMinCorrection (
     ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(warpx.Geom(0));
     InitializeAccumulatedZMinWallChargeDensity(grid);
 
-    auto& state = State();
-    int const step = warpx.getistep(0);
-    // Zmin wall charge is accumulated in AfterDiagnostics() after istep has
-    // advanced.  The next field solve sees that same step value, so the Schur
-    // update follows the Hall diagnostic cadence directly.
-    if (state.phi_corr == nullptr ||
-        step % BoundaryParticleDiagInterval() == 0)
-    {
-        SolveAndReconstruct(warpx.Geom(0), *g_accumulated_wall_charge_density);
-    }
+    SolveAndReconstruct(warpx.Geom(0), *g_accumulated_wall_charge_density,
+                        *phi[0]);
 
     AddPhiCorrectionToPotential(phi);
 #else
@@ -707,11 +759,13 @@ SpectralBoundarySchur::ApplyZMinCorrection (
  *
  * @param geom Level-0 geometry.
  * @param sigma_s_mf Surface charge density on the full zmin face.
+ * @param base_phi Current MLMG base potential.
  */
 void
 SpectralBoundarySchur::SolveAndReconstruct (
     amrex::Geometry const& geom,
-    amrex::MultiFab const& sigma_s_mf) {
+    amrex::MultiFab const& sigma_s_mf,
+    amrex::MultiFab const& base_phi) {
 #if defined(WARPX_DIM_3D)
     if (amrex::ParallelDescriptor::NProcs() != 1) {
         amrex::Abort(
@@ -735,15 +789,23 @@ SpectralBoundarySchur::SolveAndReconstruct (
         amrex::Abort("insert.schur_boundary sigma_s_mf shape does not match "
                      "zmin face");
     }
+    if (base_phi.nComp() != 1) {
+        amrex::Abort("insert.schur_boundary base_phi must have one component");
+    }
     if (domain.length(0) < 3 || domain.length(1) < 3) {
         amrex::Abort("insert.schur_boundary requires at least one interior "
                      "transverse node");
     }
+    if (domain.length(2) < 2) {
+        amrex::Abort("insert.schur_boundary requires at least one interior "
+                     "z cell");
+    }
 
-    SolveAndReconstructMF(geom, sigma_s_mf);
+    SolveAndReconstructMF(geom, sigma_s_mf, base_phi);
 #else
     (void)geom;
     (void)sigma_s_mf;
+    (void)base_phi;
     amrex::Abort("insert.schur_boundary requires WarpX_DIMS=3");
 #endif
 }
