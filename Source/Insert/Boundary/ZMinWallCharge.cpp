@@ -9,9 +9,14 @@
 
 #include <AMReX_BLassert.H>
 #include <AMReX_Box.H>
+#include <AMReX_BoxArray.H>
+#include <AMReX_DistributionMapping.H>
 #include <AMReX_Geometry.H>
+#include <AMReX_MFIter.H>
+#include <AMReX_MultiFab.H>
 
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -46,7 +51,7 @@ struct ZMinWallChargeDepositFunctor
     amrex::ParticleReal species_charge;
     Insert::ZMinWallChargeGrid grid;
     HallAnodeRingConfig anode_ring;
-    amrex::Real* AMREX_RESTRICT wall_charge;
+    amrex::Array4<amrex::Real> wall_charge;
 
     AMREX_GPU_DEVICE AMREX_FORCE_INLINE
     void operator() (long const ip) const noexcept
@@ -73,7 +78,7 @@ DepositSpeciesZMinWallCharge (WarpXParticleContainer::Base* const particles,
                                amrex::ParticleReal const species_charge,
                                Insert::ZMinWallChargeGrid const grid,
                                HallAnodeRingConfig const anode_ring,
-                               amrex::Real* const AMREX_RESTRICT wall_charge)
+                               amrex::Array4<amrex::Real> const& wall_charge)
 {
     if (particles == nullptr || !particles->isDefined()) {
         return;
@@ -135,36 +140,50 @@ ZMinWallChargeSize (ZMinWallChargeGrid const& grid)
     return static_cast<long>(grid.nx) * static_cast<long>(grid.ny);
 }
 
-amrex::Gpu::DeviceVector<amrex::Real>
+amrex::Box
+MakeZMinWallChargeBox (ZMinWallChargeGrid const& grid)
+{
+    return amrex::Box(
+        amrex::IntVect(AMREX_D_DECL(0, 0, 0)),
+        amrex::IntVect(AMREX_D_DECL(grid.nx - 1, grid.ny - 1, 0)));
+}
+
+std::unique_ptr<amrex::MultiFab>
 DepositZMinWallCharge (WarpX& warpx_instance, ZMinWallChargeGrid const& grid)
 {
 #ifdef HALL3D
-    long const data_size = ZMinWallChargeSize(grid);
-
-    amrex::Gpu::DeviceVector<amrex::Real> device_wall_charge(data_size,
-                                                             amrex::Real(0.0));
-    amrex::Real* const wall_charge_ptr = device_wall_charge.dataPtr();
+    amrex::BoxArray const ba(MakeZMinWallChargeBox(grid));
+    amrex::DistributionMapping const dm(ba);
+    auto wall_charge = std::make_unique<amrex::MultiFab>(ba, dm, 1, 0);
+    wall_charge->setVal(amrex::Real(0.0));
 
     auto& mypc = warpx_instance.GetPartContainer();
     auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
     HallAnodeRingConfig const anode_ring =
         ReadHallAnodeRingConfig(warpx_instance.Geom(0));
 
-    auto* elec_zmin = mybpc.getParticleBufferPointer("electrons", zlo_boundary);
-    auto& elec_pc = mypc.GetParticleContainerFromName("electrons");
-    DepositSpeciesZMinWallCharge(elec_zmin, elec_pc.getCharge(), grid,
-                                 anode_ring, wall_charge_ptr);
+    for (amrex::MFIter mfi(*wall_charge); mfi.isValid(); ++mfi) {
+        amrex::Array4<amrex::Real> const& wall_charge_arr =
+            wall_charge->array(mfi);
 
-    auto* xe_ion_zmin = mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
-    auto& xe_ion_pc = mypc.GetParticleContainerFromName("xe_ions");
-    DepositSpeciesZMinWallCharge(xe_ion_zmin, xe_ion_pc.getCharge(), grid,
-                                 anode_ring, wall_charge_ptr);
+        auto* elec_zmin =
+            mybpc.getParticleBufferPointer("electrons", zlo_boundary);
+        auto& elec_pc = mypc.GetParticleContainerFromName("electrons");
+        DepositSpeciesZMinWallCharge(elec_zmin, elec_pc.getCharge(), grid,
+                                     anode_ring, wall_charge_arr);
 
-    return device_wall_charge;
+        auto* xe_ion_zmin =
+            mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
+        auto& xe_ion_pc = mypc.GetParticleContainerFromName("xe_ions");
+        DepositSpeciesZMinWallCharge(xe_ion_zmin, xe_ion_pc.getCharge(), grid,
+                                     anode_ring, wall_charge_arr);
+    }
+
+    return wall_charge;
 #else
     (void)warpx_instance;
     (void)grid;
-    return amrex::Gpu::DeviceVector<amrex::Real>{};
+    return nullptr;
 #endif
 }
 

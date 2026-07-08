@@ -10,8 +10,10 @@
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/WarpXConst.H"
 
+#include <AMReX_Array4.H>
 #include <AMReX_BLassert.H>
 #include <AMReX_GpuContainers.H>
+#include <AMReX_MFIter.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
 
@@ -292,17 +294,20 @@ HallThrusterPhiGuardSet ()
     amrex::Real const dz = geom.CellSize(2);
     auto const anode_config = ReadHallAnodeRingConfig(geom);
 
-    amrex::Real const* wall_charge_density = nullptr;
-    int nx_face = 0;
+    amrex::Array4<amrex::Real const> wall_charge_density;
     if (is_neumann) {
         if (amrex::ParallelDescriptor::NProcs() != 1) {
             amrex::Abort("Hall zmin phi guard correction requires one MPI rank");
         }
 
         ZMinWallChargeGrid const grid = MakeZMinWallChargeGrid(geom);
-        InitializeAccumulatedZMinWallChargeDensity(ZMinWallChargeSize(grid));
-        wall_charge_density = g_accumulated_wall_charge_density.dataPtr();
-        nx_face = grid.nx;
+        InitializeAccumulatedZMinWallChargeDensity(grid);
+        for (amrex::MFIter mfi(*g_accumulated_wall_charge_density);
+             mfi.isValid(); ++mfi)
+        {
+            wall_charge_density =
+                g_accumulated_wall_charge_density->const_array(mfi);
+        }
     }
 
     amrex::Real const inv_epsilon0 =
@@ -330,8 +335,8 @@ HallThrusterPhiGuardSet ()
             }
 
             if (is_neumann) {
-                int const wall_idx = (j - ylo) * nx_face + (i - xlo);
-                amrex::Real const sigma_s = wall_charge_density[wall_idx];
+                amrex::Real const sigma_s =
+                    wall_charge_density(i - xlo, j - ylo, 0);
                 // zmin outward normal n=-z, so dphi/dz = -sigma_s/epsilon0.
                 phi_arr(i, j, k - 1) =
                     phi_arr(i, j, k + 1) +

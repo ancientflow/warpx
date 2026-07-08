@@ -2,7 +2,6 @@
 
 #include <ablastr/fields/MultiFabRegister.H>
 
-#include <AMReX_GpuContainers.H>
 #include <AMReX_REAL.H>
 
 namespace amrex
@@ -26,9 +25,7 @@ namespace SpectralBoundarySchur
 
     void SolveAndReconstruct (
         amrex::Geometry const& geom,
-        amrex::Gpu::DeviceVector<amrex::Real> const& sigma_s_device,
-        int nx_face,
-        int ny_face);
+        amrex::MultiFab const& sigma_s_mf);
 
     amrex::MultiFab const* PhiCorrection ();
 }
