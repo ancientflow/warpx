@@ -20,6 +20,7 @@
 #include <AMReX_FFT.H>
 #include <AMReX_Geometry.H>
 #include <AMReX_Gpu.H>
+#include <AMReX_GpuContainers.H>
 #include <AMReX_Math.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_MultiFab.H>
@@ -110,6 +111,20 @@ struct SchurState {
     int nx_internal = 0;
     int ny_internal = 0;
     bool fft_cleanup_registered = false;
+
+    // Cached temporaries to avoid per-solve GPU memory allocation overhead.
+    std::unique_ptr<amrex::MultiFab> base_boundary_flux;
+    std::unique_ptr<amrex::MultiFab> rhs;
+    std::unique_ptr<amrex::MultiFab> face;
+    std::unique_ptr<amrex::MultiFab> cg_r;
+    std::unique_ptr<amrex::MultiFab> cg_p;
+    std::unique_ptr<amrex::MultiFab> cg_ap;
+
+    // Cached DST-I basis for volume reconstruction.
+    int recon_basis_nx = 0;
+    int recon_basis_ny = 0;
+    amrex::Gpu::DeviceVector<amrex::Real> recon_sx;
+    amrex::Gpu::DeviceVector<amrex::Real> recon_sy;
 };
 
 /**
@@ -209,6 +224,142 @@ MakeFaceSlabMultiFab (int nx, int ny) {
     amrex::BoxArray const ba(MakeFaceSlabBox(nx, ny));
     amrex::DistributionMapping const dm(ba);
     return std::make_unique<amrex::MultiFab>(ba, dm, 1, 0);
+}
+
+/**
+ * Return a cached MultiFab with the requested layout, (re)allocating only when
+ * the shape or distribution changes.
+ */
+amrex::MultiFab&
+GetCachedMultiFab (std::unique_ptr<amrex::MultiFab>& ptr,
+                   amrex::BoxArray const& ba,
+                   amrex::DistributionMapping const& dm,
+                   int ncomp, amrex::IntVect const& ngrow) {
+    if (ptr == nullptr ||
+        !ptr->boxArray().CellEqual(ba) ||
+        !(ptr->DistributionMap() == dm) ||
+        ptr->nComp() != ncomp ||
+        ptr->nGrowVect() != ngrow)
+    {
+        ptr = std::make_unique<amrex::MultiFab>(ba, dm, ncomp, ngrow);
+    }
+    return *ptr;
+}
+
+amrex::MultiFab&
+GetCachedMultiFab (std::unique_ptr<amrex::MultiFab>& ptr,
+                   amrex::BoxArray const& ba,
+                   amrex::DistributionMapping const& dm,
+                   int ncomp, int ngrow) {
+    return GetCachedMultiFab(ptr, ba, dm, ncomp, amrex::IntVect(ngrow));
+}
+
+/**
+ * Convert an `(i,j)` index into the module's x-fast 1D layout.
+ */
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE int
+Index2D (int i, int j, int nx) {
+    return i + nx * j;
+}
+
+/**
+ * Build an orthonormal DST-I sine basis for interior nodes on device.
+ */
+void
+BuildSineBasisDevice (amrex::Gpu::DeviceVector<amrex::Real>& basis, int n) {
+    basis.resize(static_cast<std::size_t>(n) * n);
+    amrex::Real* basis_ptr = basis.dataPtr();
+    amrex::Real const norm = std::sqrt(static_cast<amrex::Real>(2.0) /
+                                       static_cast<amrex::Real>(n + 1));
+
+    amrex::Box const box(amrex::IntVect(0, 0, 0),
+                         amrex::IntVect(n - 1, n - 1, 0));
+    amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int m, int) {
+        amrex::Real const angle = MathConst::pi *
+                                  static_cast<amrex::Real>((i + 1) * (m + 1)) /
+                                  static_cast<amrex::Real>(n + 1);
+        basis_ptr[Index2D(i, m, n)] = norm * std::sin(angle);
+    });
+}
+
+/**
+ * Apply the 2D orthonormal DST-I transform on device.
+ */
+void
+ApplyDST2Device (amrex::Gpu::DeviceVector<amrex::Real> const& face,
+                 amrex::Gpu::DeviceVector<amrex::Real>& face_hat,
+                 amrex::Gpu::DeviceVector<amrex::Real> const& sx,
+                 amrex::Gpu::DeviceVector<amrex::Real> const& sy,
+                 amrex::Gpu::DeviceVector<amrex::Real>& tmp, int nx, int ny) {
+    std::size_t const n_total = static_cast<std::size_t>(nx) * ny;
+    tmp.resize(n_total);
+    face_hat.resize(n_total);
+
+    amrex::Real const* face_ptr = face.dataPtr();
+    amrex::Real const* sx_ptr = sx.dataPtr();
+    amrex::Real const* sy_ptr = sy.dataPtr();
+    amrex::Real* tmp_ptr = tmp.dataPtr();
+    amrex::Real* face_hat_ptr = face_hat.dataPtr();
+
+    amrex::Box const box(amrex::IntVect(0, 0, 0),
+                         amrex::IntVect(nx - 1, ny - 1, 0));
+
+    amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int m, int j, int) {
+        amrex::Real sum = static_cast<amrex::Real>(0.0);
+        for (int i = 0; i < nx; ++i) {
+            sum += sx_ptr[Index2D(i, m, nx)] * face_ptr[Index2D(i, j, nx)];
+        }
+        tmp_ptr[Index2D(m, j, nx)] = sum;
+    });
+
+    amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int m, int n, int) {
+        amrex::Real sum = static_cast<amrex::Real>(0.0);
+        for (int j = 0; j < ny; ++j) {
+            sum += tmp_ptr[Index2D(m, j, nx)] * sy_ptr[Index2D(j, n, ny)];
+        }
+        face_hat_ptr[Index2D(m, n, nx)] = sum;
+    });
+}
+
+/**
+ * Apply the inverse 2D orthonormal DST-I transform on device with modal
+ * truncation.
+ */
+void
+ApplyIDST2Device (amrex::Gpu::DeviceVector<amrex::Real> const& face_hat,
+                  amrex::Gpu::DeviceVector<amrex::Real>& face,
+                  amrex::Gpu::DeviceVector<amrex::Real> const& sx,
+                  amrex::Gpu::DeviceVector<amrex::Real> const& sy,
+                  amrex::Gpu::DeviceVector<amrex::Real>& tmp, int nx, int ny,
+                  int mx, int my) {
+    std::size_t const n_total = static_cast<std::size_t>(nx) * ny;
+    tmp.resize(n_total);
+    face.resize(n_total);
+
+    amrex::Real const* face_hat_ptr = face_hat.dataPtr();
+    amrex::Real const* sx_ptr = sx.dataPtr();
+    amrex::Real const* sy_ptr = sy.dataPtr();
+    amrex::Real* tmp_ptr = tmp.dataPtr();
+    amrex::Real* face_ptr = face.dataPtr();
+
+    amrex::Box const box(amrex::IntVect(0, 0, 0),
+                         amrex::IntVect(nx - 1, ny - 1, 0));
+
+    amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int n, int) {
+        amrex::Real sum = static_cast<amrex::Real>(0.0);
+        for (int m = 0; m < mx; ++m) {
+            sum += sx_ptr[Index2D(i, m, nx)] * face_hat_ptr[Index2D(m, n, nx)];
+        }
+        tmp_ptr[Index2D(i, n, nx)] = sum;
+    });
+
+    amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int) {
+        amrex::Real sum = static_cast<amrex::Real>(0.0);
+        for (int n = 0; n < my; ++n) {
+            sum += tmp_ptr[Index2D(i, n, nx)] * sy_ptr[Index2D(j, n, ny)];
+        }
+        face_ptr[Index2D(i, j, nx)] = sum;
+    });
 }
 
 /**
@@ -460,7 +611,9 @@ ApplySchurOperatorMF (amrex::MultiFab const& v, amrex::MultiFab& av,
                       amrex::MultiFab const& neumann_mask,
                       amrex::FFT::R2X<amrex::Real>& r2x,
                       amrex::Geometry const& geom) {
-    amrex::MultiFab face(v.boxArray(), v.DistributionMap(), 1, 0);
+    auto& state = State();
+    amrex::MultiFab& face = GetCachedMultiFab(
+        state.face, v.boxArray(), v.DistributionMap(), 1, 0);
     ApplyMaskMF(v, face, neumann_mask);
 
     amrex::Real const lx = geom.ProbHi(0) - geom.ProbLo(0);
@@ -501,9 +654,13 @@ SolveCGMF (amrex::MultiFab& x, amrex::MultiFab const& b,
            SchurConfig const& config) {
     x.setVal(static_cast<amrex::Real>(0.0));
 
-    amrex::MultiFab r(b.boxArray(), b.DistributionMap(), 1, 0);
-    amrex::MultiFab p(b.boxArray(), b.DistributionMap(), 1, 0);
-    amrex::MultiFab ap(b.boxArray(), b.DistributionMap(), 1, 0);
+    auto& state = State();
+    amrex::MultiFab& r = GetCachedMultiFab(
+        state.cg_r, b.boxArray(), b.DistributionMap(), 1, 0);
+    amrex::MultiFab& p = GetCachedMultiFab(
+        state.cg_p, b.boxArray(), b.DistributionMap(), 1, 0);
+    amrex::MultiFab& ap = GetCachedMultiFab(
+        state.cg_ap, b.boxArray(), b.DistributionMap(), 1, 0);
     amrex::MultiFab::Copy(r, b, 0, 0, 1, 0);
     amrex::MultiFab::Copy(p, b, 0, 0, 1, 0);
 
@@ -540,27 +697,32 @@ SolveCGMF (amrex::MultiFab& x, amrex::MultiFab const& b,
 }
 
 /**
- * Reconstruct `phi_corr` on the volume using layered AMReX R2X transforms.
+ * Reconstruct `phi_corr` on the volume using separable DST-I matrix products.
+ *
+ * A single forward DST of the solved boundary trace gives the spectral
+ * coefficients; each z layer is then obtained by multiplying those
+ * coefficients by the harmonic decay factor and applying the inverse DST.
+ * This avoids the redundant forward FFT that `R2X::forwardThenBackward`
+ * would perform for every layer.
  *
  * @param geom Level geometry.
  * @param u_face Full boundary trace from the Schur solve.
- * @param r2x AMReX real-to-real FFT plan.
  * @param nx Number of x interior nodes/modes.
  * @param ny Number of y interior nodes/modes.
  */
 void
 ReconstructPhiCorrection (amrex::Geometry const& geom,
-                          amrex::MultiFab const& u_face,
-                          amrex::FFT::R2X<amrex::Real>& r2x, int nx, int ny) {
+                          amrex::MultiFab const& u_face, int nx, int ny) {
     // The correction MultiFab follows rho_fp level 0 layout so later field
     // updates can use WarpX-owned decomposition and guard-cell shape.
     auto& state = State();
     WarpX& warpx = WarpX::GetInstance();
     auto const& rho_fp = *warpx.m_fields.get(warpx::fields::FieldType::rho_fp, 0);
 
-    state.phi_corr = std::make_unique<amrex::MultiFab>(
-        rho_fp.boxArray(), rho_fp.DistributionMap(), 1, rho_fp.nGrowVect());
-    state.phi_corr->setVal(static_cast<amrex::Real>(0.0));
+    amrex::MultiFab& phi_corr = GetCachedMultiFab(
+        state.phi_corr, rho_fp.boxArray(), rho_fp.DistributionMap(), 1,
+        rho_fp.nGrowVect());
+    phi_corr.setVal(static_cast<amrex::Real>(0.0));
 
     amrex::Box domain = geom.Domain();
     domain.surroundingNodes();
@@ -574,8 +736,31 @@ ReconstructPhiCorrection (amrex::Geometry const& geom,
     amrex::Real const lx = geom.ProbHi(0) - geom.ProbLo(0);
     amrex::Real const ly = geom.ProbHi(1) - geom.ProbLo(1);
 
-    amrex::MultiFab layer(u_face.boxArray(), u_face.DistributionMap(), 1, 0);
-    amrex::Real const scale = r2x.scalingFactor();
+    // Build or reuse the orthonormal DST-I basis matrices.
+    if (state.recon_basis_nx != nx || state.recon_basis_ny != ny) {
+        BuildSineBasisDevice(state.recon_sx, nx);
+        BuildSineBasisDevice(state.recon_sy, ny);
+        state.recon_basis_nx = nx;
+        state.recon_basis_ny = ny;
+    }
+
+    // Flatten the single-box face MultiFab into a device vector.
+    std::size_t const n_total = static_cast<std::size_t>(nx) * ny;
+    amrex::Gpu::DeviceVector<amrex::Real> d_face(n_total);
+    amrex::Gpu::copy(amrex::Gpu::deviceToDevice, u_face[0].dataPtr(),
+                     u_face[0].dataPtr() + n_total, d_face.begin());
+
+    amrex::Gpu::DeviceVector<amrex::Real> d_u_hat;
+    amrex::Gpu::DeviceVector<amrex::Real> d_tmp;
+    amrex::Gpu::DeviceVector<amrex::Real> d_a(n_total);
+    amrex::Gpu::DeviceVector<amrex::Real> d_layer(n_total);
+    ApplyDST2Device(d_face, d_u_hat, state.recon_sx, state.recon_sy, d_tmp,
+                    nx, ny);
+
+    amrex::Real const* u_hat_ptr = d_u_hat.dataPtr();
+    amrex::Real* a_ptr = d_a.dataPtr();
+    amrex::Box const spectral_box(amrex::IntVect(0, 0, 0),
+                                  amrex::IntVect(nx - 1, ny - 1, 0));
 
     for (int kk = 0; kk < nz_nodes; ++kk) {
         amrex::Real const z = static_cast<amrex::Real>(kk) * dz;
@@ -583,12 +768,11 @@ ReconstructPhiCorrection (amrex::Geometry const& geom,
         int const mx = LayerModes(nx, z_fraction);
         int const my = LayerModes(ny, z_fraction);
 
-        r2x.forwardThenBackward(
-            u_face, layer,
-            [=] AMREX_GPU_DEVICE (int m, int n, int, auto& spectral_data)
+        amrex::ParallelFor(
+            spectral_box, [=] AMREX_GPU_DEVICE (int m, int n, int)
             {
                 if (m >= mx || n >= my) {
-                    spectral_data *= static_cast<amrex::Real>(0.0);
+                    a_ptr[Index2D(m, n, nx)] = static_cast<amrex::Real>(0.0);
                     return;
                 }
                 amrex::Real const kx =
@@ -597,30 +781,31 @@ ReconstructPhiCorrection (amrex::Geometry const& geom,
                     static_cast<amrex::Real>(n + 1) * MathConst::pi / ly;
                 amrex::Real const kmn = std::sqrt(kx * kx + ky * ky);
                 amrex::Real const r = SinhDecayRatio(kmn, z, lz);
-                spectral_data *= r * scale;
+                a_ptr[Index2D(m, n, nx)] =
+                    r * u_hat_ptr[Index2D(m, n, nx)];
             });
 
-        amrex::Array4<amrex::Real const> layer_arr;
-        for (amrex::MFIter mfi(layer); mfi.isValid(); ++mfi) {
-            layer_arr = layer.const_array(mfi);
-        }
+        ApplyIDST2Device(d_a, d_layer, state.recon_sx, state.recon_sy, d_tmp,
+                         nx, ny, mx, my);
+
+        amrex::Real const* layer_ptr = d_layer.dataPtr();
 
         // Scatter the reconstructed z layer into whatever boxes own that slab.
         amrex::Box const slab(
             amrex::IntVect(xlo + 1, ylo + 1, zlo + kk),
             amrex::IntVect(domain.bigEnd(0) - 1, domain.bigEnd(1) - 1, zlo + kk));
-        for (amrex::MFIter mfi(*state.phi_corr, amrex::TilingIfNotGPU());
+        for (amrex::MFIter mfi(phi_corr, amrex::TilingIfNotGPU());
              mfi.isValid(); ++mfi) {
             amrex::Box const write_box = mfi.validbox() & slab;
             if (!write_box.ok()) {
                 continue;
             }
-            amrex::Array4<amrex::Real> const& arr = state.phi_corr->array(mfi);
+            amrex::Array4<amrex::Real> const& arr = phi_corr.array(mfi);
             amrex::ParallelFor(
                 write_box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
                     int const ii = i - xlo - 1;
                     int const jj = j - ylo - 1;
-                    arr(i, j, k) = layer_arr(ii, jj, 0);
+                    arr(i, j, k) = layer_ptr[Index2D(ii, jj, nx)];
                 });
         }
     }
@@ -661,17 +846,17 @@ SolveAndReconstructMF (amrex::Geometry const& geom,
     amrex::FFT::R2X<amrex::Real>& r2x = PrepareSchurFFT(nx_internal,
                                                         ny_internal);
 
-    amrex::MultiFab rhs(state.neumann_mask->boxArray(),
-                        state.neumann_mask->DistributionMap(), 1, 0);
-    amrex::MultiFab base_boundary_flux(
-        state.neumann_mask->boxArray(), state.neumann_mask->DistributionMap(),
-        1, 0);
+    amrex::MultiFab& rhs = GetCachedMultiFab(
+        state.rhs, state.neumann_mask->boxArray(),
+        state.neumann_mask->DistributionMap(), 1, 0);
+    amrex::MultiFab& base_boundary_flux = GetCachedMultiFab(
+        state.base_boundary_flux, state.neumann_mask->boxArray(),
+        state.neumann_mask->DistributionMap(), 1, 0);
     BuildBaseBoundaryFluxMF(base_boundary_flux, base_phi, geom);
     BuildMaskAndRhsMF(*state.neumann_mask, rhs, sigma_s_mf,
                       base_boundary_flux, geom);
     SolveCGMF(*state.u_face, rhs, *state.neumann_mask, r2x, geom, config);
-    ReconstructPhiCorrection(geom, *state.u_face, r2x, nx_internal,
-                             ny_internal);
+    ReconstructPhiCorrection(geom, *state.u_face, nx_internal, ny_internal);
     amrex::Gpu::streamSynchronize();
 }
 
