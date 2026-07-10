@@ -162,22 +162,30 @@ DepositZMinWallCharge (WarpX& warpx_instance, ZMinWallChargeGrid const& grid)
     HallAnodeRingConfig const anode_ring =
         ReadHallAnodeRingConfig(warpx_instance.Geom(0));
 
-    for (amrex::MFIter mfi(*wall_charge); mfi.isValid(); ++mfi) {
-        amrex::Array4<amrex::Real> const& wall_charge_arr =
-            wall_charge->array(mfi);
-
-        auto* elec_zmin =
-            mybpc.getParticleBufferPointer("electrons", zlo_boundary);
-        auto& elec_pc = mypc.GetParticleContainerFromName("electrons");
-        DepositSpeciesZMinWallCharge(elec_zmin, elec_pc.getCharge(), grid,
-                                     anode_ring, wall_charge_arr);
-
-        auto* xe_ion_zmin =
-            mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
-        auto& xe_ion_pc = mypc.GetParticleContainerFromName("xe_ions");
-        DepositSpeciesZMinWallCharge(xe_ion_zmin, xe_ion_pc.getCharge(), grid,
-                                     anode_ring, wall_charge_arr);
+    if (wall_charge->local_size() == 0) {
+        return wall_charge;
     }
+
+    // The wall-charge multifab has a single 2D box (per rank).  Retrieve the
+    // array pointer outside of any particle iteration because WarpXParIter is
+    // derived from MFIter and AMReX does not allow nested active MFIter/MFIter
+    // objects by default.
+    amrex::Array4<amrex::Real> wall_charge_arr;
+    for (amrex::MFIter mfi(*wall_charge); mfi.isValid(); ++mfi) {
+        wall_charge_arr = wall_charge->array(mfi);
+    }
+
+    auto* elec_zmin =
+        mybpc.getParticleBufferPointer("electrons", zlo_boundary);
+    auto& elec_pc = mypc.GetParticleContainerFromName("electrons");
+    DepositSpeciesZMinWallCharge(elec_zmin, elec_pc.getCharge(), grid,
+                                 anode_ring, wall_charge_arr);
+
+    auto* xe_ion_zmin =
+        mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
+    auto& xe_ion_pc = mypc.GetParticleContainerFromName("xe_ions");
+    DepositSpeciesZMinWallCharge(xe_ion_zmin, xe_ion_pc.getCharge(), grid,
+                                 anode_ring, wall_charge_arr);
 
     return wall_charge;
 #else
