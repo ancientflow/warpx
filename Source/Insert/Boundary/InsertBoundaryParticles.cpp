@@ -2,6 +2,7 @@
 
 #include "WarpX.H"
 
+#include "EmbeddedBoundary/Enabled.H"
 #include "Initialization/SampleGaussianFluxDistribution.H"
 #include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
@@ -19,6 +20,7 @@
 #include <AMReX_Array4.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>
 
@@ -116,8 +118,8 @@ VariableCountCopyTransformParticleTiles (SrcPC& src_pc, DstPC& dst_pc,
                                          DecisionFunc const& decision_func,
                                          TransformFunc const& transform,
                                          int lev_min = 0, int lev_max = -1) {
-    // SEE can create 0, 1, or 2 particles from one absorbed particle, so the
-    // fixed-N FilterCopyTransform helper is not expressive enough here.
+    // Some wall interactions create a variable number of particles from one
+    // absorbed particle, so the fixed-N helper is not expressive enough.
 #ifdef AMREX_USE_GPU
     auto const* src_arena = src_pc.arena();
     auto const* dst_arena = dst_pc.arena();
@@ -178,8 +180,8 @@ VariableCountCopyTransformParticleTiles (SrcPC& src_pc, DstPC& dst_pc,
                 });
 
             amrex::Gpu::DeviceVector<int> offsets(np_src);
-            // emit_count is the scan input, not a boolean mask: values 0/1/2
-            // directly determine how many destination slots each source owns.
+            // emit_count is the scan input, not a boolean mask: its value
+            // directly determines how many destination slots each source owns.
             const int num_added =
                 amrex::Scan::ExclusiveSum(np_src, p_emit_count, offsets.data());
             if (num_added == 0) {
@@ -236,6 +238,119 @@ VariableCountCopyTransformBoundaryBuffer (
     return VariableCountCopyTransformParticleTiles(
         *src_pc, dst_pc, decision_func, transform, lev_min, lev_max);
 }
+
+enum class NeutralAtomReflectionBehavior : int {
+    Diffuse = 0,
+    Specular = 1
+};
+
+struct NeutralAtomReflectionDecision {
+    int m_emit_count = 0;
+    int m_behavior =
+        static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+};
+
+struct NeutralAtomReflectionDecisionFunc {
+    int m_behavior =
+        static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+
+    template <typename PData>
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    NeutralAtomReflectionDecision
+    operator()(PData const& ptd, int const i,
+               amrex::RandomEngine const& engine) const noexcept {
+        if (!amrex::ParticleIDWrapper{ptd.m_idcpu[i]}.is_valid()) {
+            return {};
+        }
+
+        // TODO: Add per-particle model selection here if the reflection
+        // behavior later depends on probability, incident state or wall data.
+        amrex::ignore_unused(engine);
+        return {1, m_behavior};
+    }
+};
+
+using NeutralAtomVector = amrex::GpuArray<amrex::ParticleReal, 3>;
+
+struct SpecularReflectionOperator {
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator()(
+        NeutralAtomVector const& normal_to_domain,
+        NeutralAtomVector const& x_hit, NeutralAtomVector const& u_in,
+        NeutralAtomVector& x_out, NeutralAtomVector& u_out,
+        amrex::RandomEngine const& engine) const noexcept {
+        // TODO: Implement specular reflection.
+        amrex::ignore_unused(
+            normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+    }
+};
+
+struct DiffuseReemissionOperator {
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator()(
+        NeutralAtomVector const& normal_to_domain,
+        NeutralAtomVector const& x_hit, NeutralAtomVector const& u_in,
+        NeutralAtomVector& x_out, NeutralAtomVector& u_out,
+        amrex::RandomEngine const& engine) const noexcept {
+        // TODO: Implement diffuse re-emission.
+        amrex::ignore_unused(
+            normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+    }
+};
+
+struct NeutralAtomReflectionTransform {
+    SpecularReflectionOperator m_specular;
+    DiffuseReemissionOperator m_diffuse;
+
+    template <typename DstData, typename SrcData>
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator()(DstData& dst, SrcData const& src, int const i_src,
+                    int const i_dst, int const behavior,
+                    int const emission_index, int const emit_count,
+                    amrex::RandomEngine const& engine) const noexcept {
+#if defined(WARPX_DIM_3D)
+        NeutralAtomVector const normal_to_domain{
+            amrex::ParticleReal(0.0),
+            amrex::ParticleReal(0.0),
+            amrex::ParticleReal(0.0)};
+        NeutralAtomVector const x_hit{
+            src.m_rdata[PIdx::x][i_src],
+            src.m_rdata[PIdx::y][i_src],
+            src.m_rdata[PIdx::z][i_src]};
+        NeutralAtomVector const u_in{
+            src.m_rdata[PIdx::ux][i_src],
+            src.m_rdata[PIdx::uy][i_src],
+            src.m_rdata[PIdx::uz][i_src]};
+        NeutralAtomVector x_out = x_hit;
+        NeutralAtomVector u_out = u_in;
+
+        // TODO: Replace the placeholder normal when the EB normal is supplied
+        // to this transform without relying on runtime-component lookup here.
+        if (behavior ==
+            static_cast<int>(NeutralAtomReflectionBehavior::Specular))
+        {
+            m_specular(
+                normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+        } else {
+            m_diffuse(
+                normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+        }
+
+        dst.m_rdata[PIdx::x][i_dst] = x_out[0];
+        dst.m_rdata[PIdx::y][i_dst] = x_out[1];
+        dst.m_rdata[PIdx::z][i_dst] = x_out[2];
+        dst.m_rdata[PIdx::ux][i_dst] = u_out[0];
+        dst.m_rdata[PIdx::uy][i_dst] = u_out[1];
+        dst.m_rdata[PIdx::uz][i_dst] = u_out[2];
+
+        amrex::ignore_unused(emission_index, emit_count);
+#else
+        amrex::ignore_unused(
+            dst, src, i_src, i_dst, behavior, emission_index, emit_count,
+            engine, m_specular, m_diffuse);
+#endif
+    }
+};
 
 enum class SecondaryEmissionBehavior : int {
     Absorb = 0,
@@ -521,6 +636,78 @@ struct AnodeIonEmissionTransform {
 };
 
 } // namespace
+
+void
+NeutralAtomEBInteraction () {
+#if defined(HALL3D) && defined(AMREX_USE_EB)
+    static bool const enabled = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        int value = 0;
+        pp.query("enabled", value);
+        return value != 0;
+    }();
+
+    if (!enabled) {
+        return;
+    }
+
+    static std::string const species = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        std::string value;
+        pp.query("species", value);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            !value.empty(),
+            "insert.neutral_atom_eb.species must be specified when the neutral "
+            "atom EB interaction is enabled.");
+        return value;
+    }();
+
+    static int const reflection_behavior = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        std::string model = "diffuse";
+        pp.query("model", model);
+        model = ToLower(model);
+
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            model == "diffuse" || model == "specular",
+            "insert.neutral_atom_eb.model must be either diffuse or specular.");
+
+        return model == "specular"
+                   ? static_cast<int>(
+                         NeutralAtomReflectionBehavior::Specular)
+                   : static_cast<int>(
+                         NeutralAtomReflectionBehavior::Diffuse);
+    }();
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (!DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
+        return;
+    }
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        EB::enabled(),
+        "insert.neutral_atom_eb.enabled requires an embedded boundary.");
+
+    auto& boundary_buffer = warpx_instance.GetParticleBoundaryBuffer();
+    auto& particle_container = warpx_instance.GetPartContainer();
+    auto& neutral_atoms =
+        particle_container.GetParticleContainerFromName(species);
+    constexpr int eb_boundary = AMREX_SPACEDIM * 2;
+    NeutralAtomReflectionDecisionFunc const decision_func{
+        reflection_behavior};
+    NeutralAtomReflectionTransform const transform{};
+
+    amrex::Long const num_reflected =
+        VariableCountCopyTransformBoundaryBuffer(
+            boundary_buffer, species, eb_boundary, neutral_atoms,
+            decision_func, transform);
+    amrex::Print() << "Reflected neutral atoms: " << num_reflected << "\n";
+
+    // The neutral buffer is intentionally left untouched here. It is cleared
+    // together with the electron and ion boundary buffers by the existing
+    // boundary-particle cleanup path.
+#endif
+}
 
 void
 SecondaryEmission () {

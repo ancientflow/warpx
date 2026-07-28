@@ -2,6 +2,7 @@
 
 namespace Insert {
 
+void NeutralAtomEBInteraction ();
 void SecondaryEmission ();
 void AnodeIonNeutralization ();
 
