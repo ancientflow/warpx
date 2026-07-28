@@ -270,31 +270,122 @@ struct NeutralAtomReflectionDecisionFunc {
     }
 };
 
-using NeutralAtomVector = amrex::GpuArray<amrex::ParticleReal, 3>;
-
 struct SpecularReflectionOperator {
+    amrex::ParticleReal m_position_epsilon = 0.0;
+
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     void operator()(
-        NeutralAtomVector const& normal_to_domain,
-        NeutralAtomVector const& x_hit, NeutralAtomVector const& u_in,
-        NeutralAtomVector& x_out, NeutralAtomVector& u_out,
+        amrex::XDim3 const& normal_to_domain,
+        amrex::XDim3 const& x_hit, amrex::XDim3 const& u_in,
+        amrex::XDim3& x_out, amrex::XDim3& u_out,
         amrex::RandomEngine const& engine) const noexcept {
-        // TODO: Implement specular reflection.
-        amrex::ignore_unused(
-            normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+        amrex::ParticleReal const normal_norm_sq =
+            normal_to_domain.x * normal_to_domain.x
+            + normal_to_domain.y * normal_to_domain.y
+            + normal_to_domain.z * normal_to_domain.z;
+        if (normal_norm_sq <= amrex::ParticleReal(0.0)) {
+            x_out = x_hit;
+            u_out = u_in;
+            amrex::ignore_unused(engine);
+            return;
+        }
+
+        using std::sqrt;
+        amrex::ParticleReal const inv_normal_norm =
+            amrex::ParticleReal(1.0) / sqrt(normal_norm_sq);
+        amrex::XDim3 const normal{
+            normal_to_domain.x * inv_normal_norm,
+            normal_to_domain.y * inv_normal_norm,
+            normal_to_domain.z * inv_normal_norm};
+        amrex::ParticleReal const u_dot_normal =
+            u_in.x * normal.x + u_in.y * normal.y + u_in.z * normal.z;
+
+        x_out = {
+            x_hit.x + m_position_epsilon * normal.x,
+            x_hit.y + m_position_epsilon * normal.y,
+            x_hit.z + m_position_epsilon * normal.z};
+        u_out = {
+            u_in.x - amrex::ParticleReal(2.0) * u_dot_normal * normal.x,
+            u_in.y - amrex::ParticleReal(2.0) * u_dot_normal * normal.y,
+            u_in.z - amrex::ParticleReal(2.0) * u_dot_normal * normal.z};
+
+        amrex::ignore_unused(engine);
     }
 };
 
 struct DiffuseReemissionOperator {
+    amrex::ParticleReal m_position_epsilon = 0.0;
+    amrex::ParticleReal m_vth = 0.0;
+
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     void operator()(
-        NeutralAtomVector const& normal_to_domain,
-        NeutralAtomVector const& x_hit, NeutralAtomVector const& u_in,
-        NeutralAtomVector& x_out, NeutralAtomVector& u_out,
+        amrex::XDim3 const& normal_to_domain,
+        amrex::XDim3 const& x_hit, amrex::XDim3 const& u_in,
+        amrex::XDim3& x_out, amrex::XDim3& u_out,
         amrex::RandomEngine const& engine) const noexcept {
-        // TODO: Implement diffuse re-emission.
-        amrex::ignore_unused(
-            normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+        amrex::ParticleReal const normal_norm_sq =
+            normal_to_domain.x * normal_to_domain.x
+            + normal_to_domain.y * normal_to_domain.y
+            + normal_to_domain.z * normal_to_domain.z;
+        if (normal_norm_sq <= amrex::ParticleReal(0.0)) {
+            x_out = x_hit;
+            u_out = u_in;
+            return;
+        }
+
+        using std::abs;
+        using std::sqrt;
+        amrex::ParticleReal const inv_normal_norm =
+            amrex::ParticleReal(1.0) / sqrt(normal_norm_sq);
+        amrex::XDim3 const normal{
+            normal_to_domain.x * inv_normal_norm,
+            normal_to_domain.y * inv_normal_norm,
+            normal_to_domain.z * inv_normal_norm};
+
+        amrex::XDim3 tangent_one;
+        if (abs(normal.z) < amrex::ParticleReal(0.9)) {
+            amrex::ParticleReal const inv_tangent_norm =
+                amrex::ParticleReal(1.0)
+                / sqrt(normal.x * normal.x + normal.y * normal.y);
+            tangent_one = {
+                -normal.y * inv_tangent_norm,
+                normal.x * inv_tangent_norm,
+                amrex::ParticleReal(0.0)};
+        } else {
+            amrex::ParticleReal const inv_tangent_norm =
+                amrex::ParticleReal(1.0)
+                / sqrt(normal.y * normal.y + normal.z * normal.z);
+            tangent_one = {
+                amrex::ParticleReal(0.0),
+                normal.z * inv_tangent_norm,
+                -normal.y * inv_tangent_norm};
+        }
+        amrex::XDim3 const tangent_two{
+            normal.y * tangent_one.z - normal.z * tangent_one.y,
+            normal.z * tangent_one.x - normal.x * tangent_one.z,
+            normal.x * tangent_one.y - normal.y * tangent_one.x};
+
+        amrex::ParticleReal const u_tangent_one =
+            amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
+        amrex::ParticleReal const u_tangent_two =
+            amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
+        amrex::ParticleReal const u_normal =
+            generateGaussianFluxDist(
+                amrex::ParticleReal(0.0), m_vth, engine);
+
+        x_out = {
+            x_hit.x + m_position_epsilon * normal.x,
+            x_hit.y + m_position_epsilon * normal.y,
+            x_hit.z + m_position_epsilon * normal.z};
+        u_out = {
+            u_tangent_one * tangent_one.x
+                + u_tangent_two * tangent_two.x + u_normal * normal.x,
+            u_tangent_one * tangent_one.y
+                + u_tangent_two * tangent_two.y + u_normal * normal.y,
+            u_tangent_one * tangent_one.z
+                + u_tangent_two * tangent_two.z + u_normal * normal.z};
+
+        amrex::ignore_unused(u_in);
     }
 };
 
@@ -309,20 +400,20 @@ struct NeutralAtomReflectionTransform {
                     int const emission_index, int const emit_count,
                     amrex::RandomEngine const& engine) const noexcept {
 #if defined(WARPX_DIM_3D)
-        NeutralAtomVector const normal_to_domain{
+        amrex::XDim3 const normal_to_domain{
             amrex::ParticleReal(0.0),
             amrex::ParticleReal(0.0),
             amrex::ParticleReal(0.0)};
-        NeutralAtomVector const x_hit{
+        amrex::XDim3 const x_hit{
             src.m_rdata[PIdx::x][i_src],
             src.m_rdata[PIdx::y][i_src],
             src.m_rdata[PIdx::z][i_src]};
-        NeutralAtomVector const u_in{
+        amrex::XDim3 const u_in{
             src.m_rdata[PIdx::ux][i_src],
             src.m_rdata[PIdx::uy][i_src],
             src.m_rdata[PIdx::uz][i_src]};
-        NeutralAtomVector x_out = x_hit;
-        NeutralAtomVector u_out = u_in;
+        amrex::XDim3 x_out = x_hit;
+        amrex::XDim3 u_out = u_in;
 
         // TODO: Replace the placeholder normal when the EB normal is supplied
         // to this transform without relying on runtime-component lookup here.
@@ -336,12 +427,12 @@ struct NeutralAtomReflectionTransform {
                 normal_to_domain, x_hit, u_in, x_out, u_out, engine);
         }
 
-        dst.m_rdata[PIdx::x][i_dst] = x_out[0];
-        dst.m_rdata[PIdx::y][i_dst] = x_out[1];
-        dst.m_rdata[PIdx::z][i_dst] = x_out[2];
-        dst.m_rdata[PIdx::ux][i_dst] = u_out[0];
-        dst.m_rdata[PIdx::uy][i_dst] = u_out[1];
-        dst.m_rdata[PIdx::uz][i_dst] = u_out[2];
+        dst.m_rdata[PIdx::x][i_dst] = x_out.x;
+        dst.m_rdata[PIdx::y][i_dst] = x_out.y;
+        dst.m_rdata[PIdx::z][i_dst] = x_out.z;
+        dst.m_rdata[PIdx::ux][i_dst] = u_out.x;
+        dst.m_rdata[PIdx::uy][i_dst] = u_out.y;
+        dst.m_rdata[PIdx::uz][i_dst] = u_out.z;
 
         amrex::ignore_unused(emission_index, emit_count);
 #else
