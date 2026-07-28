@@ -124,6 +124,7 @@ CollisionRecord (amrex::Vector<int> vec) {
 void
 AfterDiagnostics () {
 #ifdef HALL3D
+    NeutralAtomEBInteraction();
     // SecondaryEmission();
     // AnodeIonNeutralization();
     AnodeCurrentCalc();

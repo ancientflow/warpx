@@ -24,6 +24,7 @@ my_constants.hall_diag_interval = 10
 - `ClearHallBoundaryParticleCache`
 - `SecondaryEmission`
 - `AnodeIonNeutralization`
+- `NeutralAtomEBInteraction`
 
 这意味着边界粒子缓存的读取和清理使用同一时步判断，避免诊断间隔不一致导致
 粒子在被统计前被清掉。
@@ -43,6 +44,25 @@ my_constants.hall_diag_interval = 10
 
 `clear_hall_boundary_particle_cache_diag` 应在所有读取边界缓存的诊断之后执行。
 当前 `Insert::AfterDiagnostics()` 中的调用顺序已满足这一点。
+
+### 中性原子 EB 壁面作用
+
+```text
+insert.neutral_atom_eb.enabled = 1
+insert.neutral_atom_eb.species = xe_netural
+insert.neutral_atom_eb.model = diffuse
+xe_netural.save_particles_at_eb = 1
+```
+
+该功能默认关闭，触发间隔复用 `my_constants.hall_diag_interval`。当前仅建立
+基于 `VariableCountCopyTransformBoundaryBuffer` 的 Decision、Transform、目标粒子分配
+以及漫反射/镜面反射设备算子骨架，壁面作用逻辑尚未实现。`model` 可取
+`diffuse` 或 `specular`，默认值为 `diffuse`。处理后不会单独清理中性原子
+buffer；如需与电子、离子统一清理，应同时设置：
+
+```text
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+```
 
 ### 阳极电流
 
