@@ -21,14 +21,23 @@ my_constants.ly = sim_L
 my_constants.lz = sim_L
 
 #工况定义
+my_constants.m_dot = 0.6e-6
 my_constants.Ic = 0.5
 my_constants.voltage = 300
 my_constants.ifhole = 0
-
+my_constants.Tx = 200
+my_constants.Ty = 200
+my_constants.Tz = 140
+my_constants.vz0 = 240
 
 #粒子参数定义
+my_constants.weight_ratio = 4
 my_constants.w_factor = 8
 my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
 
 warpx.poisson_solver = multigrid
 
@@ -76,7 +85,7 @@ warpx.eb_implicit_function = "if(sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_a1,-1,if(sqr
 warpx.eb_potential(x,y,z,t) = "if((sqrt((x-eb_x0)**2+(y-eb_y0)**2)>eb_a1) and (sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_voltage_r_max),voltage,0)"
 
 # 与中性原子解析圆锥法向共用同一组缩比后参数。
-# 当前算例未设置中性物种，因此交互保持关闭。
+# 旋转进气几何与中性原子壁面模型确认前，交互保持关闭。
 insert.neutral_atom_eb.enabled = 0
 insert.neutral_atom_eb.k = eb_k
 insert.neutral_atom_eb.a1 = eb_a1
@@ -85,7 +94,7 @@ insert.neutral_atom_eb.b1 = eb_b1
 #粒子设置
 algo.particle_shape = 1
 
-particles.species_names = electrons xe_ions
+particles.species_names = electrons xe_ions xe_netural
 
 electrons.species_type = electron
 #electrons.do_not_deposit = 1
@@ -93,6 +102,11 @@ electrons.species_type = electron
 xe_ions.species_type = xenon
 xe_ions.charge = q_e
 #xe_ions.do_not_deposit = 1
+
+xe_netural.mass = m_xe
+xe_netural.charge = 1
+xe_netural.do_not_gather = 1
+xe_netural.do_not_deposit = 1
 
 ###重采样
 electrons.save_particles_at_zlo = 1
@@ -105,6 +119,8 @@ xe_ions.save_particles_at_yhi = 1
 xe_ions.save_particles_at_zlo = 1
 xe_ions.save_particles_at_zhi = 1
 xe_ions.ndt = 10
+
+xe_netural.ndt = 100
 
 my_constants.hall_diag_interval = 10
 my_constants.thrust_diag_path = "thrust.dat"
@@ -127,7 +143,7 @@ my_constants.collision_record_diag = 0
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
 insert.initial_sources = channel_plasma
-insert.continuous_sources = cathode_electron
+insert.continuous_sources = cathode_electron xe_neutral_inlet
 
 # --- Initial channel plasma (electrons + xe_ions) ---
 channel_plasma.rate = density_volume
@@ -194,6 +210,40 @@ cathode_electron.velocity.vy.distribution = gaussian
 cathode_electron.velocity.vy.sigma = 592982
 cathode_electron.velocity.vz.distribution = gaussian
 cathode_electron.velocity.vz.sigma = 592982
+
+# --- Xe neutral rotating inlet ---
+xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 100.0
+xe_neutral_inlet.x_offset = eb_x0
+xe_neutral_inlet.y_offset = eb_y0
+
+# 在斜阳极圆锥径向区间的 0.6 至 0.8 范围内按面积均匀采样。
+xe_neutral_inlet.position.coupled_distribution = truncated_cone_surface
+xe_neutral_inlet.position.slope = eb_k
+xe_neutral_inlet.position.r_min = eb_a1 + 0.6 * (eb_b1 - eb_a1)
+xe_neutral_inlet.position.r_max = eb_a1 + 0.8 * (eb_b1 - eb_a1)
+xe_neutral_inlet.position.r_reference = eb_a1
+xe_neutral_inlet.position.z_reference = 0.0
+xe_neutral_inlet.position.theta_min = 0.0
+xe_neutral_inlet.position.theta_max = 2*pi
+
+# theta=0 处的进气轴线为局部 (r, theta, z) 分量 (-1, 1, 1)，内部归一化。
+xe_neutral_inlet.velocity.coordinate_system = rotating_axis
+xe_neutral_inlet.velocity.axis_at_theta0 = -1.0 1.0 1.0
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.mean = 0.0
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.mean = 0.0
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = vz0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file

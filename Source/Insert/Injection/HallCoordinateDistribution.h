@@ -18,7 +18,8 @@ public:
         HallCoordinateSystem coordinate_system,
         std::unique_ptr<HallDistribution1D> q0,
         std::unique_ptr<HallDistribution1D> q1,
-        std::unique_ptr<HallDistribution1D> q2);
+        std::unique_ptr<HallDistribution1D> q2,
+        HallRotatingAxisFrame rotating_axis_frame = {});
 
     [[nodiscard]] HallCoordinateSystem coordinateSystem () const noexcept;
 
@@ -38,6 +39,7 @@ private:
     std::unique_ptr<HallDistribution1D> m_q0;
     std::unique_ptr<HallDistribution1D> m_q1;
     std::unique_ptr<HallDistribution1D> m_q2;
+    HallRotatingAxisFrame m_rotating_axis_frame;
 };
 
 std::unique_ptr<HallCoordinateDistribution>

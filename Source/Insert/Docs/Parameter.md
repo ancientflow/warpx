@@ -460,6 +460,27 @@ xe_neutral_inlet.position.theta_max = 2*pi
 `z` 由采样得到的 `r` 唯一确定，不应再配置独立的
 `position.z.distribution`。
 
+若需要绕装置轴线旋转的非各向同性进气速度，可配置：
+
+```text
+xe_neutral_inlet.velocity.coordinate_system = rotating_axis
+xe_neutral_inlet.velocity.axis_at_theta0 = inlet_axis_r inlet_axis_theta inlet_axis_z
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.mean = 0.0
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.mean = 0.0
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = vz0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
+```
+
+`axis_at_theta0` 在 `theta=0` 处的局部 `(r, theta, z)` 基中定义并自动
+归一化。采样器先生成局部速度，再将局部 `+z` 轴对齐到该向量，最后绕
+全局 `z` 轴旋转到粒子相对 source 轴心的方位角。`vz` 分布必须保证采样
+值非负；注入流量仍由 source 的 rate model 和宏粒子权重决定。
+
 ## 相关源文件
 
 - `Source/Insert/Diagnostics/InsertRuntimeDiagnostics.cpp`

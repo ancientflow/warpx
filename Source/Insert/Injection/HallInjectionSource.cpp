@@ -173,8 +173,10 @@ HallInjectionSource::samplePosition (
         sample = m_position_space->samplePosition(engine);
     }
 
-    sample.x += m_x_offset;
-    sample.y += m_y_offset;
+    sample.x_offset = m_x_offset;
+    sample.y_offset = m_y_offset;
+    sample.x += sample.x_offset;
+    sample.y += sample.y_offset;
     return sample;
 }
 
