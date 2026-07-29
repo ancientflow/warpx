@@ -793,12 +793,22 @@ NeutralAtomEBInteraction () {
         return value;
     }();
 
-    static TruncatedConeGeometry const cone = [] {
+    WarpX& warpx_instance = WarpX::GetInstance();
+
+    static TruncatedConeGeometry const cone = [&warpx_instance] {
         amrex::ParmParse const pp("insert.neutral_atom_eb");
         TruncatedConeGeometry value;
         pp.get("k", value.m_k);
         pp.get("a1", value.m_a1);
         pp.get("b1", value.m_b1);
+        auto const prob_lo = warpx_instance.Geom(0).ProbLoArray();
+        auto const prob_hi = warpx_instance.Geom(0).ProbHiArray();
+        value.m_axis_x = amrex::ParticleReal(0.5) *
+                         (static_cast<amrex::ParticleReal>(prob_lo[0]) +
+                          static_cast<amrex::ParticleReal>(prob_hi[0]));
+        value.m_axis_y = amrex::ParticleReal(0.5) *
+                         (static_cast<amrex::ParticleReal>(prob_lo[1]) +
+                          static_cast<amrex::ParticleReal>(prob_hi[1]));
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             value.m_k != amrex::ParticleReal(0.0),
             "insert.neutral_atom_eb.k must be non-zero.");
@@ -835,7 +845,6 @@ NeutralAtomEBInteraction () {
         "insert.neutral_atom_eb.position_epsilon must be positive when "
         "specified.");
 
-    WarpX& warpx_instance = WarpX::GetInstance();
     if (!DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         return;
     }

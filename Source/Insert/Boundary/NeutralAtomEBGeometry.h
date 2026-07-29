@@ -13,6 +13,8 @@ struct TruncatedConeGeometry {
     amrex::ParticleReal m_k = 0.0;
     amrex::ParticleReal m_a1 = 0.0;
     amrex::ParticleReal m_b1 = 0.0;
+    amrex::ParticleReal m_axis_x = 0.0;
+    amrex::ParticleReal m_axis_y = 0.0;
 };
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -23,8 +25,10 @@ GetTruncatedConeNormal (
 {
     using std::sqrt;
 
+    amrex::ParticleReal const x_relative = x_hit.x - cone.m_axis_x;
+    amrex::ParticleReal const y_relative = x_hit.y - cone.m_axis_y;
     amrex::ParticleReal const radius =
-        sqrt(x_hit.x * x_hit.x + x_hit.y * x_hit.y);
+        sqrt(x_relative * x_relative + y_relative * y_relative);
     if (!(radius > cone.m_a1 && radius < cone.m_b1)) {
         normal_to_domain = {0.0, 0.0, 0.0};
         return false;
@@ -34,8 +38,8 @@ GetTruncatedConeNormal (
         amrex::ParticleReal(1.0) /
         sqrt(cone.m_k * cone.m_k + amrex::ParticleReal(1.0));
     normal_to_domain = {
-        -cone.m_k * x_hit.x / radius * inv_normal_norm,
-        -cone.m_k * x_hit.y / radius * inv_normal_norm,
+        -cone.m_k * x_relative / radius * inv_normal_norm,
+        -cone.m_k * y_relative / radius * inv_normal_norm,
         inv_normal_norm};
     return true;
 }
