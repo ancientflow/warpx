@@ -51,6 +51,8 @@ my_constants.hall_diag_interval = 10
 insert.neutral_atom_eb.enabled = 1
 insert.neutral_atom_eb.species = xe_netural
 insert.neutral_atom_eb.model = diffuse
+# Optional; overrides model. Diffuse fraction is 1-specular_fraction.
+insert.neutral_atom_eb.specular_fraction = 0.25
 insert.neutral_atom_eb.k = 1.0
 insert.neutral_atom_eb.a1 = 0.001
 insert.neutral_atom_eb.b1 = 0.004
@@ -66,7 +68,9 @@ xe_netural.save_particles_at_eb = 1
 撞击位置，并根据解析圆锥方程计算指向 `z` 增大侧计算域的法向量。速度反射后，
 粒子沿反射速度方向移动 `position_epsilon`，以避免下一次 EB 检测时被立即重新
 吸收；不再反算解析撞击点或对齐撞击后的剩余时间。`model` 可取 `diffuse` 或
-`specular`，默认值为 `diffuse`；漫反射必须给出以 K 为单位的
+`specular`，默认值为 `diffuse`。可选参数 `specular_fraction` 的范围为
+`[0, 1]`，指定后覆盖 `model`：每个圆锥撞击粒子以该概率执行镜面反射，其余粒子
+执行漫反射。只要漫反射比例非零，就必须给出以 K 为单位的
 `wall_temperature`。处理后不会单独清理中性原子 buffer；如需与电子、离子统一
 清理，应同时设置：
 

@@ -255,8 +255,7 @@ struct NeutralAtomReflectionDecision {
 };
 
 struct NeutralAtomReflectionDecisionFunc {
-    int m_behavior =
-        static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+    amrex::ParticleReal m_specular_fraction = 0.0;
     TruncatedConeGeometry m_cone;
 
     template <typename PData>
@@ -280,10 +279,12 @@ struct NeutralAtomReflectionDecisionFunc {
         return {};
 #endif
 
-        // TODO: Add per-particle model selection here if the reflection
-        // behavior later depends on probability, incident state or wall data.
-        amrex::ignore_unused(engine);
-        return {1, m_behavior};
+        int behavior = static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+        if (amrex::Random(engine) < m_specular_fraction) {
+            behavior =
+                static_cast<int>(NeutralAtomReflectionBehavior::Specular);
+        }
+        return {1, behavior};
     }
 };
 
@@ -771,7 +772,7 @@ NeutralAtomEBInteraction () {
         return value;
     }();
 
-    static int const reflection_behavior = [] {
+    static amrex::ParticleReal const specular_fraction = [] {
         amrex::ParmParse const pp("insert.neutral_atom_eb");
         std::string model = "diffuse";
         pp.query("model", model);
@@ -781,11 +782,15 @@ NeutralAtomEBInteraction () {
             model == "diffuse" || model == "specular",
             "insert.neutral_atom_eb.model must be either diffuse or specular.");
 
-        return model == "specular"
-                   ? static_cast<int>(
-                         NeutralAtomReflectionBehavior::Specular)
-                   : static_cast<int>(
-                         NeutralAtomReflectionBehavior::Diffuse);
+        amrex::ParticleReal value =
+            model == "specular" ? amrex::ParticleReal(1.0)
+                                : amrex::ParticleReal(0.0);
+        pp.query("specular_fraction", value);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value >= amrex::ParticleReal(0.0) &&
+                value <= amrex::ParticleReal(1.0),
+            "insert.neutral_atom_eb.specular_fraction must be in [0, 1].");
+        return value;
     }();
 
     static TruncatedConeGeometry const cone = [] {
@@ -813,11 +818,10 @@ NeutralAtomEBInteraction () {
         return value;
     }();
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        reflection_behavior !=
-                static_cast<int>(NeutralAtomReflectionBehavior::Diffuse) ||
+        specular_fraction >= amrex::ParticleReal(1.0) ||
             wall_temperature > amrex::ParticleReal(0.0),
         "insert.neutral_atom_eb.wall_temperature must be positive for "
-        "diffuse reflection.");
+        "a non-zero diffuse reflection fraction.");
 
     static amrex::ParticleReal const configured_position_epsilon = [] {
         amrex::ParmParse const pp("insert.neutral_atom_eb");
@@ -869,16 +873,14 @@ NeutralAtomEBInteraction () {
         "insert.neutral_atom_eb.position_epsilon must be positive.");
 
     amrex::ParticleReal diffuse_vth = 0.0;
-    if (reflection_behavior ==
-        static_cast<int>(NeutralAtomReflectionBehavior::Diffuse))
-    {
+    if (specular_fraction < amrex::ParticleReal(1.0)) {
         diffuse_vth = static_cast<amrex::ParticleReal>(
             std::sqrt(PhysConst::kb * wall_temperature /
                       neutral_atoms.getMass()));
     }
 
     NeutralAtomReflectionDecisionFunc const decision_func{
-        reflection_behavior, cone};
+        specular_fraction, cone};
     NeutralAtomReflectionTransform const transform{
         cone,
         position_epsilon,
