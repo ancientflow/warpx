@@ -384,9 +384,34 @@ xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / mass)
 ```
 
+## 圆锥面位置分布
+
+`truncated_cone_surface` 将给定径向区间上的一维母线绕 `z` 轴旋转为
+轴对称圆锥面。采样器只根据斜率、区间和参考点进行几何坐标运算：
+
+```text
+xe_neutral_inlet.position.coupled_distribution = truncated_cone_surface
+xe_neutral_inlet.position.slope = eb_k
+xe_neutral_inlet.position.r_min = inlet_r_min
+xe_neutral_inlet.position.r_max = inlet_r_max
+xe_neutral_inlet.position.r_reference = eb_a1
+xe_neutral_inlet.position.z_reference = 0.0
+xe_neutral_inlet.position.theta_min = 0.0
+xe_neutral_inlet.position.theta_max = 2*pi
+```
+
+采样坐标满足
+`z = z_reference + slope * (r - r_reference)`。`r_reference` 默认等于
+`r_min`，`z_reference`、`theta_min` 分别默认为 `0`，`theta_max` 默认为
+`2*pi`。径向采样概率正比于 `r`，已经包含圆锥面积元中的极坐标权重，
+因此宏粒子不需要再乘径向权重。圆锥轴心仍由 source 的 `x_offset` 和
+`y_offset` 指定。完整二维采样使用两个独立均匀随机数：第一个对 `r^2`
+采样，第二个对 `theta` 采样；`z` 随后由上述母线方程确定，不能再同时
+配置独立的 `position.z.distribution`。
+
 ## 孔阵列平面位置分布
 
-孔阵列是当前唯一支持的 coupled position distribution：
+孔阵列配置为：
 
 ```text
 xe_neutral_inlet.position.coupled_distribution = hole_array_plane
