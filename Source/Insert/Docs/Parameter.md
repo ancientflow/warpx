@@ -51,14 +51,24 @@ my_constants.hall_diag_interval = 10
 insert.neutral_atom_eb.enabled = 1
 insert.neutral_atom_eb.species = xe_netural
 insert.neutral_atom_eb.model = diffuse
+insert.neutral_atom_eb.k = 1.0
+insert.neutral_atom_eb.a1 = 0.001
+insert.neutral_atom_eb.b1 = 0.004
+insert.neutral_atom_eb.wall_temperature = 400.0
+# Optional reflected-path displacement; defaults to 0.1 times the minimum cell size
+# insert.neutral_atom_eb.position_epsilon = 1.0e-6
 xe_netural.save_particles_at_eb = 1
 ```
 
-该功能默认关闭，触发间隔复用 `my_constants.hall_diag_interval`。当前仅建立
-基于 `VariableCountCopyTransformBoundaryBuffer` 的 Decision、Transform、目标粒子分配
-以及漫反射/镜面反射设备算子骨架，壁面作用逻辑尚未实现。`model` 可取
-`diffuse` 或 `specular`，默认值为 `diffuse`。处理后不会单独清理中性原子
-buffer；如需与电子、离子统一清理，应同时设置：
+该功能默认关闭，触发间隔复用 `my_constants.hall_diag_interval`。当前解析处理
+三维旋转圆锥段 `z = k*(sqrt(x*x+y*y)-a1)` 且要求 `a1 < r < b1`；
+`r > b1` 的平面段不参与反射。代码直接使用 WarpX EB 二分后保存在粒子缓存中的
+撞击位置，并根据解析圆锥方程计算指向 `z` 增大侧计算域的法向量。速度反射后，
+粒子沿反射速度方向移动 `position_epsilon`，以避免下一次 EB 检测时被立即重新
+吸收；不再反算解析撞击点或对齐撞击后的剩余时间。`model` 可取 `diffuse` 或
+`specular`，默认值为 `diffuse`；漫反射必须给出以 K 为单位的
+`wall_temperature`。处理后不会单独清理中性原子 buffer；如需与电子、离子统一
+清理，应同时设置：
 
 ```text
 my_constants.clear_hall_boundary_particle_cache_diag = 1
