@@ -346,6 +346,8 @@ my_source.velocity.coordinate_system = cartesian
 - `cartesian`：轴名为 `vx vy vz`
 - `cylindrical`：轴名为 `vr vtheta vz`
 - `local_normal`：轴名为 `vnormal vt1 vt2`
+- `rotating_axis`：轴名为 `vx vy vz`，先将局部 `z` 轴对齐到
+  `theta=0` 处的进气轴线，再绕全局 `z` 轴旋转到粒子所在方位角
 
 如果某个物种配置了专属速度分布，则使用：
 
@@ -383,6 +385,37 @@ xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
 xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / mass)
 ```
+
+### 轴对称旋转进气速度
+
+`rotating_axis` 在局部坐标中独立采样非各向同性漂移麦克斯韦分布，局部
+`x/y` 方向无漂移，局部 `z` 方向为正向漂移。`axis_at_theta0` 给出
+`theta=0` 处局部 `z` 轴在 `(r, theta, z)` 基下的三个分量；输入向量会在
+初始化时归一化：
+
+```text
+xe_neutral_inlet.velocity.coordinate_system = rotating_axis
+xe_neutral_inlet.velocity.axis_at_theta0 = inlet_axis_r inlet_axis_theta inlet_axis_z
+
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.mean = 0.0
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / mass)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.mean = 0.0
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / mass)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = inlet_speed
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / mass)
+```
+
+速度先在上述局部坐标中采样，再按
+`Rz(theta) * Raxis * v_local` 变换到全局笛卡尔坐标。其中 `Raxis` 使用
+将 `+z` 轴转到 `axis_at_theta0` 的最短旋转；当轴线为 `-z` 时固定使用
+绕 `x` 轴的 180 度旋转。局部方位角根据扣除 source 的 `x_offset` 和
+`y_offset` 后的位置计算，因此旋转中心可以不在全局原点。
+
+`rotating_axis` 要求 `vz` 分布的下界不小于零。流量仍完全由 source 的
+rate model 和宏粒子权重控制，速度分布只决定粒子的入射方向和热展宽。
 
 ## 圆锥面位置分布
 
