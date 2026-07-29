@@ -441,6 +441,25 @@ xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 ```
 
+圆锥面可将上例的位置配置替换为：
+
+```text
+xe_neutral_inlet.position.coupled_distribution = truncated_cone_surface
+xe_neutral_inlet.position.slope = eb_k
+xe_neutral_inlet.position.r_min = inlet_r_min
+xe_neutral_inlet.position.r_max = inlet_r_max
+xe_neutral_inlet.position.r_reference = eb_a1
+xe_neutral_inlet.position.z_reference = 0.0
+xe_neutral_inlet.position.theta_min = 0.0
+xe_neutral_inlet.position.theta_max = 2*pi
+```
+
+采样器返回
+`z = z_reference + slope * (r - r_reference)` 上的坐标；径向采用
+`r^2` 均匀采样，方位角采用均匀采样，已包含圆锥面积元中的极坐标权重。
+`z` 由采样得到的 `r` 唯一确定，不应再配置独立的
+`position.z.distribution`。
+
 ## 相关源文件
 
 - `Source/Insert/Diagnostics/InsertRuntimeDiagnostics.cpp`
@@ -450,3 +469,4 @@ xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 - `Source/Insert/Injection/HallCoordinateDistribution.cpp`
 - `Source/Insert/Injection/HallDistribution1D.cpp`
 - `Source/Insert/Injection/HallInjectionSource.cpp`
+- `Source/Insert/Geometry/TruncatedConeSurfaceSampler.cpp`
