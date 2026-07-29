@@ -4,6 +4,7 @@
 
 #include "EmbeddedBoundary/Enabled.H"
 #include "Initialization/SampleGaussianFluxDistribution.H"
+#include "Insert/Boundary/NeutralAtomEBGeometry.h"
 #include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
@@ -30,6 +31,9 @@
 
 namespace Insert {
 namespace {
+
+using NeutralAtomEBGeometry::GetTruncatedConeNormal;
+using NeutralAtomEBGeometry::TruncatedConeGeometry;
 
 template <int N = 1, typename SrcPC, typename DstPC, typename FilterFunc,
           typename TransformFunc>
@@ -253,15 +257,28 @@ struct NeutralAtomReflectionDecision {
 struct NeutralAtomReflectionDecisionFunc {
     int m_behavior =
         static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+    TruncatedConeGeometry m_cone;
 
     template <typename PData>
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     NeutralAtomReflectionDecision
     operator()(PData const& ptd, int const i,
                amrex::RandomEngine const& engine) const noexcept {
-        if (!amrex::ParticleIDWrapper{ptd.m_idcpu[i]}.is_valid()) {
+#if defined(WARPX_DIM_3D)
+        amrex::XDim3 const x_hit{
+            ptd.m_rdata[PIdx::x][i],
+            ptd.m_rdata[PIdx::y][i],
+            ptd.m_rdata[PIdx::z][i]};
+        amrex::XDim3 normal_to_domain;
+        if (!GetTruncatedConeNormal(m_cone, x_hit, normal_to_domain))
+        {
+            // Plane-section impacts are deliberately ignored for this case.
             return {};
         }
+#else
+        amrex::ignore_unused(ptd, i, m_cone);
+        return {};
+#endif
 
         // TODO: Add per-particle model selection here if the reflection
         // behavior later depends on probability, incident state or wall data.
@@ -271,20 +288,16 @@ struct NeutralAtomReflectionDecisionFunc {
 };
 
 struct SpecularReflectionOperator {
-    amrex::ParticleReal m_position_epsilon = 0.0;
-
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     void operator()(
         amrex::XDim3 const& normal_to_domain,
-        amrex::XDim3 const& x_hit, amrex::XDim3 const& u_in,
-        amrex::XDim3& x_out, amrex::XDim3& u_out,
+        amrex::XDim3 const& u_in, amrex::XDim3& u_out,
         amrex::RandomEngine const& engine) const noexcept {
         amrex::ParticleReal const normal_norm_sq =
             normal_to_domain.x * normal_to_domain.x
             + normal_to_domain.y * normal_to_domain.y
             + normal_to_domain.z * normal_to_domain.z;
         if (normal_norm_sq <= amrex::ParticleReal(0.0)) {
-            x_out = x_hit;
             u_out = u_in;
             amrex::ignore_unused(engine);
             return;
@@ -300,10 +313,6 @@ struct SpecularReflectionOperator {
         amrex::ParticleReal const u_dot_normal =
             u_in.x * normal.x + u_in.y * normal.y + u_in.z * normal.z;
 
-        x_out = {
-            x_hit.x + m_position_epsilon * normal.x,
-            x_hit.y + m_position_epsilon * normal.y,
-            x_hit.z + m_position_epsilon * normal.z};
         u_out = {
             u_in.x - amrex::ParticleReal(2.0) * u_dot_normal * normal.x,
             u_in.y - amrex::ParticleReal(2.0) * u_dot_normal * normal.y,
@@ -314,21 +323,18 @@ struct SpecularReflectionOperator {
 };
 
 struct DiffuseReemissionOperator {
-    amrex::ParticleReal m_position_epsilon = 0.0;
     amrex::ParticleReal m_vth = 0.0;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     void operator()(
         amrex::XDim3 const& normal_to_domain,
-        amrex::XDim3 const& x_hit, amrex::XDim3 const& u_in,
-        amrex::XDim3& x_out, amrex::XDim3& u_out,
+        amrex::XDim3 const& u_in, amrex::XDim3& u_out,
         amrex::RandomEngine const& engine) const noexcept {
         amrex::ParticleReal const normal_norm_sq =
             normal_to_domain.x * normal_to_domain.x
             + normal_to_domain.y * normal_to_domain.y
             + normal_to_domain.z * normal_to_domain.z;
         if (normal_norm_sq <= amrex::ParticleReal(0.0)) {
-            x_out = x_hit;
             u_out = u_in;
             return;
         }
@@ -373,10 +379,6 @@ struct DiffuseReemissionOperator {
             generateGaussianFluxDist(
                 amrex::ParticleReal(0.0), m_vth, engine);
 
-        x_out = {
-            x_hit.x + m_position_epsilon * normal.x,
-            x_hit.y + m_position_epsilon * normal.y,
-            x_hit.z + m_position_epsilon * normal.z};
         u_out = {
             u_tangent_one * tangent_one.x
                 + u_tangent_two * tangent_two.x + u_normal * normal.x,
@@ -390,6 +392,8 @@ struct DiffuseReemissionOperator {
 };
 
 struct NeutralAtomReflectionTransform {
+    TruncatedConeGeometry m_cone;
+    amrex::ParticleReal m_position_epsilon = 0.0;
     SpecularReflectionOperator m_specular;
     DiffuseReemissionOperator m_diffuse;
 
@@ -400,31 +404,45 @@ struct NeutralAtomReflectionTransform {
                     int const emission_index, int const emit_count,
                     amrex::RandomEngine const& engine) const noexcept {
 #if defined(WARPX_DIM_3D)
-        amrex::XDim3 const normal_to_domain{
-            amrex::ParticleReal(0.0),
-            amrex::ParticleReal(0.0),
-            amrex::ParticleReal(0.0)};
-        amrex::XDim3 const x_hit{
-            src.m_rdata[PIdx::x][i_src],
-            src.m_rdata[PIdx::y][i_src],
-            src.m_rdata[PIdx::z][i_src]};
         amrex::XDim3 const u_in{
             src.m_rdata[PIdx::ux][i_src],
             src.m_rdata[PIdx::uy][i_src],
             src.m_rdata[PIdx::uz][i_src]};
+        amrex::XDim3 const x_hit{
+            src.m_rdata[PIdx::x][i_src],
+            src.m_rdata[PIdx::y][i_src],
+            src.m_rdata[PIdx::z][i_src]};
+        amrex::XDim3 normal_to_domain;
+        bool const on_cone =
+            GetTruncatedConeNormal(m_cone, x_hit, normal_to_domain);
         amrex::XDim3 x_out = x_hit;
         amrex::XDim3 u_out = u_in;
 
-        // TODO: Replace the placeholder normal when the EB normal is supplied
-        // to this transform without relying on runtime-component lookup here.
         if (behavior ==
             static_cast<int>(NeutralAtomReflectionBehavior::Specular))
         {
-            m_specular(
-                normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+            m_specular(normal_to_domain, u_in, u_out, engine);
         } else {
-            m_diffuse(
-                normal_to_domain, x_hit, u_in, x_out, u_out, engine);
+            m_diffuse(normal_to_domain, u_in, u_out, engine);
+        }
+
+        // Move a fixed distance along the reflected direction. Proper velocity
+        // and physical velocity have the same direction, so no gamma
+        // conversion is required for this displacement.
+        using std::sqrt;
+        amrex::ParticleReal const u_out_norm =
+            sqrt(u_out.x * u_out.x + u_out.y * u_out.y +
+                 u_out.z * u_out.z);
+        if (u_out_norm > amrex::ParticleReal(0.0)) {
+            amrex::ParticleReal const displacement_scale =
+                m_position_epsilon / u_out_norm;
+            x_out.x += displacement_scale * u_out.x;
+            x_out.y += displacement_scale * u_out.y;
+            x_out.z += displacement_scale * u_out.z;
+        } else if (on_cone) {
+            x_out.x += m_position_epsilon * normal_to_domain.x;
+            x_out.y += m_position_epsilon * normal_to_domain.y;
+            x_out.z += m_position_epsilon * normal_to_domain.z;
         }
 
         dst.m_rdata[PIdx::x][i_dst] = x_out.x;
@@ -438,7 +456,7 @@ struct NeutralAtomReflectionTransform {
 #else
         amrex::ignore_unused(
             dst, src, i_src, i_dst, behavior, emission_index, emit_count,
-            engine, m_specular, m_diffuse);
+            engine, m_cone, m_position_epsilon, m_specular, m_diffuse);
 #endif
     }
 };
@@ -770,6 +788,49 @@ NeutralAtomEBInteraction () {
                          NeutralAtomReflectionBehavior::Diffuse);
     }();
 
+    static TruncatedConeGeometry const cone = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        TruncatedConeGeometry value;
+        pp.get("k", value.m_k);
+        pp.get("a1", value.m_a1);
+        pp.get("b1", value.m_b1);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value.m_k != amrex::ParticleReal(0.0),
+            "insert.neutral_atom_eb.k must be non-zero.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value.m_a1 > amrex::ParticleReal(0.0),
+            "insert.neutral_atom_eb.a1 must be positive.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value.m_b1 > value.m_a1,
+            "insert.neutral_atom_eb.b1 must be greater than a1.");
+        return value;
+    }();
+
+    static amrex::ParticleReal const wall_temperature = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        amrex::ParticleReal value = 0.0;
+        pp.query("wall_temperature", value);
+        return value;
+    }();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        reflection_behavior !=
+                static_cast<int>(NeutralAtomReflectionBehavior::Diffuse) ||
+            wall_temperature > amrex::ParticleReal(0.0),
+        "insert.neutral_atom_eb.wall_temperature must be positive for "
+        "diffuse reflection.");
+
+    static amrex::ParticleReal const configured_position_epsilon = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        amrex::ParticleReal value = -1.0;
+        pp.query("position_epsilon", value);
+        return value;
+    }();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        configured_position_epsilon == amrex::ParticleReal(-1.0) ||
+            configured_position_epsilon > amrex::ParticleReal(0.0),
+        "insert.neutral_atom_eb.position_epsilon must be positive when "
+        "specified.");
+
     WarpX& warpx_instance = WarpX::GetInstance();
     if (!DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         return;
@@ -784,9 +845,45 @@ NeutralAtomEBInteraction () {
     auto& neutral_atoms =
         particle_container.GetParticleContainerFromName(species);
     constexpr int eb_boundary = AMREX_SPACEDIM * 2;
+    auto* neutral_buffer =
+        boundary_buffer.getParticleBufferPointer(species, eb_boundary);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        neutral_buffer != nullptr && neutral_buffer->isDefined(),
+        "The neutral atom EB buffer is not defined. Set "
+        "<species>.save_particles_at_eb = 1.");
+
+    auto const dx = warpx_instance.Geom(0).CellSizeArray();
+    amrex::ParticleReal min_dx =
+        static_cast<amrex::ParticleReal>(dx[0]);
+    for (int idim = 1; idim < AMREX_SPACEDIM; ++idim) {
+        min_dx = std::min(
+            min_dx, static_cast<amrex::ParticleReal>(dx[idim]));
+    }
+    amrex::ParticleReal position_epsilon =
+        amrex::ParticleReal(0.1) * min_dx;
+    if (configured_position_epsilon > amrex::ParticleReal(0.0)) {
+        position_epsilon = configured_position_epsilon;
+    }
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        position_epsilon > amrex::ParticleReal(0.0),
+        "insert.neutral_atom_eb.position_epsilon must be positive.");
+
+    amrex::ParticleReal diffuse_vth = 0.0;
+    if (reflection_behavior ==
+        static_cast<int>(NeutralAtomReflectionBehavior::Diffuse))
+    {
+        diffuse_vth = static_cast<amrex::ParticleReal>(
+            std::sqrt(PhysConst::kb * wall_temperature /
+                      neutral_atoms.getMass()));
+    }
+
     NeutralAtomReflectionDecisionFunc const decision_func{
-        reflection_behavior};
-    NeutralAtomReflectionTransform const transform{};
+        reflection_behavior, cone};
+    NeutralAtomReflectionTransform const transform{
+        cone,
+        position_epsilon,
+        SpecularReflectionOperator{},
+        DiffuseReemissionOperator{diffuse_vth}};
 
     amrex::Long const num_reflected =
         VariableCountCopyTransformBoundaryBuffer(
