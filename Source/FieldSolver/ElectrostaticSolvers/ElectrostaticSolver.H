@@ -15,7 +15,9 @@
 
 #include <ablastr/profiler/ProfilerWrapper.H>
 #include <AMReX_Array.H>
+#include <AMReX_iMultiFab.H>
 
+#include <optional>
 
 /**
  * \brief Base class for Electrostatic Solver
@@ -95,7 +97,8 @@ public:
         int max_iters,
         int verbosity,
         bool is_igf_2d_slices,
-        std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt // only used for EB
+        std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt, // only used for EB
+        std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
     ) const;
 
     /**
@@ -158,6 +161,12 @@ public:
     int self_fields_verbosity = 2;
     /** MLGM number of smoothing sweeps */
     int self_fields_num_final_sweeps = 8;
+    /** Extrapolation order for the phi initial guess: 0, 1, or 2 */
+    int self_fields_phi_extrapolation_order = 0;
+    /** First-order extrapolation coefficient for the phi initial guess */
+    amrex::Real self_fields_phi_extrapolation_alpha = 0.0;
+    /** Second-order extrapolation coefficient for the phi initial guess */
+    amrex::Real self_fields_phi_extrapolation_beta = 0.0;
 
     /** Parameters for FFT Poisson solver aka IGF */
     // 0: full 3D, 1: many 2D z-slices (quasi-3D)

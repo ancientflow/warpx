@@ -38,6 +38,7 @@
 #include "Filter/NCIGodfreyFilter.H"
 #include "Initialization/ExternalField.H"
 #include "Initialization/WarpXInit.H"
+#include "Insert/Core/WarpXInsert.h"
 #include "Particles/ParticleBoundaries.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Fluids/MultiFluidContainer.H"
@@ -327,6 +328,7 @@ WarpX::ResetInstance ()
 void
 WarpX::Finalize()
 {
+    Insert::Finalize();
     WarpX::ResetInstance();
 }
 

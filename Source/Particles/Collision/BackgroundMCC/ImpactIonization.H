@@ -109,6 +109,58 @@ public:
         return (Random(engine) <= nu_i);
     }
 
+ /**
+    * \brief Functor call. This method determines if a given (electron) particle
+    * should undergo an ionization collision.
+    * 
+    * This is the changed version.
+    *
+    * @param[in] ptd particle tile data
+    * @param[in] i particle index
+    * @param[in] engine the random number state and factory
+    * @param[in] local_density the density of the particle's position
+    * @return true if a collision occurs, false otherwise
+    */
+    template <typename PData>
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE bool
+    operator()(const PData& ptd, int const i, amrex::RandomEngine const& engine,
+               amrex::Real local_density) const noexcept {
+        using namespace amrex;
+        using std::sqrt;
+
+        // determine if this particle should collide
+        if (Random(engine) > m_total_collision_prob) { return false; }
+
+        // get references to the particle to get its position
+        // 考虑将计算密度迁移到此处
+        //const auto& p = ptd.getSuperParticle(i);
+        //ParticleReal x, y, z;
+        double E_coll;
+        //get_particle_position(p, x, y, z);
+
+        // calculate neutral density at particle location
+        const amrex::ParticleReal n_a = local_density;
+
+        // get the particle velocity
+        const ParticleReal ux = ptd.m_rdata[PIdx::ux][i];
+        const ParticleReal uy = ptd.m_rdata[PIdx::uy][i];
+        const ParticleReal uz = ptd.m_rdata[PIdx::uz][i];
+
+        // calculate kinetic energy
+        constexpr auto eV = PhysConst::q_e;
+        E_coll = Algorithms::KineticEnergy<double>(ux, uy, uz, m_mass)/eV;
+
+        // get collision cross-section
+        const ParticleReal sigma_E = m_mcc_process.getCrossSection(static_cast<amrex::ParticleReal>(E_coll));
+
+        // calculate normalized collision frequency
+        const ParticleReal u_coll2 = ux*ux + uy*uy + uz*uz;
+        const ParticleReal nu_i = n_a * sigma_E * sqrt(u_coll2) / m_nu_max;
+
+        // check if this collision should be performed
+        return (Random(engine) <= nu_i);
+    }
+
 private:
     ScatteringProcess::Executor m_mcc_process;
     double m_mass;
