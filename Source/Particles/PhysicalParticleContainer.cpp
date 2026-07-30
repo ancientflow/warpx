@@ -13,6 +13,7 @@
 #include "Fields.H"
 #include "Filter/NCIGodfreyFilter.H"
 #include "Initialization/PlasmaInjector.H"
+#include "Insert/Core/WarpXInsert.h"
 #include "MultiParticleContainer.H"
 #include "Parallelization/WarpXSumGuardCells.H"
 #ifdef WARPX_QED
@@ -216,6 +217,7 @@ PhysicalParticleContainer::PhysicalParticleContainer (AmrCore* amr_core, int isp
     pp_species_name.query("do_not_deposit", do_not_deposit);
     pp_species_name.query("do_not_gather", do_not_gather);
     pp_species_name.query("do_not_push", do_not_push);
+    Insert::ReadParticleSubcycling(species_name, pp_species_name);
 
     if (m_charge == 0._prt) {
         do_not_deposit = true;
@@ -507,6 +509,9 @@ PhysicalParticleContainer::Evolve (ablastr::fields::MultiFabRegister& fields,
     amrex::MultiFab & Bx = *fields.get(FieldType::Bfield_aux, Direction{0}, lev);
     amrex::MultiFab & By = *fields.get(FieldType::Bfield_aux, Direction{1}, lev);
     amrex::MultiFab & Bz = *fields.get(FieldType::Bfield_aux, Direction{2}, lev);
+
+    Insert::ApplyParticleSubcycling(
+        species_name, WarpX::GetInstance().getistep(lev), dt, do_not_push);
 
     // Auxiliary booleans
     bool const deposit_charge = (

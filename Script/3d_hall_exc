@@ -1,0 +1,225 @@
+#全局定义
+max_step = 6000000
+my_constants.diag_num = 1200
+my_constants.reduced_diag_num = diag_num*10
+my_constants.copy_diag_num = diag_num / 10
+my_constants.dt = 5.6e-12
+
+my_constants.Ic = 0.005
+my_constants.voltage = 300
+
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-6
+#warpx.self_fields_absolute_tolerance = 1e-6
+warpx.sort_intervals = 50
+warpx.use_filter = 0
+warpx.grid_type = collocated
+
+#参数定义
+my_constants.Nxen = 2.5e18
+my_constants.Tnini = 400 #开尔文
+my_constants.EvToT = 11605
+my_constants.Teini = 2*EvToT #开尔文
+
+##几何参数定义
+my_constants.L = 0.005
+my_constants.lx = 0.005
+my_constants.ly = 0.005
+my_constants.lz = 0.005
+my_constants.rn1 = 0.0021 / 2
+my_constants.rn2 = 0.0031 / 2
+
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+my_constants.theta_e = kb*Teini/m_e/clight/clight
+my_constants.theta_xe = kb*Tnini/m_xe/clight/clight
+my_constants.theta_xen = kb*Tnini/m_xe/clight/clight
+
+warpx.poisson_solver = multigrid
+
+#几何
+my_constants.factor = 1
+my_constants.n_cell = 64 * factor
+my_constants.nppci = 200/factor/factor/factor
+
+amr.n_cell = n_cell n_cell n_cell
+amr.blocking_factor = n_cell
+amr.max_grid_size = n_cell
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = electrons xe_ions xe_netural xe_netural_s
+
+electrons.species_type = electron
+electrons.charte = -q_e
+electrons.ndt = 1
+
+xe_ions.species_type = xenon
+xe_ions.charge = q_e
+xe_ions.ndt = 10
+
+xe_netural.mass = m_xe
+xe_netural.charge = 1
+xe_netural.do_not_gather = 1
+xe_netural.do_not_deposit = 1
+xe_netural.ndt = 100
+
+xe_netural_s.mass = m_xe
+xe_netural_s.charge = 1
+xe_netural_s.do_not_deposit = 1
+xe_netural_s.do_not_gather = 1
+xe_netural_s.ndt = 100
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# Note: 3d_hall_exc uses a different geometry (L=0.005); added compatibility constants below.
+# ==========================================
+my_constants.l_factor = 1.0
+my_constants.elec_weight = Nxen * lx * ly * lz / nppci
+my_constants.xe_weight = elec_weight
+
+insert.initial_sources = channel_plasma
+insert.continuous_sources = cathode_electron
+
+# --- Initial channel plasma (electrons + xe_ions) ---
+channel_plasma.rate = density_volume
+channel_plasma.density = Nxen
+channel_plasma.volume = (rn2^2 - rn1^2) * pi * (lz * 0.6)
+channel_plasma.macro_weight = elec_weight
+channel_plasma.shared_species = electrons xe_ions
+channel_plasma.x_offset = lx / 2
+channel_plasma.y_offset = ly / 2
+
+channel_plasma.position.coordinate_system = cylindrical
+channel_plasma.position.r.distribution = area_uniform
+channel_plasma.position.r.min = rn1
+channel_plasma.position.r.max = rn2
+channel_plasma.position.theta.distribution = uniform
+channel_plasma.position.theta.min = 0.0
+channel_plasma.position.theta.max = 2*pi
+channel_plasma.position.z.distribution = uniform
+channel_plasma.position.z.min = lz * 0.2
+channel_plasma.position.z.max = lz * 0.8
+
+channel_plasma.electrons.weight = elec_weight
+channel_plasma.electrons.velocity.coordinate_system = cartesian
+channel_plasma.electrons.velocity.vx.distribution = gaussian
+channel_plasma.electrons.velocity.vx.sigma = sqrt(kb * Teini / m_e)
+channel_plasma.electrons.velocity.vy.distribution = gaussian
+channel_plasma.electrons.velocity.vy.sigma = sqrt(kb * Teini / m_e)
+channel_plasma.electrons.velocity.vz.distribution = gaussian
+channel_plasma.electrons.velocity.vz.sigma = sqrt(kb * Teini / m_e)
+
+channel_plasma.xe_ions.weight = elec_weight
+channel_plasma.xe_ions.velocity.coordinate_system = cartesian
+channel_plasma.xe_ions.velocity.vx.distribution = gaussian
+channel_plasma.xe_ions.velocity.vx.sigma = sqrt(kb * Tnini / m_xe)
+channel_plasma.xe_ions.velocity.vy.distribution = gaussian
+channel_plasma.xe_ions.velocity.vy.sigma = sqrt(kb * Tnini / m_xe)
+channel_plasma.xe_ions.velocity.vz.distribution = gaussian
+channel_plasma.xe_ions.velocity.vz.sigma = sqrt(kb * Tnini / m_xe)
+
+# --- Cathode electron continuous injection ---
+cathode_electron.species = electrons
+cathode_electron.rate = current
+cathode_electron.current = Ic
+cathode_electron.macro_weight = elec_weight
+cathode_electron.l_factor = 1.0
+cathode_electron.x_offset = lx / 2
+cathode_electron.y_offset = ly / 2
+
+cathode_electron.position.coordinate_system = cylindrical
+cathode_electron.position.r.distribution = area_uniform
+cathode_electron.position.r.min = rn2 * 1.05
+cathode_electron.position.r.max = rn2 * 1.3
+cathode_electron.position.theta.distribution = uniform
+cathode_electron.position.theta.min = 0.0
+cathode_electron.position.theta.max = 2*pi
+cathode_electron.position.z.distribution = uniform
+cathode_electron.position.z.min = lz * 0.85
+cathode_electron.position.z.max = lz * 0.95
+
+cathode_electron.velocity.coordinate_system = cartesian
+cathode_electron.velocity.vx.distribution = gaussian
+cathode_electron.velocity.vx.sigma = sqrt(kb * Teini / m_e)
+cathode_electron.velocity.vy.distribution = gaussian
+cathode_electron.velocity.vy.sigma = sqrt(kb * Teini / m_e)
+cathode_electron.velocity.vz.distribution = gaussian
+cathode_electron.velocity.vz.sigma = sqrt(kb * Teini / m_e)
+
+
+###负载平衡
+#algo.load_balance_intervals = 400
+
+###重采样
+electrons.save_particles_at_xlo = 1
+electrons.save_particles_at_xhi = 1
+electrons.save_particles_at_ylo = 1
+electrons.save_particles_at_yhi = 1
+electrons.save_particles_at_zlo = 1
+electrons.save_particles_at_zhi = 1
+
+xe_ions.save_particles_at_xlo = 1
+xe_ions.save_particles_at_xhi = 1
+xe_ions.save_particles_at_ylo = 1
+xe_ions.save_particles_at_yhi = 1
+xe_ions.save_particles_at_zlo = 1
+xe_ions.save_particles_at_zhi = 1
+
+my_constants.hall_diag_interval = 10
+my_constants.thrust_diag_path = "thrust_exc.dat"
+my_constants.beam_divergence_path = "beam_divergence_exc.dat"
+my_constants.iedf_path = "iedf_exc.dat"
+my_constants.iedf_bins = 200
+my_constants.iedf_min_eV = 0
+my_constants.iedf_max_eV = 500
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 1
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+xe_netural.injection_sources = xeinit
+
+#初始注入
+FILE = 3dInitInjection
+
+#持续注入 考虑修改为代码注入
+#FILE = 3d_flux
+
+#碰撞设置
+FILE = 3d_hall_mcccoll_exc
+
+#电场 磁场定义
+warpx.B_ext_grid_init_style = read_from_file
+#warpx.E_ext_grid_init_style = read_from_file
+#warpx.read_fields_from_path = EB_data_direct_grid.bp5
+warpx.read_fields_from_path = B3D_data.bp5
+
+#输出定义
+FILE = diagout

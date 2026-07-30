@@ -41,6 +41,19 @@ void ElectrostaticSolver::ReadParameters () {
         pp_warpx, "self_fields_max_iters", self_fields_max_iters);
     utils::parser::queryWithParser(
         pp_warpx, "self_fields_verbosity", self_fields_verbosity);
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_phi_extrapolation_order",
+        self_fields_phi_extrapolation_order);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        self_fields_phi_extrapolation_order >= 0 &&
+        self_fields_phi_extrapolation_order <= 2,
+        "warpx.self_fields_phi_extrapolation_order must be 0, 1, or 2");
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_phi_extrapolation_alpha",
+        self_fields_phi_extrapolation_alpha);
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_phi_extrapolation_beta",
+        self_fields_phi_extrapolation_beta);
 
     utils::parser::queryWithParser(pp_warpx, "self_fields_num_final_sweeps", self_fields_num_final_sweeps); {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
@@ -136,7 +149,8 @@ ElectrostaticSolver::computePhi (
     int const max_iters,
     int const verbosity,
     bool const is_igf_2d,
-    std::optional<ablastr::fields::MultiLevelVectorField> efield
+    std::optional<ablastr::fields::MultiLevelVectorField> efield,
+    std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks
 ) const
 {
     // create a vector to our fields, sorted by level
@@ -224,7 +238,8 @@ ElectrostaticSolver::computePhi (
         post_phi_calculation,
         *m_poisson_boundary_handler,
         warpx.gett_new(0),
-        eb_farray_box_factory
+        eb_farray_box_factory,
+        overset_masks
     );
 
 }

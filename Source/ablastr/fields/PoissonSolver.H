@@ -36,6 +36,7 @@
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_IndexType.H>
 #include <AMReX_IntVect.H>
+#include <AMReX_iMultiFab.H>
 #include <AMReX_LO_BCTYPES.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_MFInterp_C.H>
@@ -217,7 +218,8 @@ computePhi (
     [[maybe_unused]] T_PostPhiCalculationFunctor post_phi_calculation = std::nullopt,
     [[maybe_unused]] T_BoundaryHandler const& boundary_handler = std::nullopt,
     [[maybe_unused]] std::optional<amrex::Real const> current_time = std::nullopt, // only used for EB
-    [[maybe_unused]] const std::optional<amrex::Vector<T_FArrayBoxFactory const *> >& eb_farray_box_factory = std::nullopt // only used for EB
+    [[maybe_unused]] const std::optional<amrex::Vector<T_FArrayBoxFactory const *> >& eb_farray_box_factory = std::nullopt, // only used for EB
+    std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
 )
 {
     using namespace amrex::literals;
@@ -400,6 +402,12 @@ computePhi (
             linop->setDomainBC(lobc, hibc);
         } else {
             linop->setDomainBC(boundary_handler.lobc, boundary_handler.hibc);
+        }
+
+        if (overset_masks.has_value() && lev < static_cast<int>(overset_masks->size()) &&
+            overset_masks.value()[lev] != nullptr)
+        {
+            linop->setOversetMask(0, *overset_masks.value()[lev]);
         }
 
         // Solve the Poisson equation

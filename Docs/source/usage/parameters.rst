@@ -486,6 +486,31 @@ Overall simulation parameters
     MLMG iteration, so the most efficient value is problem-dependent.
 
     Must be greater than zero when specified.
+    
+.. pp:param:: warpx.self_fields_phi_extrapolation_order
+    :type: ``integer``
+    :default: 0
+
+    Extrapolation order used for the initial guess of the labframe electrostatic
+    potential solve. Valid values are ``0`` to disable extrapolation, ``1`` for
+    first-order extrapolation, and ``2`` for second-order extrapolation.
+
+.. pp:param:: warpx.self_fields_phi_extrapolation_alpha
+    :type: ``float``
+    :default: 0.0
+
+    Coefficient used in the extrapolated initial guess for the labframe electrostatic
+    potential solve. With ``warpx.self_fields_phi_extrapolation_order = 1``, the
+    initial guess is :math:`(1+\alpha)\phi_n-\alpha\phi_{n-1}`.
+
+.. pp:param:: warpx.self_fields_phi_extrapolation_beta
+    :type: ``float``
+    :default: 0.0
+
+    Coefficient used by second-order extrapolation of the initial guess for the
+    labframe electrostatic potential solve. With
+    ``warpx.self_fields_phi_extrapolation_order = 2``, the initial guess is
+    :math:`(1+\alpha+\beta)\phi_n-(\alpha+2\beta)\phi_{n-1}+\beta\phi_{n-2}`.
 
 .. pp:param:: warpx.magnetostatic_solver_required_precision
     :type: ``float``

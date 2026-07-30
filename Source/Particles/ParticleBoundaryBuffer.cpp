@@ -377,6 +377,7 @@ void ParticleBoundaryBuffer::gatherParticlesFromDomainBoundaries (MultiParticleC
             {
                 if (!m_do_boundary_buffer[2*idim+iside][i]) { continue; }
                 const WarpXParticleContainer& pc = mypc.GetParticleContainer(i);
+                if (pc.getDoNotPush()) { continue; }
                 if (!buffer[i].isDefined())
                 {
                     buffer[i] = pc.make_alike<>();
@@ -487,6 +488,7 @@ void ParticleBoundaryBuffer::gatherParticlesFromEmbeddedBoundaries (
         {
             if (!m_do_boundary_buffer[AMREX_SPACEDIM*2][i]) { continue; }
             const auto& pc = mypc.GetParticleContainer(i);
+            if (pc.getDoNotPush()) { continue; }
             if (!buffer[i].isDefined())
             {
                 buffer[i] = pc.make_alike<>();

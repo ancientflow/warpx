@@ -11,6 +11,11 @@
  */
 #include "MultiParticleContainer.H"
 
+#include "Insert/Config/WarpXOptimizationConfig.h"
+#ifdef MCC_ION_CACHED_RHO
+#include "Insert/Core/WarpXInsert.h"
+#endif
+
 #include "Fields.H"
 #include "Particles/ElementaryProcess/Ionization.H"
 #ifdef WARPX_QED
@@ -446,6 +451,24 @@ MultiParticleContainer::InitData ()
     for (auto& pc : allcontainers) {
         pc->InitData();
     }
+
+#ifdef MCC_ION_CACHED_RHO
+    WarpX& warpx = WarpX::GetInstance();
+    using warpx::fields::FieldType;
+    if (warpx.m_fields.has(FieldType::rho_fp, 0)) {
+        auto const rho_fp =
+            warpx.m_fields.get_mr_levels(FieldType::rho_fp, warpx.finestLevel());
+        for (auto& pc : allcontainers) {
+            if (pc->do_not_deposit) { continue; }
+            int const species_id = pc->getSpeciesId();
+            int const ndt = species_id < static_cast<int>(species_names.size())
+                                ? Insert::ParticleSubcyclingNdt(
+                                      species_names[species_id])
+                                : 1;
+            pc->InitCachedRho(rho_fp, ndt);
+        }
+    }
+#endif
 }
 
 void
@@ -635,8 +658,13 @@ MultiParticleContainer::DepositCharge (
     for (auto& pc : allcontainers)
     {
         if (pc->do_not_deposit) { continue; }
+#ifdef MCC_ION_CACHED_RHO
+        pc->DepositCharge(rho, local, reset, apply_boundary_and_scale_volume,
+                          interpolate_across_levels, 0, relative_time == 0.0);
+#else
         pc->DepositCharge(rho, local, reset, apply_boundary_and_scale_volume,
                               interpolate_across_levels);
+#endif
     }
 
     // Push the particles back in time
@@ -918,6 +946,7 @@ void
 MultiParticleContainer::ApplyBoundaryConditions ()
 {
     for (auto& pc : allcontainers) {
+        if (pc->getDoNotPush()) { continue; }
         pc->ApplyBoundaryConditions();
     }
 }
