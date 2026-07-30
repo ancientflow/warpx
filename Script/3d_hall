@@ -1,7 +1,5 @@
 #全局定义
-max_step = 5000000
-my_constants.diag_num = 120
-my_constants.reduced_diag_num = 12000
+max_step = 9000000
 my_constants.dt = 3e-12
 
 warpx.const_dt = dt
@@ -69,6 +67,10 @@ boundary.potential_lo_z = 0
 boundary.potential_hi_x = 0
 boundary.potential_hi_y = 0
 boundary.potential_hi_z = 0
+
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 0.4
+warpx.self_fields_phi_extrapolation_beta = 0.15
 
 #粒子设置
 algo.particle_shape = 1
@@ -227,14 +229,14 @@ xe_netural.xeinit.injection_style = external_file
 xe_netural.xeinit.injection_file = hall_start_256.bp5
 
 #碰撞设置
-FILE = 3d_hall_mcccoll_test
+FILE = ../../Script/3d_hall_mcccoll_test
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file
 warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
 
 #输出定义
-FILE = diagout_8T
+FILE = ../../Script/diagout_8T
 
 #ECDI已知
-insert.ecdi_control.enabled = 1
+insert.ecdi_control.enabled = 0
