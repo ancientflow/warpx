@@ -1,12 +1,15 @@
 #全局定义
 max_step = 9000000
+my_constants.diag_num = 120
+my_constants.reduced_diag_num = 12000
 my_constants.dt = 3e-12
+#my_constants.dt = 10e-10
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
 warpx.self_fields_required_precision = 1e-6
-#warpx.self_fields_absolute_tolerance = 1e-3
-warpx.sort_intervals = 25
+warpx.self_fields_absolute_tolerance = 1e-3
+warpx.sort_intervals = 50
 warpx.use_filter = 0
 warpx.grid_type = collocated
 
@@ -27,7 +30,6 @@ my_constants.Tx = 200
 my_constants.Ty = 200
 my_constants.Tz = 140
 my_constants.vz0 = 240
-
 
 #粒子参数定义
 my_constants.weight_ratio = 4
@@ -72,6 +74,30 @@ warpx.self_fields_phi_extrapolation_order = 2
 warpx.self_fields_phi_extrapolation_alpha = 0.4
 warpx.self_fields_phi_extrapolation_beta = 0.15
 
+# 斜阳极 Embedded Boundary
+# r < a1 为中心通道；a1 <= r < b1 为圆锥侧面；
+# r >= b1 为与圆锥连续的平面。隐式函数 > 0 为固体，< 0 为计算域。
+my_constants.eb_x0 = lx / 2
+my_constants.eb_y0 = ly / 2
+my_constants.eb_a1 = 9.0e-3 / l_factor
+my_constants.eb_b1 = 17.5e-3 / l_factor
+my_constants.eb_delta_z = 7.5e-3 / l_factor
+my_constants.eb_voltage_r_max = 13.0e-3 / l_factor
+my_constants.eb_k = eb_delta_z / (eb_b1 - eb_a1)
+my_constants.eb_b = eb_k * eb_b1 - eb_delta_z
+
+warpx.eb_implicit_function = "if(sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_a1,-1,if(sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_b1,eb_k*sqrt((x-eb_x0)**2+(y-eb_y0)**2)-eb_k*eb_a1-z,eb_k*eb_b1-eb_b-z))"
+warpx.eb_potential(x,y,z,t) = "if((sqrt((x-eb_x0)**2+(y-eb_y0)**2)>eb_a1) and (sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_voltage_r_max),voltage,0)"
+insert.neutral_atom_eb.species = xe_netural
+insert.neutral_atom_eb.wall_temperature = 400
+
+# 与中性原子解析圆锥法向共用同一组缩比后参数。
+# 旋转进气几何与中性原子壁面模型确认前，交互保持关闭。
+insert.neutral_atom_eb.enabled = 1
+insert.neutral_atom_eb.k = eb_k
+insert.neutral_atom_eb.a1 = eb_a1
+insert.neutral_atom_eb.b1 = eb_b1
+
 #粒子设置
 algo.particle_shape = 1
 
@@ -88,6 +114,7 @@ xe_netural.mass = m_xe
 xe_netural.charge = 1
 xe_netural.do_not_gather = 1
 xe_netural.do_not_deposit = 1
+xe_netural.save_particles_at_eb = 1
 
 ###重采样
 electrons.save_particles_at_zlo = 1
@@ -113,7 +140,7 @@ my_constants.iedf_max_eV = 500
 
 # Insert runtime diagnostics switches
 my_constants.particle_number_diag = 1
-my_constants.anode_current_diag = 1
+my_constants.anode_current_diag = 0
 my_constants.clear_hall_boundary_particle_cache_diag = 1
 my_constants.thrust_diag = 0
 my_constants.beam_divergence_diag = 0
@@ -123,8 +150,8 @@ my_constants.collision_record_diag = 0
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
-insert.initial_sources = channel_plasma
-insert.continuous_sources = cathode_electron xe_neutral_inlet
+#insert.initial_sources = channel_plasma
+insert.continuous_sources = xe_neutral_inlet cathode_electron
 
 # --- Initial channel plasma (electrons + xe_ions) ---
 channel_plasma.rate = density_volume
@@ -192,51 +219,55 @@ cathode_electron.velocity.vy.sigma = 592982
 cathode_electron.velocity.vz.distribution = gaussian
 cathode_electron.velocity.vz.sigma = 592982
 
-# --- Xe neutral continuous inlet (evolving external_file is kept for initial neutral) ---
+# --- Xe neutral rotating inlet ---
 xe_neutral_inlet.species = xe_netural
 xe_neutral_inlet.rate = mass_flow
 xe_neutral_inlet.mass_flow = m_dot
 xe_neutral_inlet.mass = m_xe
 xe_neutral_inlet.macro_weight = xe_weight
 xe_neutral_inlet.l_factor = l_factor
-xe_neutral_inlet.batch_multiplier = 100.0
-xe_neutral_inlet.x_offset = 0.025 / l_factor
-xe_neutral_inlet.y_offset = 0.025 / l_factor
+xe_neutral_inlet.batch_multiplier = 100
+xe_neutral_inlet.x_offset = eb_x0
+xe_neutral_inlet.y_offset = eb_y0
 
-xe_neutral_inlet.position.coordinate_system = cylindrical
-xe_neutral_inlet.position.r.distribution = area_uniform
-xe_neutral_inlet.position.r.min = ((0.021 + 0.031) / 4 - 0.001) / l_factor
-xe_neutral_inlet.position.r.max = ((0.021 + 0.031) / 4 + 0.001) / l_factor
-xe_neutral_inlet.position.theta.distribution = uniform
-xe_neutral_inlet.position.theta.min = 0.0
-xe_neutral_inlet.position.theta.max = 2*pi
-xe_neutral_inlet.position.z.distribution = constant
-xe_neutral_inlet.position.z.value = 0.0
+# 在斜阳极圆锥径向区间的 0.6 至 0.8 范围内按面积均匀采样。
+xe_neutral_inlet.position.coupled_distribution = truncated_cone_surface
+xe_neutral_inlet.position.slope = eb_k
+xe_neutral_inlet.position.r_min = eb_a1 + 0.05 * (eb_b1 - eb_a1)
+xe_neutral_inlet.position.r_max = eb_a1 + 0.11 * (eb_b1 - eb_a1)
+xe_neutral_inlet.position.r_reference = eb_a1
+xe_neutral_inlet.position.z_reference = 1e-6
+xe_neutral_inlet.position.theta_min = 0.0
+xe_neutral_inlet.position.theta_max = 2*pi
 
-xe_neutral_inlet.velocity.coordinate_system = cartesian
+# theta=0 处的进气轴线为局部 (r, theta, z) 分量 (-1, 1, 1)，内部归一化。
+xe_neutral_inlet.velocity.coordinate_system = rotating_axis
+xe_neutral_inlet.velocity.axis_at_theta0 = -0.5725 0.7451 0.3420
 xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.mean = 0.0
 xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
 xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.mean = 0.0
 xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
 xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
 xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 
-xe_netural.injection_sources = xeinit
-
 #初始注入
-xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = hall_start_256.bp5
+xe_netural.injection_style = external_file
+xe_netural.injection_file = slope_start.bp5
+xe_netural.injection_file = diags/particle_diag/openpmd_015000.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_test
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file
-warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
+warpx.read_fields_from_path = SlopeB2DTo3D_0.bp5
 
 #输出定义
 FILE = ../../Script/diagout_8T
+#FILE = ../../Script/init_diag
 
-#ECDI已知
+#ECDI抑制
 insert.ecdi_control.enabled = 0

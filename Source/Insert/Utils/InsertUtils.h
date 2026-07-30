@@ -26,6 +26,10 @@ struct HallAnodeRingConfig
 
 void CreateDirectoryTree (std::string const& dir);
 
+int BoundaryParticleDiagInterval ();
+
+bool DoBoundaryParticleDiag (int step);
+
 std::string ParentPath (std::string const& path);
 
 std::string PathJoin (std::string const& dir, std::string const& filename);

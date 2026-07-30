@@ -1,0 +1,171 @@
+#全局定义
+max_step = 15000
+my_constants.dt = 10e-10
+
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-6
+warpx.self_fields_absolute_tolerance = 1e-3
+warpx.sort_intervals = 50
+warpx.use_filter = 0
+warpx.grid_type = collocated
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#工况定义
+my_constants.m_dot = 0.6e-6
+my_constants.Ic = 0.5
+my_constants.voltage = 300
+my_constants.ifhole = 0
+my_constants.Tx = 200
+my_constants.Ty = 200
+my_constants.Tz = 140
+my_constants.vz0 = 240
+
+#粒子参数定义
+my_constants.weight_ratio = 4
+my_constants.w_factor = 8
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+warpx.poisson_solver = multigrid
+
+#几何
+my_constants.factor = 4
+my_constants.n_cell = 64 * factor
+
+amr.n_cell = n_cell n_cell n_cell
+amr.blocking_factor = n_cell
+amr.max_grid_size = n_cell
+amr.max_level = 0
+
+#内存使用
+amrex.the_arena_init_size = 1024*1024*1024*75 # 75GB内存
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+# 斜阳极 Embedded Boundary
+# r < a1 为中心通道；a1 <= r < b1 为圆锥侧面；
+# r >= b1 为与圆锥连续的平面。隐式函数 > 0 为固体，< 0 为计算域。
+my_constants.eb_x0 = lx / 2
+my_constants.eb_y0 = ly / 2
+my_constants.eb_a1 = 9.0e-3 / l_factor
+my_constants.eb_b1 = 17.5e-3 / l_factor
+my_constants.eb_delta_z = 7.5e-3 / l_factor
+my_constants.eb_voltage_r_max = 13.0e-3 / l_factor
+my_constants.eb_k = eb_delta_z / (eb_b1 - eb_a1)
+my_constants.eb_b = eb_k * eb_b1 - eb_delta_z
+
+warpx.eb_implicit_function = "if(sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_a1,-1,if(sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_b1,eb_k*sqrt((x-eb_x0)**2+(y-eb_y0)**2)-eb_k*eb_a1-z,eb_k*eb_b1-eb_b-z))"
+warpx.eb_potential(x,y,z,t) = "if((sqrt((x-eb_x0)**2+(y-eb_y0)**2)>eb_a1) and (sqrt((x-eb_x0)**2+(y-eb_y0)**2)<eb_voltage_r_max),voltage,0)"
+insert.neutral_atom_eb.species = xe_netural
+insert.neutral_atom_eb.wall_temperature = 400
+
+# 与中性原子解析圆锥法向共用同一组缩比后参数。
+# 旋转进气几何与中性原子壁面模型确认前，交互保持关闭。
+insert.neutral_atom_eb.enabled = 1
+insert.neutral_atom_eb.k = eb_k
+insert.neutral_atom_eb.a1 = eb_a1
+insert.neutral_atom_eb.b1 = eb_b1
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = xe_netural electrons xe_ions
+
+electrons.species_type = electron
+
+xe_ions.species_type = xenon
+xe_ions.charge = q_e
+
+xe_netural.mass = m_xe
+xe_netural.charge = 1
+xe_netural.do_not_gather = 1
+xe_netural.do_not_deposit = 1
+xe_netural.save_particles_at_eb = 1
+xe_netural.ndt = 1
+
+my_constants.hall_diag_interval = 10
+my_constants.thrust_diag_path = "thrust.dat"
+my_constants.beam_divergence_path = "beam_divergence.dat"
+my_constants.iedf_path = "iedf.dat"
+my_constants.iedf_bins = 200
+my_constants.iedf_min_eV = 0
+my_constants.iedf_max_eV = 500
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 0
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# ==========================================
+insert.continuous_sources = xe_neutral_inlet
+
+# --- Xe neutral rotating inlet ---
+xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1
+xe_neutral_inlet.x_offset = eb_x0
+xe_neutral_inlet.y_offset = eb_y0
+
+# 在斜阳极圆锥径向区间的 0.6 至 0.8 范围内按面积均匀采样。
+xe_neutral_inlet.position.coupled_distribution = truncated_cone_surface
+xe_neutral_inlet.position.slope = eb_k
+xe_neutral_inlet.position.r_min = eb_a1 + 0.05 * (eb_b1 - eb_a1)
+xe_neutral_inlet.position.r_max = eb_a1 + 0.11 * (eb_b1 - eb_a1)
+xe_neutral_inlet.position.r_reference = eb_a1
+xe_neutral_inlet.position.z_reference = 1e-6
+xe_neutral_inlet.position.theta_min = 0.0
+xe_neutral_inlet.position.theta_max = 2*pi
+
+# theta=0 处的进气轴线为局部 (r, theta, z) 分量 (-1, 1, 1)，内部归一化。
+xe_neutral_inlet.velocity.coordinate_system = rotating_axis
+xe_neutral_inlet.velocity.axis_at_theta0 = -0.5725 0.7451 0.3420
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.mean = 0.0
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.mean = 0.0
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = vz0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
+
+#输出定义
+FILE = ../../Script/init_diag
+
+#ECDI抑制
+insert.ecdi_control.enabled = 0

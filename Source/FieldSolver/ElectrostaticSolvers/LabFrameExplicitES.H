@@ -57,7 +57,10 @@ private:
         const ablastr::fields::MultiLevelScalarField& phi
     );
 
-    std::array<amrex::Vector<std::unique_ptr<amrex::MultiFab> >, 3> m_phi_extrapolation_cache;
+    int phiExtrapolationCacheDepth () const;
+
+    std::array<amrex::Vector<std::unique_ptr<amrex::MultiFab> >, 3>
+        m_phi_extrapolation_cache;
     int m_phi_extrapolation_history_depth = 0;
 
 };
