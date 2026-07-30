@@ -10,6 +10,7 @@
 #include "ElectrostaticSolver.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
+#include "Utils/Parser/ParserUtils.H"
 #include "WarpX.H"
 
 #include <ablastr/fields/PoissonSolver.H>
@@ -54,6 +55,11 @@ void ElectrostaticSolver::ReadParameters () {
         pp_warpx, "self_fields_phi_extrapolation_beta",
         self_fields_phi_extrapolation_beta);
 
+    utils::parser::queryWithParser(pp_warpx, "self_fields_num_final_sweeps", self_fields_num_final_sweeps); {
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            self_fields_num_final_sweeps > 0,
+            "warpx.self_fields_num_final_sweeps must be > 0");
+    }
     // FFT solver flags
     utils::parser::queryWithParser(
         pp_warpx, "use_2d_slices_fft_solver", is_igf_2d_slices);
@@ -228,6 +234,7 @@ ElectrostaticSolver::computePhi (
         EB::enabled(),
         WarpX::do_single_precision_comms,
         warpx.refRatio(),
+        self_fields_num_final_sweeps,
         post_phi_calculation,
         *m_poisson_boundary_handler,
         warpx.gett_new(0),
