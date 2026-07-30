@@ -80,7 +80,7 @@ PhiAdjustmentEntrance () {
  */
 void
 SetBoundaryPhi () {
-#ifdef HALL3D
+#ifdef PHT
     AnodeVoltage();
 #endif
 }

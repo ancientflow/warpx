@@ -900,7 +900,11 @@ NeutralAtomEBInteraction () {
         VariableCountCopyTransformBoundaryBuffer(
             boundary_buffer, species, eb_boundary, neutral_atoms,
             decision_func, transform);
-    amrex::Print() << "Reflected neutral atoms: " << num_reflected << "\n";
+
+        amrex::Print() << "[EB Reflection] Step " << warpx_instance.getistep(0)
+                       << ": Reflected " << num_reflected << " neutral atoms (species: "
+                       << species << ")\n";
+
 
     // The neutral buffer is intentionally left untouched here. It is cleared
     // together with the electron and ion boundary buffers by the existing
