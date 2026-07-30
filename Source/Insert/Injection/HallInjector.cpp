@@ -3,6 +3,7 @@
 #include "WarpX.H"
 
 #include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Geometry/TruncatedConeSurfaceSampler.h"
 #include "Insert/Injection/HallCoordinateDistribution.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/Parser/ParserUtils.H"
@@ -13,6 +14,7 @@
 #include "Insert/Injection/IonizationSourceSampler.h"
 #endif
 
+#include <AMReX_Math.H>
 #include <AMReX_ParmParse.H>
 
 #include <cmath>
@@ -71,6 +73,52 @@ MakeDummyPositionDistribution ()
         std::make_unique<HallConstantDistribution1D>(amrex::ParticleReal(0.0)));
 }
 
+class HallTruncatedConePositionSampler final : public HallPositionSampler
+{
+public:
+    explicit HallTruncatedConePositionSampler (
+        TruncatedConeSurfaceSampler sampler)
+        : m_sampler(std::move(sampler))
+    {}
+
+    [[nodiscard]] EmissionSample
+    samplePosition (amrex::RandomEngine const& engine) const override
+    {
+        return MakeEmissionSample(
+            HallCoordinateSystem::cartesian,
+            m_sampler.sampleCoordinates(engine));
+    }
+
+private:
+    TruncatedConeSurfaceSampler m_sampler;
+};
+
+std::unique_ptr<HallPositionSampler>
+MakeHallTruncatedConePositionSampler (
+    amrex::ParmParse const& pp, std::string const& prefix)
+{
+    const auto r_min =
+        GetWithParser<amrex::ParticleReal>(pp, prefix, "r_min");
+    const auto r_max =
+        GetWithParser<amrex::ParticleReal>(pp, prefix, "r_max");
+
+    return std::make_unique<HallTruncatedConePositionSampler>(
+        TruncatedConeSurfaceSampler{
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "slope"),
+            r_min,
+            r_max,
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "r_reference", r_min),
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "z_reference", amrex::ParticleReal(0.0)),
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "theta_min", amrex::ParticleReal(0.0)),
+            QueryWithParser<amrex::ParticleReal>(
+                pp, prefix, "theta_max",
+                amrex::ParticleReal(2.0) *
+                    amrex::Math::pi<amrex::ParticleReal>())});
+}
+
 HallSpeciesVelocityConfig
 MakeSpecies (
     std::string species_name, amrex::ParticleReal macro_weight,
@@ -108,7 +156,7 @@ ReadSourceSpecies (amrex::ParmParse const& pp, std::string const& prefix)
     return species;
 }
 
-std::unique_ptr<HallCoordinateDistribution>
+std::unique_ptr<HallPositionSampler>
 MakeConfiguredPositionDistribution (
     amrex::ParmParse const& pp, std::string const& source_name)
 {
@@ -116,6 +164,10 @@ MakeConfiguredPositionDistribution (
     std::string coupled_distribution;
     if (utils::parser::query(pp, prefix, "coupled_distribution",
                              coupled_distribution)) {
+        coupled_distribution = ToLower(coupled_distribution);
+        if (coupled_distribution == "truncated_cone_surface") {
+            return MakeHallTruncatedConePositionSampler(pp, prefix);
+        }
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             coupled_distribution == "hole_array_plane",
             "Unsupported Hall coupled position distribution: " +
@@ -168,7 +220,8 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
     const auto position_prefix = source_name + ".position";
     std::string coupled_distribution;
     if (utils::parser::query(pp, position_prefix, "coupled_distribution",
-                             coupled_distribution)) {
+                             coupled_distribution) &&
+        ToLower(coupled_distribution) == "hole_array_plane") {
         HallHoleArrayPlaneConfig hole_config;
         hole_config.hole_count =
             QueryWithParser<int>(pp, source_name, "hole_count", 48);

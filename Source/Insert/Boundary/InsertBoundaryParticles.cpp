@@ -2,8 +2,12 @@
 
 #include "WarpX.H"
 
+#include "EmbeddedBoundary/Enabled.H"
 #include "Initialization/SampleGaussianFluxDistribution.H"
+#include "Insert/Boundary/NeutralAtomEBGeometry.h"
+#include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/MultiParticleContainer.H"
@@ -14,6 +18,10 @@
 #include "Particles/Pusher/GetAndSetPosition.H"
 #include "Utils/WarpXConst.H"
 
+#include <AMReX_Array4.H>
+#include <AMReX_MFIter.H>
+#include <AMReX_MultiFab.H>
+#include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_Random.H>
 
@@ -23,6 +31,9 @@
 
 namespace Insert {
 namespace {
+
+using NeutralAtomEBGeometry::GetTruncatedConeNormal;
+using NeutralAtomEBGeometry::TruncatedConeGeometry;
 
 template <int N = 1, typename SrcPC, typename DstPC, typename FilterFunc,
           typename TransformFunc>
@@ -111,8 +122,8 @@ VariableCountCopyTransformParticleTiles (SrcPC& src_pc, DstPC& dst_pc,
                                          DecisionFunc const& decision_func,
                                          TransformFunc const& transform,
                                          int lev_min = 0, int lev_max = -1) {
-    // SEE can create 0, 1, or 2 particles from one absorbed particle, so the
-    // fixed-N FilterCopyTransform helper is not expressive enough here.
+    // Some wall interactions create a variable number of particles from one
+    // absorbed particle, so the fixed-N helper is not expressive enough.
 #ifdef AMREX_USE_GPU
     auto const* src_arena = src_pc.arena();
     auto const* dst_arena = dst_pc.arena();
@@ -173,8 +184,8 @@ VariableCountCopyTransformParticleTiles (SrcPC& src_pc, DstPC& dst_pc,
                 });
 
             amrex::Gpu::DeviceVector<int> offsets(np_src);
-            // emit_count is the scan input, not a boolean mask: values 0/1/2
-            // directly determine how many destination slots each source owns.
+            // emit_count is the scan input, not a boolean mask: its value
+            // directly determines how many destination slots each source owns.
             const int num_added =
                 amrex::Scan::ExclusiveSum(np_src, p_emit_count, offsets.data());
             if (num_added == 0) {
@@ -231,6 +242,225 @@ VariableCountCopyTransformBoundaryBuffer (
     return VariableCountCopyTransformParticleTiles(
         *src_pc, dst_pc, decision_func, transform, lev_min, lev_max);
 }
+
+enum class NeutralAtomReflectionBehavior : int {
+    Diffuse = 0,
+    Specular = 1
+};
+
+struct NeutralAtomReflectionDecision {
+    int m_emit_count = 0;
+    int m_behavior =
+        static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+};
+
+struct NeutralAtomReflectionDecisionFunc {
+    amrex::ParticleReal m_specular_fraction = 0.0;
+    TruncatedConeGeometry m_cone;
+
+    template <typename PData>
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    NeutralAtomReflectionDecision
+    operator()(PData const& ptd, int const i,
+               amrex::RandomEngine const& engine) const noexcept {
+#if defined(WARPX_DIM_3D)
+        amrex::XDim3 const x_hit{
+            ptd.m_rdata[PIdx::x][i],
+            ptd.m_rdata[PIdx::y][i],
+            ptd.m_rdata[PIdx::z][i]};
+        amrex::XDim3 normal_to_domain;
+        if (!GetTruncatedConeNormal(m_cone, x_hit, normal_to_domain))
+        {
+            // Plane-section impacts are deliberately ignored for this case.
+            return {};
+        }
+#else
+        amrex::ignore_unused(ptd, i, m_cone);
+        return {};
+#endif
+
+        int behavior = static_cast<int>(NeutralAtomReflectionBehavior::Diffuse);
+        if (amrex::Random(engine) < m_specular_fraction) {
+            behavior =
+                static_cast<int>(NeutralAtomReflectionBehavior::Specular);
+        }
+        return {1, behavior};
+    }
+};
+
+struct SpecularReflectionOperator {
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator()(
+        amrex::XDim3 const& normal_to_domain,
+        amrex::XDim3 const& u_in, amrex::XDim3& u_out,
+        amrex::RandomEngine const& engine) const noexcept {
+        amrex::ParticleReal const normal_norm_sq =
+            normal_to_domain.x * normal_to_domain.x
+            + normal_to_domain.y * normal_to_domain.y
+            + normal_to_domain.z * normal_to_domain.z;
+        if (normal_norm_sq <= amrex::ParticleReal(0.0)) {
+            u_out = u_in;
+            amrex::ignore_unused(engine);
+            return;
+        }
+
+        using std::sqrt;
+        amrex::ParticleReal const inv_normal_norm =
+            amrex::ParticleReal(1.0) / sqrt(normal_norm_sq);
+        amrex::XDim3 const normal{
+            normal_to_domain.x * inv_normal_norm,
+            normal_to_domain.y * inv_normal_norm,
+            normal_to_domain.z * inv_normal_norm};
+        amrex::ParticleReal const u_dot_normal =
+            u_in.x * normal.x + u_in.y * normal.y + u_in.z * normal.z;
+
+        u_out = {
+            u_in.x - amrex::ParticleReal(2.0) * u_dot_normal * normal.x,
+            u_in.y - amrex::ParticleReal(2.0) * u_dot_normal * normal.y,
+            u_in.z - amrex::ParticleReal(2.0) * u_dot_normal * normal.z};
+
+        amrex::ignore_unused(engine);
+    }
+};
+
+struct DiffuseReemissionOperator {
+    amrex::ParticleReal m_vth = 0.0;
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator()(
+        amrex::XDim3 const& normal_to_domain,
+        amrex::XDim3 const& u_in, amrex::XDim3& u_out,
+        amrex::RandomEngine const& engine) const noexcept {
+        amrex::ParticleReal const normal_norm_sq =
+            normal_to_domain.x * normal_to_domain.x
+            + normal_to_domain.y * normal_to_domain.y
+            + normal_to_domain.z * normal_to_domain.z;
+        if (normal_norm_sq <= amrex::ParticleReal(0.0)) {
+            u_out = u_in;
+            return;
+        }
+
+        using std::abs;
+        using std::sqrt;
+        amrex::ParticleReal const inv_normal_norm =
+            amrex::ParticleReal(1.0) / sqrt(normal_norm_sq);
+        amrex::XDim3 const normal{
+            normal_to_domain.x * inv_normal_norm,
+            normal_to_domain.y * inv_normal_norm,
+            normal_to_domain.z * inv_normal_norm};
+
+        amrex::XDim3 tangent_one;
+        if (abs(normal.z) < amrex::ParticleReal(0.9)) {
+            amrex::ParticleReal const inv_tangent_norm =
+                amrex::ParticleReal(1.0)
+                / sqrt(normal.x * normal.x + normal.y * normal.y);
+            tangent_one = {
+                -normal.y * inv_tangent_norm,
+                normal.x * inv_tangent_norm,
+                amrex::ParticleReal(0.0)};
+        } else {
+            amrex::ParticleReal const inv_tangent_norm =
+                amrex::ParticleReal(1.0)
+                / sqrt(normal.y * normal.y + normal.z * normal.z);
+            tangent_one = {
+                amrex::ParticleReal(0.0),
+                normal.z * inv_tangent_norm,
+                -normal.y * inv_tangent_norm};
+        }
+        amrex::XDim3 const tangent_two{
+            normal.y * tangent_one.z - normal.z * tangent_one.y,
+            normal.z * tangent_one.x - normal.x * tangent_one.z,
+            normal.x * tangent_one.y - normal.y * tangent_one.x};
+
+        amrex::ParticleReal const u_tangent_one =
+            amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
+        amrex::ParticleReal const u_tangent_two =
+            amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine);
+        amrex::ParticleReal const u_normal =
+            generateGaussianFluxDist(
+                amrex::ParticleReal(0.0), m_vth, engine);
+
+        u_out = {
+            u_tangent_one * tangent_one.x
+                + u_tangent_two * tangent_two.x + u_normal * normal.x,
+            u_tangent_one * tangent_one.y
+                + u_tangent_two * tangent_two.y + u_normal * normal.y,
+            u_tangent_one * tangent_one.z
+                + u_tangent_two * tangent_two.z + u_normal * normal.z};
+
+        amrex::ignore_unused(u_in);
+    }
+};
+
+struct NeutralAtomReflectionTransform {
+    TruncatedConeGeometry m_cone;
+    amrex::ParticleReal m_position_epsilon = 0.0;
+    SpecularReflectionOperator m_specular;
+    DiffuseReemissionOperator m_diffuse;
+
+    template <typename DstData, typename SrcData>
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator()(DstData& dst, SrcData const& src, int const i_src,
+                    int const i_dst, int const behavior,
+                    int const emission_index, int const emit_count,
+                    amrex::RandomEngine const& engine) const noexcept {
+#if defined(WARPX_DIM_3D)
+        amrex::XDim3 const u_in{
+            src.m_rdata[PIdx::ux][i_src],
+            src.m_rdata[PIdx::uy][i_src],
+            src.m_rdata[PIdx::uz][i_src]};
+        amrex::XDim3 const x_hit{
+            src.m_rdata[PIdx::x][i_src],
+            src.m_rdata[PIdx::y][i_src],
+            src.m_rdata[PIdx::z][i_src]};
+        amrex::XDim3 normal_to_domain;
+        bool const on_cone =
+            GetTruncatedConeNormal(m_cone, x_hit, normal_to_domain);
+        amrex::XDim3 x_out = x_hit;
+        amrex::XDim3 u_out = u_in;
+
+        if (behavior ==
+            static_cast<int>(NeutralAtomReflectionBehavior::Specular))
+        {
+            m_specular(normal_to_domain, u_in, u_out, engine);
+        } else {
+            m_diffuse(normal_to_domain, u_in, u_out, engine);
+        }
+
+        // Move a fixed distance along the reflected direction. Proper velocity
+        // and physical velocity have the same direction, so no gamma
+        // conversion is required for this displacement.
+        using std::sqrt;
+        amrex::ParticleReal const u_out_norm =
+            sqrt(u_out.x * u_out.x + u_out.y * u_out.y +
+                 u_out.z * u_out.z);
+        if (u_out_norm > amrex::ParticleReal(0.0)) {
+            amrex::ParticleReal const displacement_scale =
+                m_position_epsilon / u_out_norm;
+            x_out.x += displacement_scale * u_out.x;
+            x_out.y += displacement_scale * u_out.y;
+            x_out.z += displacement_scale * u_out.z;
+        } else if (on_cone) {
+            x_out.x += m_position_epsilon * normal_to_domain.x;
+            x_out.y += m_position_epsilon * normal_to_domain.y;
+            x_out.z += m_position_epsilon * normal_to_domain.z;
+        }
+
+        dst.m_rdata[PIdx::x][i_dst] = x_out.x;
+        dst.m_rdata[PIdx::y][i_dst] = x_out.y;
+        dst.m_rdata[PIdx::z][i_dst] = x_out.z;
+        dst.m_rdata[PIdx::ux][i_dst] = u_out.x;
+        dst.m_rdata[PIdx::uy][i_dst] = u_out.y;
+        dst.m_rdata[PIdx::uz][i_dst] = u_out.z;
+
+        amrex::ignore_unused(emission_index, emit_count);
+#else
+        amrex::ignore_unused(
+            dst, src, i_src, i_dst, behavior, emission_index, emit_count,
+            engine, m_cone, m_position_epsilon, m_specular, m_diffuse);
+#endif
+    }
+};
 
 enum class SecondaryEmissionBehavior : int {
     Absorb = 0,
@@ -334,6 +564,10 @@ struct SecondaryEmissionTransform {
     amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> m_phi;
     amrex::ParticleReal m_eps = 0.0;
     amrex::ParticleReal m_vth = 0.0;
+    ZMinWallChargeGrid m_wall_charge_grid;
+    amrex::Array4<amrex::Real> m_wall_charge_density;
+    bool m_deposit_wall_charge = false;
+    amrex::Real m_charge_density_per_weight = amrex::Real(0.0);
 
     template <typename DstData, typename SrcData>
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE void
@@ -353,10 +587,12 @@ struct SecondaryEmissionTransform {
         const amrex::ParticleReal uz_inc = src.m_rdata[PIdx::uz][i_src];
         const amrex::ParticleReal z_boundary = m_plo[2];
 
-        amrex::ParticleReal x_emit, y_emit;
+        amrex::ParticleReal x_hit, y_hit;
         BacktraceParticleToZPlane(x, y, z, ux_inc, uy_inc, uz_inc, z_boundary,
-                                  x_emit, y_emit);
+                                  x_hit, y_hit);
 
+        amrex::ParticleReal x_emit = x_hit;
+        amrex::ParticleReal y_emit = y_hit;
         const amrex::ParticleReal xlo = m_plo[0] + m_eps;
         const amrex::ParticleReal xhi = m_phi[0] - m_eps;
         const amrex::ParticleReal ylo = m_plo[1] + m_eps;
@@ -378,6 +614,17 @@ struct SecondaryEmissionTransform {
         dst.m_rdata[PIdx::y][i_dst] = y_emit;
         dst.m_rdata[PIdx::z][i_dst] = z_boundary + m_eps;
 
+        if (m_deposit_wall_charge) {
+            amrex::Real const emitted_charge_density =
+                static_cast<amrex::Real>(src.m_rdata[PIdx::w][i_src]) *
+                m_charge_density_per_weight;
+            // Electrons have negative charge, so subtracting emitted charge
+            // raises the wall charge density.
+            DepositZMinWallChargeToNodes(m_wall_charge_density,
+                                         m_wall_charge_grid, x_hit, y_hit,
+                                         -emitted_charge_density);
+        }
+
         // Reflection keeps the incident tangential velocity and flips the
         // normal component back into the domain.
         if (behavior == static_cast<int>(SecondaryEmissionBehavior::Reflect)) {
@@ -398,7 +645,9 @@ struct SecondaryEmissionTransform {
             abs(amrex::RandomNormal(amrex::ParticleReal(0.0), m_vth, engine));
 #else
         amrex::ignore_unused(dst, src, i_src, i_dst, behavior, emission_index,
-                             emit_count, engine);
+                             emit_count, engine, m_wall_charge_grid,
+                             m_wall_charge_density,
+                             m_charge_density_per_weight);
 #endif
     }
 };
@@ -499,17 +748,175 @@ struct AnodeIonEmissionTransform {
 } // namespace
 
 void
+NeutralAtomEBInteraction () {
+#if defined(HALL3D) && defined(AMREX_USE_EB)
+    static bool const enabled = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        int value = 0;
+        pp.query("enabled", value);
+        return value != 0;
+    }();
+
+    if (!enabled) {
+        return;
+    }
+
+    static std::string const species = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        std::string value;
+        pp.query("species", value);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            !value.empty(),
+            "insert.neutral_atom_eb.species must be specified when the neutral "
+            "atom EB interaction is enabled.");
+        return value;
+    }();
+
+    static amrex::ParticleReal const specular_fraction = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        std::string model = "diffuse";
+        pp.query("model", model);
+        model = ToLower(model);
+
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            model == "diffuse" || model == "specular",
+            "insert.neutral_atom_eb.model must be either diffuse or specular.");
+
+        amrex::ParticleReal value =
+            model == "specular" ? amrex::ParticleReal(1.0)
+                                : amrex::ParticleReal(0.0);
+        pp.query("specular_fraction", value);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value >= amrex::ParticleReal(0.0) &&
+                value <= amrex::ParticleReal(1.0),
+            "insert.neutral_atom_eb.specular_fraction must be in [0, 1].");
+        return value;
+    }();
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+
+    static TruncatedConeGeometry const cone = [&warpx_instance] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        TruncatedConeGeometry value;
+        pp.get("k", value.m_k);
+        pp.get("a1", value.m_a1);
+        pp.get("b1", value.m_b1);
+        auto const prob_lo = warpx_instance.Geom(0).ProbLoArray();
+        auto const prob_hi = warpx_instance.Geom(0).ProbHiArray();
+        value.m_axis_x = amrex::ParticleReal(0.5) *
+                         (static_cast<amrex::ParticleReal>(prob_lo[0]) +
+                          static_cast<amrex::ParticleReal>(prob_hi[0]));
+        value.m_axis_y = amrex::ParticleReal(0.5) *
+                         (static_cast<amrex::ParticleReal>(prob_lo[1]) +
+                          static_cast<amrex::ParticleReal>(prob_hi[1]));
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value.m_k != amrex::ParticleReal(0.0),
+            "insert.neutral_atom_eb.k must be non-zero.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value.m_a1 > amrex::ParticleReal(0.0),
+            "insert.neutral_atom_eb.a1 must be positive.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            value.m_b1 > value.m_a1,
+            "insert.neutral_atom_eb.b1 must be greater than a1.");
+        return value;
+    }();
+
+    static amrex::ParticleReal const wall_temperature = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        amrex::ParticleReal value = 0.0;
+        pp.query("wall_temperature", value);
+        return value;
+    }();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        specular_fraction >= amrex::ParticleReal(1.0) ||
+            wall_temperature > amrex::ParticleReal(0.0),
+        "insert.neutral_atom_eb.wall_temperature must be positive for "
+        "a non-zero diffuse reflection fraction.");
+
+    static amrex::ParticleReal const configured_position_epsilon = [] {
+        amrex::ParmParse const pp("insert.neutral_atom_eb");
+        amrex::ParticleReal value = -1.0;
+        pp.query("position_epsilon", value);
+        return value;
+    }();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        configured_position_epsilon == amrex::ParticleReal(-1.0) ||
+            configured_position_epsilon > amrex::ParticleReal(0.0),
+        "insert.neutral_atom_eb.position_epsilon must be positive when "
+        "specified.");
+
+    if (!DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
+        return;
+    }
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        EB::enabled(),
+        "insert.neutral_atom_eb.enabled requires an embedded boundary.");
+
+    auto& boundary_buffer = warpx_instance.GetParticleBoundaryBuffer();
+    auto& particle_container = warpx_instance.GetPartContainer();
+    auto& neutral_atoms =
+        particle_container.GetParticleContainerFromName(species);
+    constexpr int eb_boundary = AMREX_SPACEDIM * 2;
+    auto* neutral_buffer =
+        boundary_buffer.getParticleBufferPointer(species, eb_boundary);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        neutral_buffer != nullptr && neutral_buffer->isDefined(),
+        "The neutral atom EB buffer is not defined. Set "
+        "<species>.save_particles_at_eb = 1.");
+
+    auto const dx = warpx_instance.Geom(0).CellSizeArray();
+    amrex::ParticleReal min_dx =
+        static_cast<amrex::ParticleReal>(dx[0]);
+    for (int idim = 1; idim < AMREX_SPACEDIM; ++idim) {
+        min_dx = std::min(
+            min_dx, static_cast<amrex::ParticleReal>(dx[idim]));
+    }
+    amrex::ParticleReal position_epsilon =
+        amrex::ParticleReal(0.1) * min_dx;
+    if (configured_position_epsilon > amrex::ParticleReal(0.0)) {
+        position_epsilon = configured_position_epsilon;
+    }
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        position_epsilon > amrex::ParticleReal(0.0),
+        "insert.neutral_atom_eb.position_epsilon must be positive.");
+
+    amrex::ParticleReal diffuse_vth = 0.0;
+    if (specular_fraction < amrex::ParticleReal(1.0)) {
+        diffuse_vth = static_cast<amrex::ParticleReal>(
+            std::sqrt(PhysConst::kb * wall_temperature /
+                      neutral_atoms.getMass()));
+    }
+
+    NeutralAtomReflectionDecisionFunc const decision_func{
+        specular_fraction, cone};
+    NeutralAtomReflectionTransform const transform{
+        cone,
+        position_epsilon,
+        SpecularReflectionOperator{},
+        DiffuseReemissionOperator{diffuse_vth}};
+
+    amrex::Long const num_reflected =
+        VariableCountCopyTransformBoundaryBuffer(
+            boundary_buffer, species, eb_boundary, neutral_atoms,
+            decision_func, transform);
+
+        amrex::Print() << "[EB Reflection] Step " << warpx_instance.getistep(0)
+                       << ": Reflected " << num_reflected << " neutral atoms (species: "
+                       << species << ")\n";
+
+
+    // The neutral buffer is intentionally left untouched here. It is cleared
+    // together with the electron and ion boundary buffers by the existing
+    // boundary-particle cleanup path.
+#endif
+}
+
+void
 SecondaryEmission () {
 #ifdef HALL3D
-    static int times = 0;
-    static const int gap = 10;
-    times++;
-
-    if (times == gap) {
-        times = 0;
-
-        WarpX& warpx_instance = WarpX::GetInstance();
-
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
 
         auto& mypc = warpx_instance.GetPartContainer();
@@ -540,6 +947,24 @@ SecondaryEmission () {
             static_cast<amrex::ParticleReal>(std::sqrt(
                 emission_temperature_eV * PhysConst::q_e / elec_pc.getMass()));
 
+        ZMinWallChargeGrid wall_charge_grid{};
+        amrex::Array4<amrex::Real> wall_charge_density;
+        bool deposit_wall_charge = false;
+        amrex::Real charge_density_per_weight = amrex::Real(0.0);
+        if (g_accumulated_wall_charge_density != nullptr) {
+            wall_charge_grid = MakeZMinWallChargeGrid(warpx_instance.Geom(0));
+            for (amrex::MFIter mfi(*g_accumulated_wall_charge_density);
+                 mfi.isValid(); ++mfi)
+            {
+                wall_charge_density =
+                    g_accumulated_wall_charge_density->array(mfi);
+            }
+            deposit_wall_charge = true;
+            charge_density_per_weight =
+                static_cast<amrex::Real>(elec_pc.getCharge()) /
+                (wall_charge_grid.dx * wall_charge_grid.dy);
+        }
+
         const SecondaryEmissionDecisionFunc decision_func{
             plo,
             anode_ring,
@@ -551,7 +976,14 @@ SecondaryEmission () {
             emit_one_a,
             emit_one_x0_eV};
         const SecondaryEmissionTransform transform{
-            plo, phi, amrex::ParticleReal(0.1 * min_dx), emission_vth};
+            plo,
+            phi,
+            amrex::ParticleReal(0.1 * min_dx),
+            emission_vth,
+            wall_charge_grid,
+            wall_charge_density,
+            deposit_wall_charge,
+            charge_density_per_weight};
 
         amrex::Long num_added = VariableCountCopyTransformBoundaryBuffer(
             mybpc, "electrons", 4, elec_pc, decision_func, transform);
@@ -563,15 +995,8 @@ SecondaryEmission () {
 void
 AnodeIonNeutralization () {
 #ifdef HALL3D
-    static int times = 0;
-    static const int gap = 10;
-    times++;
-
-    if (times == gap) {
-        times = 0;
-
-        WarpX& warpx_instance = WarpX::GetInstance();
-
+    WarpX& warpx_instance = WarpX::GetInstance();
+    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
         auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
 
         auto& mypc = warpx_instance.GetPartContainer();

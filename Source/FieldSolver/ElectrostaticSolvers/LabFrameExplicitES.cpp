@@ -13,8 +13,14 @@
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
+#include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
+#ifdef HALL3D
+#include "Insert/Fields/SpectralBoundarySchur.h"
+#endif
+
+#include <algorithm>
 
 using namespace amrex;
 
@@ -23,22 +29,33 @@ void LabFrameExplicitES::InitData() {
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 }
 
+int LabFrameExplicitES::phiExtrapolationCacheDepth () const
+{
+    return self_fields_phi_extrapolation_order + 1;
+}
+
 void LabFrameExplicitES::definePhiExtrapolationCache (
     const ablastr::fields::MultiLevelScalarField& phi)
 {
     bool reset_history = false;
+    int const cache_depth = phiExtrapolationCacheDepth();
 
-    for (auto& phi_history : m_phi_extrapolation_cache) {
-        if (phi_history.size() != phi.size()) {
-            phi_history.resize(phi.size());
+    for (int hist = 0; hist < cache_depth; ++hist) {
+        if (m_phi_extrapolation_cache[hist].size() != phi.size()) {
+            m_phi_extrapolation_cache[hist].resize(phi.size());
             reset_history = true;
         }
+    }
+    for (int hist = cache_depth;
+         hist < static_cast<int>(m_phi_extrapolation_cache.size()); ++hist)
+    {
+        m_phi_extrapolation_cache[hist].clear();
     }
 
     for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
         auto const& phi_mf = *phi[lev];
-        for (auto& phi_history : m_phi_extrapolation_cache) {
-            auto& cache_mf = phi_history[lev];
+        for (int hist = 0; hist < cache_depth; ++hist) {
+            auto& cache_mf = m_phi_extrapolation_cache[hist][lev];
             bool const cache_needs_define = (
                 !cache_mf ||
                 cache_mf->nComp() != phi_mf.nComp() ||
@@ -61,57 +78,38 @@ void LabFrameExplicitES::definePhiExtrapolationCache (
 
     if (reset_history) {
         m_phi_extrapolation_history_depth = 0;
+    } else if (m_phi_extrapolation_history_depth > cache_depth) {
+        m_phi_extrapolation_history_depth = cache_depth;
     }
 }
 
 void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
     const ablastr::fields::MultiLevelScalarField& phi)
 {
-    if (self_fields_phi_extrapolation_order == 0) {
-        return;
-    }
-
-    if (self_fields_phi_extrapolation_order == 1 &&
-        self_fields_phi_extrapolation_alpha == 0.0_rt)
-    {
-        return;
-    }
-
-    if (self_fields_phi_extrapolation_order == 2 &&
-        self_fields_phi_extrapolation_alpha == 0.0_rt &&
-        self_fields_phi_extrapolation_beta == 0.0_rt)
-    {
-        return;
-    }
-
     definePhiExtrapolationCache(phi);
 
-    if (m_phi_extrapolation_history_depth < 2) {
+    if (m_phi_extrapolation_history_depth == 0) {
         return;
     }
 
     int const extrapolation_order =
-        (self_fields_phi_extrapolation_order == 2 && m_phi_extrapolation_history_depth >= 3)
-        ? 2 : 1;
-
-    if ((extrapolation_order == 1 && self_fields_phi_extrapolation_alpha == 0.0_rt) ||
-        (extrapolation_order == 2 &&
-         self_fields_phi_extrapolation_alpha == 0.0_rt &&
-         self_fields_phi_extrapolation_beta == 0.0_rt))
-    {
-        return;
-    }
+        std::min(self_fields_phi_extrapolation_order,
+                 m_phi_extrapolation_history_depth - 1);
 
     for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
         auto& phi_mf = *phi[lev];
         auto& phi_n = *m_phi_extrapolation_cache[0][lev];
-        auto& phi_nm1 = *m_phi_extrapolation_cache[1][lev];
         const int ncomp = phi_mf.nComp();
         const int ngrow = phi_mf.nGrow();
 
-        if (extrapolation_order == 2) {
+        amrex::MultiFab::Copy(phi_mf, phi_n, 0, 0, ncomp, ngrow);
+
+        if (extrapolation_order == 2 &&
+            (self_fields_phi_extrapolation_alpha != 0.0_rt ||
+             self_fields_phi_extrapolation_beta != 0.0_rt))
+        {
+            auto& phi_nm1 = *m_phi_extrapolation_cache[1][lev];
             auto& phi_nm2 = *m_phi_extrapolation_cache[2][lev];
-            amrex::MultiFab::Copy(phi_mf, phi_n, 0, 0, ncomp, ngrow);
             phi_mf.mult(
                 1.0_rt + self_fields_phi_extrapolation_alpha +
                 self_fields_phi_extrapolation_beta,
@@ -122,12 +120,17 @@ void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
                   2.0_rt * self_fields_phi_extrapolation_beta),
                 phi_nm1, 0, 0, ncomp, ngrow);
             amrex::MultiFab::Saxpy(
-                phi_mf, self_fields_phi_extrapolation_beta, phi_nm2, 0, 0, ncomp, ngrow);
-        } else {
-            amrex::MultiFab::Copy(phi_mf, phi_n, 0, 0, ncomp, ngrow);
-            phi_mf.mult(1.0_rt + self_fields_phi_extrapolation_alpha, 0, ncomp, ngrow);
+                phi_mf, self_fields_phi_extrapolation_beta, phi_nm2, 0, 0,
+                ncomp, ngrow);
+        } else if (extrapolation_order == 1 &&
+                   self_fields_phi_extrapolation_alpha != 0.0_rt)
+        {
+            auto& phi_nm1 = *m_phi_extrapolation_cache[1][lev];
+            phi_mf.mult(
+                1.0_rt + self_fields_phi_extrapolation_alpha, 0, ncomp, ngrow);
             amrex::MultiFab::Saxpy(
-                phi_mf, -self_fields_phi_extrapolation_alpha, phi_nm1, 0, 0, ncomp, ngrow);
+                phi_mf, -self_fields_phi_extrapolation_alpha, phi_nm1, 0, 0,
+                ncomp, ngrow);
         }
     }
 }
@@ -135,45 +138,27 @@ void LabFrameExplicitES::preparePhiExtrapolatedInitialGuess (
 void LabFrameExplicitES::updatePhiExtrapolationHistory (
     const ablastr::fields::MultiLevelScalarField& phi)
 {
-    if (self_fields_phi_extrapolation_order == 0) {
-        return;
-    }
-
-    if (self_fields_phi_extrapolation_order == 1 &&
-        self_fields_phi_extrapolation_alpha == 0.0_rt)
-    {
-        return;
-    }
-
-    if (self_fields_phi_extrapolation_order == 2 &&
-        self_fields_phi_extrapolation_alpha == 0.0_rt &&
-        self_fields_phi_extrapolation_beta == 0.0_rt)
-    {
-        return;
-    }
-
     definePhiExtrapolationCache(phi);
+    int const cache_depth = phiExtrapolationCacheDepth();
+    int const shift_count = std::min(m_phi_extrapolation_history_depth,
+                                     cache_depth - 1);
 
     for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
         auto const& phi_mf = *phi[lev];
         const int ncomp = phi_mf.nComp();
         const int ngrow = phi_mf.nGrow();
 
-        if (m_phi_extrapolation_history_depth >= 2) {
+        for (int hist = shift_count; hist > 0; --hist) {
             amrex::MultiFab::Copy(
-                *m_phi_extrapolation_cache[2][lev],
-                *m_phi_extrapolation_cache[1][lev], 0, 0, ncomp, ngrow);
-        }
-        if (m_phi_extrapolation_history_depth >= 1) {
-            amrex::MultiFab::Copy(
-                *m_phi_extrapolation_cache[1][lev],
-                *m_phi_extrapolation_cache[0][lev], 0, 0, ncomp, ngrow);
+                *m_phi_extrapolation_cache[hist][lev],
+                *m_phi_extrapolation_cache[hist - 1][lev], 0, 0, ncomp,
+                ngrow);
         }
         amrex::MultiFab::Copy(
             *m_phi_extrapolation_cache[0][lev], phi_mf, 0, 0, ncomp, ngrow);
     }
 
-    if (m_phi_extrapolation_history_depth < 3) {
+    if (m_phi_extrapolation_history_depth < cache_depth) {
         ++m_phi_extrapolation_history_depth;
     }
 }
@@ -224,16 +209,6 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
     Insert::SetBoundaryPhi();//修正电势
-    auto const& phi_overset_masks = Insert::BuildPhiOversetMasks(phi_fp);
-    std::optional<amrex::Vector<amrex::iMultiFab const *> > phi_overset_mask_ptrs;
-    if (!phi_overset_masks.empty()) {
-        amrex::Vector<amrex::iMultiFab const *> mask_ptrs;
-        mask_ptrs.reserve(phi_overset_masks.size());
-        for (auto const& mask : phi_overset_masks) {
-            mask_ptrs.push_back(mask.get());
-        }
-        phi_overset_mask_ptrs = mask_ptrs;
-    }
 
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
@@ -250,14 +225,27 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         // Use the AMREX MLMG or the FFT (IGF) solver otherwise
         computePhi(rho_fp, phi_fp, beta, self_fields_required_precision,
                    self_fields_absolute_tolerance, self_fields_max_iters,
-                   self_fields_verbosity, is_igf_2d_slices, Efield_fp,
-                   phi_overset_mask_ptrs);
+                   self_fields_verbosity, is_igf_2d_slices, Efield_fp);
 #endif
 
     }
     // 共置网格guard cell处理
+#ifdef HALL3D
+    if (!Insert::SpectralBoundarySchur::Enabled()) {
+        Insert::SetPhiGuards();
+    }
+#else
     Insert::SetPhiGuards();
+#endif
+    // Keep extrapolation history on the uncorrected Poisson potential.
+    // The Schur correction is only added below for field evaluation.
     updatePhiExtrapolationHistory(phi_fp);
+#ifdef HALL3D
+    if (Insert::SpectralBoundarySchur::Enabled()) {
+        Insert::ApplyElectrostaticBoundaryCorrection(phi_fp);
+        Insert::SetPhiGuards();
+    }
+#endif
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }

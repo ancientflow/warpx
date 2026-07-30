@@ -80,7 +80,7 @@ PhiAdjustmentEntrance () {
  */
 void
 SetBoundaryPhi () {
-#ifdef HALL3D
+#ifdef PHT
     AnodeVoltage();
 #endif
 }
@@ -124,6 +124,7 @@ CollisionRecord (amrex::Vector<int> vec) {
 void
 AfterDiagnostics () {
 #ifdef HALL3D
+    NeutralAtomEBInteraction();
     // SecondaryEmission();
     // AnodeIonNeutralization();
     AnodeCurrentCalc();
@@ -136,11 +137,13 @@ AfterDiagnostics () {
 }
 
 /**
- * 共置网格下，对于第一类边界条件的guard cell设置
+ * 共置网格下，对于平板霍尔推力器zmin电势边界的guard cell设置
  */
 void
 SetPhiGuards () {
-#ifndef WAVE1D
+#ifdef HALL3D
+    HallThrusterPhiGuardSet();
+#elif !defined(WAVE1D)
     DirichletPhiGuardSet();
 #endif
 }
