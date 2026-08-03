@@ -12,6 +12,7 @@
 
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/Collision/BackgroundMCC/ImpactIonization.H"
+#include "Particles/Collision/BinaryCollision/BinaryCollisionUtils.H"
 #include "Particles/ParticleCreation/SmartCopy.H"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/ParticleUtils.H"
@@ -114,41 +115,16 @@ CoupledBackgroundMCCCollision::CoupledBackgroundMCCCollision (
     utils::parser::queryWithParser(pp_collision_name, "background_mass",
                                    m_background_mass);
 
-    // query for a list of collision processes
-    // these could be elastic, excitation, charge_exchange, back, etc.
-    amrex::Vector<std::string> scattering_process_names;
-    pp_collision_name.queryarr("scattering_processes",
-                               scattering_process_names);
+    // Parse the list of scattering processes (these could be elastic,
+    // excitation, charge_exchange, etc.) and create a vector of
+    // ScatteringProcess objects from each scattering process name. The
+    // angular behavior of each process is set with the per-process
+    // `<process>_scattering_angle_model` input (isotropic | forward |
+    // backward).
+    amrex::Vector<ScatteringProcess> scattering_processes =
+        BinaryCollisionUtils::parse_scattering_processes(collision_name);
 
-    // create a vector of ScatteringProcess objects from each scattering
-    // process name
-    for (const auto& scattering_process : scattering_process_names) {
-        const std::string kw_cross_section =
-            scattering_process + "_cross_section";
-        std::string cross_section_file;
-        pp_collision_name.query(kw_cross_section, cross_section_file);
-
-        amrex::ParticleReal energy = 0.0;
-        // if the scattering process is excitation or ionization get the
-        // energy associated with that process
-        if (scattering_process.find("excitation") != std::string::npos ||
-            scattering_process.find("ionization") != std::string::npos) {
-            const std::string kw_energy = scattering_process + "_energy";
-            utils::parser::getWithParser(pp_collision_name, kw_energy.c_str(),
-                                         energy);
-        }
-        // if the scattering process is forward scattering get the energy
-        // associated with the process if it is given (this allows forward
-        // scattering to be used both with and without a fixed energy loss)
-        else if (scattering_process.find("forward") != std::string::npos) {
-            const std::string kw_energy = scattering_process + "_energy";
-            utils::parser::queryWithParser(pp_collision_name, kw_energy.c_str(),
-                                           energy);
-        }
-
-        ScatteringProcess process(scattering_process, cross_section_file,
-                                  energy);
-
+    for (auto& process : scattering_processes) {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             process.type() != ScatteringProcessType::INVALID,
             "Cannot add an unknown scattering process type");
@@ -765,38 +741,40 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
             ParticleUtils::doLorentzTransform(vx, vy, vz, uCOM_x, uCOM_y,
                                               uCOM_z);
 
-            if (scattering_process.m_type == ScatteringProcessType::ELASTIC) {
-                ParticleUtils::RandomizeVelocity(
-                    vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
-            } else if (scattering_process.m_type ==
-                       ScatteringProcessType::EXCITATION) {
-#ifndef MCC_EXCITATION
-                ParticleUtils::RandomizeVelocity(
-                    vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
-#else
-#ifdef MCC_DENSITY_AVERAGE_USE
+            // For the coupled excitation model (MCC_EXCITATION without
+            // MCC_DENSITY_AVERAGE_USE), the projectile velocity is only
+            // scattered (and the cell bookkeeping updated) if a background
+            // particle is available in the current cell.
+            bool update_velocity = true;
+#if defined(MCC_EXCITATION) && !defined(MCC_DENSITY_AVERAGE_USE)
+            if (scattering_process.m_type == ScatteringProcessType::EXCITATION) {
+                int pos = Insert::CollisionDetail::DenseBinIndex(
+                    amrex::Dim3{px, py, pz},
+                    amrex::Dim3{ncell, ncell, ncell});
+                update_velocity = (p_particle_num[pos] > 0);
+                if (update_velocity) {
+                    amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
+                    amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
+                    //需要CAS来解决冲突，需要处理网格索引偏差
+                }
+            }
+#endif
+
+            // change the direction of the projectile velocity in the COM
+            // frame according to the scattering angle model of the process;
+            // forward scattering leaves the direction unchanged
+            if (update_velocity) {
+                if (scattering_process.m_scattering_angle_model ==
+                    ScatteringAngleModel::Backward) {
+                    // scattering with cos(chi) = -1 (i.e. 180 degrees)
+                    vx *= -1.0_prt;
+                    vy *= -1.0_prt;
+                    vz *= -1.0_prt;
+                } else if (scattering_process.m_scattering_angle_model ==
+                           ScatteringAngleModel::Isotropic) {
                     ParticleUtils::RandomizeVelocity(
                         vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz), engine);
-#else
-                    int pos = Insert::CollisionDetail::DenseBinIndex(
-                        amrex::Dim3{px, py, pz},
-                        amrex::Dim3{ncell, ncell, ncell});
-                    if (p_particle_num[pos] > 0) {
-                        ParticleUtils::RandomizeVelocity(
-                            vx, vy, vz, sqrt(vx * vx + vy * vy + vz * vz),
-                            engine);
-                        amrex::Gpu::Atomic::Add(&p_particle_num[pos], -1);
-                        amrex::Gpu::Atomic::Add(&p_delete[pos], 1);
-                        //需要CAS来解决冲突，需要处理网格索引偏差
-                    }
-#endif
-#endif
-            } else if (scattering_process.m_type ==
-                       ScatteringProcessType::BACK) {
-                // elastic scattering with cos(chi) = -1 (i.e. 180 degrees)
-                vx *= -1.0_prt;
-                vy *= -1.0_prt;
-                vz *= -1.0_prt;
+                }
             }
 
             // transform back to scattering frame
