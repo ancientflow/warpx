@@ -22,9 +22,9 @@ my_constants.ly = sim_L
 my_constants.lz = sim_L
 
 #工况定义
-my_constants.m_dot = 0.6e-6
+my_constants.m_dot = 0.5e-6
 my_constants.Ic = 0.5
-my_constants.voltage = 300
+my_constants.voltage = 200
 my_constants.ifhole = 0
 my_constants.Tx = 200
 my_constants.Ty = 200
@@ -256,7 +256,7 @@ xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 #初始注入
 xe_netural.injection_style = external_file
 xe_netural.injection_file = slope_start.bp5
-xe_netural.injection_file = diags/particle_diag/openpmd_015000.bp5
+xe_netural.injection_file = slope_anode_200V_start.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_test
@@ -266,8 +266,20 @@ warpx.B_ext_grid_init_style = read_from_file
 warpx.read_fields_from_path = SlopeB2DTo3D_0.bp5
 
 #输出定义
-FILE = ../../Script/diagout_8T
-#FILE = ../../Script/init_diag
+diagnostics.diags_names = diag
+
+diag.diag_type = Full
+diag.intervals = 5000
+diag.fields_to_plot = rho_electrons phi rho_xe_netural
+diag.write_species = 0
+diag.format = openpmd
+diag.file_prefix = /media/ps/disk1/WarpXData/slope_diag200V
+
+#宏观统计
+warpx.reduced_diags_names = particle_number200
+
+particle_number200.type = ParticleNumber
+particle_number200.intervals = 500
 
 #ECDI抑制
 insert.ecdi_control.enabled = 0

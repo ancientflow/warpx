@@ -34,10 +34,11 @@ elec_mcc_coll.excitation_rho_index = 0
 elec_mcc_coll.have_excitation = 0
 
 # Xe / Xe+ 电荷交换 弹性碰撞
-xe_coll.scattering_processes = elastic back
+xe_coll.scattering_processes = elastic elastic_back
 xe_coll.species = xe_ions
 xe_coll.elastic_cross_section = Xe2X/XeMomentumTransfer.dat
-xe_coll.back_cross_section = Xe2X/XeChargeTransfer.dat
+xe_coll.elastic_back_cross_section = Xe2X/XeChargeTransfer.dat
+xe_coll.elastic_back_scattering_angle_model = backward
 xe_coll.background_density = 2.5e18 #修改后不实际使用
 xe_coll.background_temperature = 400
 xe_coll.ground_species = xe_netural

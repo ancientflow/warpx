@@ -1,6 +1,9 @@
 #全局定义
-max_step = 15000
-my_constants.dt = 10e-10
+max_step = 9000000
+my_constants.diag_num = 120
+my_constants.reduced_diag_num = 12000
+my_constants.dt = 3e-12
+#my_constants.dt = 10e-10
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -19,7 +22,7 @@ my_constants.ly = sim_L
 my_constants.lz = sim_L
 
 #工况定义
-my_constants.m_dot = 0.6e-6
+my_constants.m_dot = 0.5e-6
 my_constants.Ic = 0.5
 my_constants.voltage = 300
 my_constants.ifhole = 0
@@ -67,6 +70,10 @@ boundary.potential_hi_x = 0
 boundary.potential_hi_y = 0
 boundary.potential_hi_z = 0
 
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 0.4
+warpx.self_fields_phi_extrapolation_beta = 0.15
+
 # 斜阳极 Embedded Boundary
 # r < a1 为中心通道；a1 <= r < b1 为圆锥侧面；
 # r >= b1 为与圆锥连续的平面。隐式函数 > 0 为固体，< 0 为计算域。
@@ -94,19 +101,34 @@ insert.neutral_atom_eb.b1 = eb_b1
 #粒子设置
 algo.particle_shape = 1
 
-particles.species_names = xe_netural electrons xe_ions
+particles.species_names = electrons xe_ions xe_netural
 
 electrons.species_type = electron
+#electrons.do_not_deposit = 1
 
 xe_ions.species_type = xenon
 xe_ions.charge = q_e
+#xe_ions.do_not_deposit = 1
 
 xe_netural.mass = m_xe
 xe_netural.charge = 1
 xe_netural.do_not_gather = 1
 xe_netural.do_not_deposit = 1
 xe_netural.save_particles_at_eb = 1
-xe_netural.ndt = 1
+
+###重采样
+electrons.save_particles_at_zlo = 1
+electrons.ndt = 1
+
+xe_ions.save_particles_at_xlo = 1
+xe_ions.save_particles_at_xhi = 1
+xe_ions.save_particles_at_ylo = 1
+xe_ions.save_particles_at_yhi = 1
+xe_ions.save_particles_at_zlo = 1
+xe_ions.save_particles_at_zhi = 1
+xe_ions.ndt = 10
+
+xe_netural.ndt = 100
 
 my_constants.hall_diag_interval = 10
 my_constants.thrust_diag_path = "thrust.dat"
@@ -128,7 +150,74 @@ my_constants.collision_record_diag = 0
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
-insert.continuous_sources = xe_neutral_inlet
+#insert.initial_sources = channel_plasma
+insert.continuous_sources = xe_neutral_inlet cathode_electron
+
+# --- Initial channel plasma (electrons + xe_ions) ---
+channel_plasma.rate = density_volume
+channel_plasma.density = 1e18
+channel_plasma.volume = ((0.0155/l_factor)^2 - (0.0105/l_factor)^2) * pi * (0.003/l_factor)
+channel_plasma.macro_weight = elec_weight
+channel_plasma.shared_species = electrons xe_ions
+channel_plasma.x_offset = 0.025 / l_factor
+channel_plasma.y_offset = 0.025 / l_factor
+
+channel_plasma.position.coordinate_system = cylindrical
+channel_plasma.position.r.distribution = area_uniform
+channel_plasma.position.r.min = 0.0105 / l_factor
+channel_plasma.position.r.max = 0.0155 / l_factor
+channel_plasma.position.theta.distribution = uniform
+channel_plasma.position.theta.min = 0.0
+channel_plasma.position.theta.max = 2*pi
+channel_plasma.position.z.distribution = uniform
+channel_plasma.position.z.min = 0.001 / l_factor
+channel_plasma.position.z.max = 0.004 / l_factor
+
+channel_plasma.electrons.weight = elec_weight
+channel_plasma.electrons.velocity.coordinate_system = cartesian
+channel_plasma.electrons.velocity.vx.distribution = gaussian
+channel_plasma.electrons.velocity.vx.sigma = 592982
+channel_plasma.electrons.velocity.vy.distribution = gaussian
+channel_plasma.electrons.velocity.vy.sigma = 592982
+channel_plasma.electrons.velocity.vz.distribution = gaussian
+channel_plasma.electrons.velocity.vz.sigma = 592982
+
+channel_plasma.xe_ions.weight = elec_weight
+channel_plasma.xe_ions.velocity.coordinate_system = cartesian
+channel_plasma.xe_ions.velocity.vx.distribution = gaussian
+channel_plasma.xe_ions.velocity.vx.sigma = 1212.41
+channel_plasma.xe_ions.velocity.vy.distribution = gaussian
+channel_plasma.xe_ions.velocity.vy.sigma = 1212.41
+channel_plasma.xe_ions.velocity.vz.distribution = gaussian
+channel_plasma.xe_ions.velocity.vz.sigma = 1212.41
+
+# --- Cathode electron continuous injection ---
+cathode_electron.species = electrons
+cathode_electron.rate = current
+cathode_electron.current = Ic
+cathode_electron.macro_weight = elec_weight
+cathode_electron.l_factor = l_factor
+cathode_electron.x_offset = 0.025 / l_factor
+cathode_electron.y_offset = 0.025 / l_factor
+
+cathode_electron.position.coordinate_system = cylindrical
+cathode_electron.position.r.distribution = area_uniform
+cathode_electron.position.r.min = 0.016 / l_factor
+cathode_electron.position.r.max = 0.020 / l_factor
+cathode_electron.position.theta.distribution = uniform
+cathode_electron.position.theta.min = 0.0
+cathode_electron.position.theta.max = 2*pi
+cathode_electron.position.z.distribution = uniform
+cathode_electron.position.z.min = 0.042 / l_factor
+cathode_electron.position.z.max = 0.046 / l_factor
+
+cathode_electron.velocity.coordinate_system = cartesian
+cathode_electron.velocity.vx.distribution = gaussian
+cathode_electron.velocity.vx.sigma = 592982
+cathode_electron.velocity.vy.distribution = gaussian
+cathode_electron.velocity.vy.sigma = 592982
+cathode_electron.velocity.vz.distribution = gaussian
+cathode_electron.velocity.vz.sigma = 592982
 
 # --- Xe neutral rotating inlet ---
 xe_neutral_inlet.species = xe_netural
@@ -137,7 +226,7 @@ xe_neutral_inlet.mass_flow = m_dot
 xe_neutral_inlet.mass = m_xe
 xe_neutral_inlet.macro_weight = xe_weight
 xe_neutral_inlet.l_factor = l_factor
-xe_neutral_inlet.batch_multiplier = 1
+xe_neutral_inlet.batch_multiplier = 100
 xe_neutral_inlet.x_offset = eb_x0
 xe_neutral_inlet.y_offset = eb_y0
 
@@ -164,8 +253,33 @@ xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
 xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 
+#初始注入
+xe_netural.injection_style = external_file
+xe_netural.injection_file = slope_start.bp5
+xe_netural.injection_file = slope_anode_300V_start.bp5
+
+#碰撞设置
+FILE = ../../Script/3d_hall_mcccoll_test
+
+#电场 磁场定义
+warpx.B_ext_grid_init_style = read_from_file
+warpx.read_fields_from_path = SlopeB2DTo3D_0.bp5
+
 #输出定义
-FILE = ../../Script/init_diag
+diagnostics.diags_names = diag
+
+diag.diag_type = Full
+diag.intervals = 5000
+diag.fields_to_plot = rho_electrons phi rho_xe_netural
+diag.write_species = 0
+diag.format = openpmd
+diag.file_prefix = /media/ps/disk1/WarpXData/slope_diag300V
+
+#宏观统计
+warpx.reduced_diags_names = particle_number300
+
+particle_number300.type = ParticleNumber
+particle_number300.intervals = 500
 
 #ECDI抑制
 insert.ecdi_control.enabled = 0
