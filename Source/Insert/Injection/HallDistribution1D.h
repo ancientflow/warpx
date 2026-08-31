@@ -152,7 +152,7 @@ public:
     HallNeutralSpokeDistribution1D (
         amrex::ParticleReal ion_width, amrex::ParticleReal min_ratio,
         amrex::ParticleReal drop_exponent, amrex::ParticleReal phase,
-        bool reverse, int num_bins);
+        bool reverse, int spoke_count, int num_bins);
 
     [[nodiscard]] amrex::ParticleReal
     sample (amrex::RandomEngine const& engine) const override;

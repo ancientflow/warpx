@@ -6,7 +6,7 @@ warpx.const_dt = dt
 warpx.do_electrostatic = labframe
 warpx.self_fields_required_precision = 1e-6
 #warpx.self_fields_absolute_tolerance = 1e-3
-warpx.sort_intervals = 50
+warpx.sort_intervals = 25
 warpx.use_filter = 0
 warpx.grid_type = collocated
 
@@ -27,28 +27,7 @@ my_constants.Tx = 200
 my_constants.Ty = 200
 my_constants.Tz = 140
 my_constants.vz0 = 240
-my_constants.Te0 = 10
-my_constants.anode_current_path = "anode_current_spoke1_200V.txt"
-
-# Spoke azimuthal distribution parameters
-# Neutral density peak (ionization front) at spoke_phase.
-# Plasma spoke peak shifted spoke_plasma_shift from the neutral minimum
-# (spoke_phase - spoke_ion_width) toward the neutral peak for ignition overlap.
-# reverse=1 for neutral_spoke ensures clockwise recovery opposite to CCW propagation.
-# spoke_count repeats the structure around the circumference for both the
-# neutral depletion profile and the initial plasma multi-spoke peaks.
-my_constants.spoke_phase = 20.0 * pi / 180.0
-my_constants.spoke_ion_width = 0.30*pi
-
-#### 此处为相位关系
-my_constants.spoke_plasma_shift = 15.0 * pi / 180.0
-
-
-my_constants.spoke_min_ratio = 1.0/6.0
-my_constants.spoke_drop_exponent = 4.0
-my_constants.spoke_reverse = 1
-my_constants.spoke_sigma = pi / 8
-my_constants.spoke_count = 1
+my_constants.anode_current_path = "anode_current_spoke0_200V.txt"
 
 #粒子参数定义
 my_constants.weight_ratio = 4
@@ -71,7 +50,7 @@ amr.max_grid_size = n_cell
 amr.max_level = 0
 
 #内存使用
-amrex.the_arena_init_size = 1024*1024*1024*15 # 20GB内存
+amrex.the_arena_init_size = 1024*1024*1024*75 # 75GB内存
 
 geometry.dims = 3
 geometry.prob_lo = 0.0 0.0 0.0
@@ -108,6 +87,7 @@ xe_netural.charge = 1
 xe_netural.do_not_gather = 1
 xe_netural.do_not_deposit = 1
 
+###重采样
 electrons.save_particles_at_zlo = 1
 electrons.ndt = 1
 
@@ -122,9 +102,9 @@ xe_ions.ndt = 10
 xe_netural.ndt = 100
 
 my_constants.hall_diag_interval = 10
-my_constants.thrust_diag_path = "thrust_spoke.dat"
-my_constants.beam_divergence_path = "beam_divergence_spoke.dat"
-my_constants.iedf_path = "iedf_spoke.dat"
+my_constants.thrust_diag_path = "thrust.dat"
+my_constants.beam_divergence_path = "beam_divergence.dat"
+my_constants.iedf_path = "iedf.dat"
 my_constants.iedf_bins = 200
 my_constants.iedf_min_eV = 0
 my_constants.iedf_max_eV = 500
@@ -157,11 +137,9 @@ channel_plasma.position.coordinate_system = cylindrical
 channel_plasma.position.r.distribution = area_uniform
 channel_plasma.position.r.min = 0.0105 / l_factor
 channel_plasma.position.r.max = 0.0155 / l_factor
-channel_plasma.position.theta.distribution = multi_spoke
-channel_plasma.position.theta.spoke_count = spoke_count
-channel_plasma.position.theta.spoke_sigma = spoke_sigma
-channel_plasma.position.theta.spoke_phase = spoke_phase - spoke_ion_width + spoke_plasma_shift
-channel_plasma.position.theta.num_bins = 1024 * spoke_count
+channel_plasma.position.theta.distribution = uniform
+channel_plasma.position.theta.min = 0.0
+channel_plasma.position.theta.max = 2*pi
 channel_plasma.position.z.distribution = uniform
 channel_plasma.position.z.min = 0.001 / l_factor
 channel_plasma.position.z.max = 0.004 / l_factor
@@ -169,11 +147,11 @@ channel_plasma.position.z.max = 0.004 / l_factor
 channel_plasma.electrons.weight = elec_weight
 channel_plasma.electrons.velocity.coordinate_system = cartesian
 channel_plasma.electrons.velocity.vx.distribution = gaussian
-channel_plasma.electrons.velocity.vx.sigma = sqrt(Te0*q_e/m_e)
+channel_plasma.electrons.velocity.vx.sigma = 592982
 channel_plasma.electrons.velocity.vy.distribution = gaussian
-channel_plasma.electrons.velocity.vy.sigma = sqrt(Te0*q_e/m_e)
+channel_plasma.electrons.velocity.vy.sigma = 592982
 channel_plasma.electrons.velocity.vz.distribution = gaussian
-channel_plasma.electrons.velocity.vz.sigma = sqrt(Te0*q_e/m_e)
+channel_plasma.electrons.velocity.vz.sigma = 592982
 
 channel_plasma.xe_ions.weight = elec_weight
 channel_plasma.xe_ions.velocity.coordinate_system = cartesian
@@ -246,8 +224,7 @@ xe_netural.injection_sources = xeinit
 
 #初始注入
 xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = ../../data/spoke_init_1.bp5
-
+xe_netural.xeinit.injection_file = ../../data/spoke_init_0.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_test
@@ -256,8 +233,6 @@ FILE = ../../Script/3d_hall_mcccoll_test
 warpx.B_ext_grid_init_style = read_from_file
 warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
 
-#输出定义
-
 #场诊断
 diagnostics.diags_names = intensive_diag
 intensive_diag.diag_type = Full
@@ -265,10 +240,9 @@ intensive_diag.intervals = 500
 intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural phi
 intensive_diag.format = openpmd
 intensive_diag.write_species = 0
-intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag1_200V
+intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag0_200V
 #宏观统计
-warpx.reduced_diags_names = particle_number_spoke1_200V
+warpx.reduced_diags_names = particle_number_spoke0_200V
 
-particle_number_spoke1_200V.type = ParticleNumber
-particle_number_spoke1_200V.intervals = 500
-
+particle_number_spoke0_200V.type = ParticleNumber
+particle_number_spoke0_200V.intervals = 500

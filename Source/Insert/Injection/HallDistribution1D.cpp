@@ -55,9 +55,15 @@ amrex::ParticleReal
 NeutralSpokeDensity (amrex::ParticleReal theta, amrex::ParticleReal ion_width,
                      amrex::ParticleReal min_ratio,
                      amrex::ParticleReal drop_exponent,
-                     amrex::ParticleReal phase, bool reverse) noexcept
+                     amrex::ParticleReal phase, bool reverse,
+                     int spoke_count) noexcept
 {
-    const amrex::ParticleReal phi = PeriodicPhase(theta, phase, reverse);
+    const amrex::ParticleReal period =
+        TwoPi() / static_cast<amrex::ParticleReal>(spoke_count);
+    amrex::ParticleReal phi = PeriodicPhase(theta, phase, reverse);
+    // Fold the phase into a single structure period so the depletion
+    // profile repeats spoke_count times around the circumference.
+    phi = std::fmod(phi, period);
     if (phi < ion_width) {
         const amrex::ParticleReal s = phi / ion_width;
         return min_ratio + (amrex::ParticleReal(1.0) - min_ratio) *
@@ -65,7 +71,7 @@ NeutralSpokeDensity (amrex::ParticleReal theta, amrex::ParticleReal ion_width,
                                         drop_exponent);
     }
 
-    const amrex::ParticleReal s = (phi - ion_width) / (TwoPi() - ion_width);
+    const amrex::ParticleReal s = (phi - ion_width) / (period - ion_width);
     return min_ratio + (amrex::ParticleReal(1.0) - min_ratio) * s;
 }
 
@@ -94,11 +100,18 @@ void ValidatePositiveSigma (amrex::ParticleReal sigma, std::string const& name);
 void
 ValidateNeutralSpokeParameters (amrex::ParticleReal ion_width,
                                 amrex::ParticleReal min_ratio,
-                                amrex::ParticleReal drop_exponent)
+                                amrex::ParticleReal drop_exponent,
+                                int spoke_count)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        ion_width > amrex::ParticleReal(0.0) && ion_width < TwoPi(),
-        "HallNeutralSpokeDistribution1D requires 0 < ion_width < 2*pi.");
+        spoke_count > 0,
+        "HallNeutralSpokeDistribution1D requires spoke_count > 0.");
+    const amrex::ParticleReal period =
+        TwoPi() / static_cast<amrex::ParticleReal>(spoke_count);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        ion_width > amrex::ParticleReal(0.0) && ion_width < period,
+        "HallNeutralSpokeDistribution1D requires "
+        "0 < ion_width < 2*pi/spoke_count.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         min_ratio >= amrex::ParticleReal(0.0) &&
             min_ratio < amrex::ParticleReal(1.0),
@@ -147,14 +160,17 @@ NumericalInverseCDFSampler1D
 MakeNeutralSpokeSampler (amrex::ParticleReal ion_width,
                          amrex::ParticleReal min_ratio,
                          amrex::ParticleReal drop_exponent,
-                         amrex::ParticleReal phase, bool reverse, int num_bins)
+                         amrex::ParticleReal phase, bool reverse,
+                         int spoke_count, int num_bins)
 {
-    ValidateNeutralSpokeParameters(ion_width, min_ratio, drop_exponent);
+    ValidateNeutralSpokeParameters(ion_width, min_ratio, drop_exponent,
+                                   spoke_count);
     return NumericalInverseCDFSampler1D(
         amrex::ParticleReal(0.0), TwoPi(), num_bins,
         [=] (amrex::ParticleReal theta) {
             return NeutralSpokeDensity(theta, ion_width, min_ratio,
-                                       drop_exponent, phase, reverse);
+                                       drop_exponent, phase, reverse,
+                                       spoke_count);
         });
 }
 
@@ -473,9 +489,10 @@ HallMultiSpokeDistribution1D::integral () const noexcept
 HallNeutralSpokeDistribution1D::HallNeutralSpokeDistribution1D (
     amrex::ParticleReal ion_width, amrex::ParticleReal min_ratio,
     amrex::ParticleReal drop_exponent, amrex::ParticleReal phase,
-    bool reverse, int num_bins)
+    bool reverse, int spoke_count, int num_bins)
     : m_sampler(MakeNeutralSpokeSampler(
-          ion_width, min_ratio, drop_exponent, phase, reverse, num_bins))
+          ion_width, min_ratio, drop_exponent, phase, reverse,
+          spoke_count, num_bins))
 {}
 
 amrex::ParticleReal
@@ -699,6 +716,7 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
             QueryPhaseWithFallback(pp, prefix),
             QueryBoolWithAliases(
                 pp, prefix, {"reverse", "reverse_phase", "phase_reverse"}, false),
+            QueryWithParser<int>(pp, prefix, "spoke_count", 1),
             QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
     if (distribution == "discrete") {

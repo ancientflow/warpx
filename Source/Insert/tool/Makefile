@@ -7,7 +7,8 @@ CXX      ?= g++
 CXXFLAGS  = -std=c++17 -O2 -Wall -Wextra -Wpedantic
 
 TARGETS   = $(BUILD_DIR)/CrossSectionInterpolator \
-            $(BUILD_DIR)/CrossSectionScaler
+            $(BUILD_DIR)/CrossSectionScaler \
+            $(BUILD_DIR)/SpokeAzimuthalDensity
 
 .PHONY: all clean
 
@@ -18,6 +19,10 @@ $(BUILD_DIR)/CrossSectionInterpolator: CrossSectionInterpolator.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
 $(BUILD_DIR)/CrossSectionScaler: CrossSectionScaler.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+$(BUILD_DIR)/SpokeAzimuthalDensity: SpokeAzimuthalDensity.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 

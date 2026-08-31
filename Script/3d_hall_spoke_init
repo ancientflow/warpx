@@ -1,7 +1,5 @@
 #全局定义
 max_step = 5000
-my_constants.diag_num = 40
-my_constants.reduced_diag_num = diag_num*10
 my_constants.dt = 5.6e-10
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -13,13 +11,16 @@ my_constants.Tnini = 400 #开尔文
 
 # Spoke azimuthal distribution parameters for neutral gas initialization
 # Neutral density peak (ionization front) is at spoke_phase.
-# Plasma spoke peak is at spoke_phase - spoke_ion_width (neutral minimum).
+# Plasma spoke peak is shifted 15 degrees from the neutral minimum
+# (spoke_phase - spoke_ion_width) toward the neutral peak for ignition overlap.
 # reverse=1 ensures recovery increases clockwise, opposite to CCW propagation.
+# spoke_count repeats the depletion structure around the circumference.
 my_constants.spoke_phase = 20.0 * pi / 180.0
 my_constants.spoke_ion_width = 0.30*pi
-my_constants.spoke_min_ratio = 0.25
+my_constants.spoke_min_ratio = 1.0/6.0
 my_constants.spoke_drop_exponent = 4.0
 my_constants.spoke_reverse = 1
+my_constants.spoke_count = 3
 
 ##几何参数定义
 my_constants.L = 0.05
@@ -51,7 +52,7 @@ my_constants.m_xe = 2.179e-25
 
 # Insert runtime diagnostics switches
 my_constants.particle_number_diag = 1
-my_constants.anode_current_diag = 1
+my_constants.anode_current_diag = 0
 my_constants.clear_hall_boundary_particle_cache_diag = 1
 my_constants.thrust_diag = 0
 my_constants.beam_divergence_diag = 0
@@ -82,6 +83,7 @@ boundary.field_lo =  pec pec pec
 boundary.field_hi =  pec pec pec
 boundary.particle_lo = absorbing absorbing absorbing
 boundary.particle_hi = absorbing absorbing absorbing
+
 
 #粒子设置
 algo.particle_shape = 1
@@ -121,6 +123,8 @@ xe_neutral_inlet.position.theta.min_ratio = spoke_min_ratio
 xe_neutral_inlet.position.theta.drop_exponent = spoke_drop_exponent
 xe_neutral_inlet.position.theta.phase = spoke_phase
 xe_neutral_inlet.position.theta.reverse = spoke_reverse
+xe_neutral_inlet.position.theta.spoke_count = spoke_count
+xe_neutral_inlet.position.theta.num_bins = 1024 * spoke_count
 xe_neutral_inlet.position.z.distribution = constant
 xe_neutral_inlet.position.z.value = 0.0
 

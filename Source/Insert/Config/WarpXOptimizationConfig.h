@@ -7,4 +7,4 @@
  */
 
 /* Cache ion charge density for subcycled MCC ion species. */
-#define MCC_ION_CACHED_RHO
+// #define MCC_ION_CACHED_RHO

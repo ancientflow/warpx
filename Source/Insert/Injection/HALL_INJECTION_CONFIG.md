@@ -258,6 +258,7 @@ axis.min_ratio = 0.25
 axis.drop_exponent = 4.0
 axis.phase = 0.0
 axis.reverse = 0
+axis.spoke_count = 1
 axis.num_bins = 1024
 ```
 
@@ -266,8 +267,10 @@ axis.num_bins = 1024
 令：
 
 ```text
+period = 2*pi / spoke_count
 phi = mod(theta - phase, 2*pi)              # reverse = 0
 phi = mod(phase - theta, 2*pi)              # reverse = 1
+phi = mod(phi, period)                      # 折叠到单个结构周期
 n_min = min_ratio * n_max
 ```
 
@@ -282,18 +285,21 @@ n(phi) = n_min + (n_max - n_min) * (1 - s)^drop_exponent
 电离区外：
 
 ```text
-ion_width <= phi < 2*pi
-s = (phi - ion_width) / (2*pi - ion_width)
+ion_width <= phi < period
+s = (phi - ion_width) / (period - ion_width)
 n(phi) = n_min + (n_max - n_min) * s
 ```
 
 参数含义：
 
-- `ion_width`：电离前沿到电离后沿的角宽，必须满足 `0 < ion_width < 2*pi`。
+- `ion_width`：电离前沿到电离后沿的角宽，必须满足 `0 < ion_width < 2*pi/spoke_count`。
 - `min_ratio`：电离后沿最低中性密度与最高中性密度之比，默认 `0.25`。
 - `drop_exponent`：电离区内快速下降指数，默认 `4.0`。越大，下降越集中在电离前沿附近。
 - `phase`：电离前沿相位，默认 `0.0`。也可写作 `phase_offset` 或 `spoke_phase`。
 - `reverse`：相位取反开关，默认 `0`。也可写作 `reverse_phase` 或 `phase_reverse`。
+- `spoke_count`：圆周上重复的结构数，默认 `1`。大于 1 时耗尽结构以
+  `2*pi/spoke_count` 为周期重复，每个周期内形状相同；建议同时把
+  `num_bins` 提高到 `1024 * spoke_count` 量级以保证每个周期的采样分辨率。
 - `num_bins`：数值 CDF 采样 bin 数，默认 `1024`。
 
 ### discrete
