@@ -3,6 +3,7 @@
 #include <BoundaryConditions/WarpX_PEC.H>
 
 #include "Insert/Utils/InsertUtils.h"
+#include "Parallelization/WarpXSumGuardCells.H"
 
 #if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
 #include <AMReX_ParmParse.H>
@@ -97,11 +98,15 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
         auto& wp = attribs[PIdx::w];
         pc.DepositCharge(pti, wp, nullptr, &rho, 0, 0, np, 0, lev, lev);
     }
+
+    auto& warpx_instance = WarpX::GetInstance();
+    WarpXSumGuardCells(rho, warpx_instance.Geom(lev).periodicity(),
+                       rho.nGrowVect(), 0, 1);
+
     // 处理边界密度
     // 尝试使用内置函数进行修改，便于进行高阶插值
     // 考虑到更多的层级，必须采用这种内置函数
     // 考虑到PEC中的修改，这会导致边界密度被大大低估，但是一般来说这不会明细影响放电
-    auto& warpx_instance = WarpX::GetInstance();
     PEC::ApplyReflectiveBoundarytoRhofield(
         &rho, WarpX::field_boundary_lo, WarpX::field_boundary_hi,
         WarpX::particle_boundary_lo, WarpX::particle_boundary_hi,
@@ -162,6 +167,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
     int const flvl = 0;
 #endif
     m_background_density_fabs.resize(flvl + 1);
+    m_ionization_consumption_fabs.resize(flvl + 1);
 #ifdef MCC_DENSITY_AVERAGE_CALC
     m_background_density_sum_fabs.resize(flvl + 1);
 #endif
@@ -176,6 +182,10 @@ BackgroundCoupledDensity::backgroundDensityInit () {
         m_background_density_fabs[lev] =
             amrex::MultiFab(rho->boxArray(), rho->DistributionMap(),
                             rho->nComp(), rho->nGrow());
+        m_ionization_consumption_fabs[lev] =
+            amrex::MultiFab(rho->boxArray(), rho->DistributionMap(), 1,
+                            m_background_density_fabs[lev].nGrowVect());
+        m_ionization_consumption_fabs[lev].setVal(0.0);
 #ifdef MCC_DENSITY_AVERAGE_CALC
         m_background_density_sum_fabs[lev] =
             amrex::MultiFab(rho->boxArray(), rho->DistributionMap(),
@@ -323,6 +333,34 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
     amrex::Print() << "rank " << amrex::ParallelDescriptor::MyProc()
                    << ": Updated background species: " << m_ground_species
                    << " end\n";
+}
+
+void
+BackgroundCoupledDensity::resetIonizationConsumption (int lev) {
+    m_ionization_consumption_fabs[lev].setVal(0.0);
+}
+
+void
+BackgroundCoupledDensity::applyIonizationConsumption (int lev) {
+    auto& warpx_instance = WarpX::GetInstance();
+    auto& consumption = m_ionization_consumption_fabs[lev];
+    auto& background_density = m_background_density_fabs[lev];
+
+    // Deposits in guard cells and overlapping nodal regions are additive.
+    // WarpXSumGuardCells delegates the MPI exchange to AMReX SumBoundary.
+    WarpXSumGuardCells(consumption, warpx_instance.Geom(lev).periodicity(),
+                       consumption.nGrowVect(), 0, 1);
+
+    // Apply the same linear physical-boundary operation as the full background
+    // density deposition before subtracting this incremental consumption.
+    PEC::ApplyReflectiveBoundarytoRhofield(
+        &consumption, WarpX::field_boundary_lo, WarpX::field_boundary_hi,
+        WarpX::particle_boundary_lo, WarpX::particle_boundary_hi,
+        warpx_instance.Geom(lev), lev, PatchType::fine,
+        warpx_instance.refRatio());
+
+    amrex::MultiFab::Subtract(background_density, consumption, 0, 0, 1,
+                              background_density.nGrowVect());
 }
 
 void

@@ -25,6 +25,7 @@ class BackgroundCoupledDensity {
 
     std::string m_ground_species;
     amrex::Vector<amrex::MultiFab> m_background_density_fabs;
+    amrex::Vector<amrex::MultiFab> m_ionization_consumption_fabs;
 #ifdef MCC_DENSITY_AVERAGE_CALC
     amrex::Vector<amrex::MultiFab> m_background_density_sum_fabs;
     int m_average_sample_count = 0;
@@ -54,6 +55,20 @@ class BackgroundCoupledDensity {
      */
     void backgroundDensityUpdate (MultiParticleContainer& mypc,
                                   amrex::ParticleReal elec_weight, int step);
+
+    /**
+     * @brief reset the ionization-consumption density before deposition
+     */
+    void resetIonizationConsumption (int lev);
+
+    /**
+     * @brief sum ionization consumption across boxes and subtract it from the
+     * background density
+     *
+     * This updates only the neutral background density. Cached ion charge
+     * density is intentionally kept on its existing update path.
+     */
+    void applyIonizationConsumption (int lev);
 
     /**
      * @brief finalize background density data
