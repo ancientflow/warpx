@@ -311,7 +311,7 @@ my_constants.dt = 3e-12
 | `positive_gaussian` | `sigma` | `mean = 0` | 重采样直到值非负。 |
 | `single_spoke` | `sigma` 或 `spoke_sigma` | `center` / `spoke_center = pi`, `num_bins = 1024` | 单 spoke 角向分布。 |
 | `multi_spoke` | `sigma` 或 `spoke_sigma` | `spoke_count = 1`, `spoke_phase = 0`, `num_bins = 1024` | 多 spoke 角向分布。 |
-| `neutral_spoke` | `ion_width` | `min_ratio = 0.25`, `drop_exponent = 4.0`, `phase` / `phase_offset` / `spoke_phase = 0`, `reverse = 0`, `num_bins = 1024` | 中性气体 spoke 耗尽分布。 |
+| `neutral_spoke` | `ion_width` | `min_ratio = 0.25`, `drop_exponent = 4.0`, `phase` / `phase_offset` / `spoke_phase = 0`, `reverse = 0`, `spoke_count = 1`, `num_bins = 1024` | 中性气体 spoke 耗尽分布；`spoke_count > 1` 时结构在圆周上重复，要求 `ion_width < 2*pi/spoke_count`。 |
 | `neutral_spoke_depletion` | 同 `neutral_spoke` | 同 `neutral_spoke` | `neutral_spoke` 的别名。 |
 | `discrete` | `values` | `weights` | 离散采样；未给 `weights` 时等权。 |
 | `tabulated` | `values`, `pdf` | `num_bins = 1024` | 表格 PDF，`values` 必须严格递增。 |

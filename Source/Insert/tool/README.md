@@ -14,6 +14,7 @@ make
 产物输出到 `bin/` 目录：
 - `bin/CrossSectionInterpolator`
 - `bin/CrossSectionScaler`
+- `bin/SpokeAzimuthalDensity`
 
 ---
 
@@ -126,3 +127,43 @@ cd Source/Insert/tool
 ```
 
 最终 `build/bin/final_xs.dat` 可直接作为 WarpX 碰撞截面输入。
+
+---
+
+## 工具三：SpokeAzimuthalDensity
+
+输出 spoke 工况下中性气体（`neutral_spoke`）和等离子体（`multi_spoke`）的**归一化周向密度**曲线（spoke 数 1–4），用于 Origin 绘图。
+
+### 用法
+
+```bash
+SpokeAzimuthalDensity [output_file] [num_points]
+```
+
+| 参数 | 说明 |
+|------|------|
+| `output_file` | **可选**。输出文件路径，默认 `spoke_azimuthal_density.dat` |
+| `num_points` | **可选**。周向采样点数，默认 3601（0.1° 步长） |
+
+### 示例
+
+```bash
+cd Source/Insert/tool
+./bin/SpokeAzimuthalDensity spoke_density.dat
+```
+
+### 输出格式
+
+纯 ASCII 表格，首行为 `#` 注释的列名（Origin 导入时作为 Long Name）：
+
+```text
+# theta[deg]    neutral_n1    plasma_n1    neutral_n2    plasma_n2    ...
+0.00000000e+00  2.97632914e-01  7.00092220e-01  ...
+```
+
+- 共 9 列：角度（度）+ 1–4 个 spoke 的中性/等离子体密度各 4 列
+- 每条曲线按各自最大值归一化（峰值 = 1）
+- 分布公式与 `Source/Insert/Injection/HallDistribution1D.cpp` 完全一致
+- 形状参数取自当前 spoke 工况（`Script/3d_hall_spoke`）：中性耗尽宽度 0.30π、最小比 1/6、下降指数 4、reverse=1；等离子体峰 σ=π/8，相位相对中性最小值向峰方向偏移 15°
+- **相位经过平移**：中性峰与等离子体峰（相隔 39°）关于绘图域中心对称，即中性峰在 199.5°、等离子体峰在 160.5°，仅为绘图方便，不改变形状
+- 修改默认参数需编辑源文件顶部的常量并重新编译
