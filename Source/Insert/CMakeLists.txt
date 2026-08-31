@@ -5,6 +5,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Core/WarpXInsert.cpp
         Background/BackgroundCoupledDensity.cpp
         Background/InsertBackgroundDensity.cpp
+        Boundary/AnalyticBoundaryGeometry.cpp
         Boundary/InsertBoundaryParticles.cpp
         Boundary/InsertBoundaryPhi.cpp
         Boundary/ZMinWallCharge.cpp
