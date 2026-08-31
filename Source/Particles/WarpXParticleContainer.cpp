@@ -1810,8 +1810,15 @@ WarpXParticleContainer::DepositCharge (const ablastr::fields::MultiLevelScalarFi
         m_cached_rho_ndt > 1 &&
         m_cached_rho.size() == rho.size();
     if (can_use_cached_rho) {
+        // The space-charge deposition runs after istep has been incremented
+        // (getistep(0) == step+1 here), while subcycled species are pushed
+        // inside OneStep when step % ndt == 0. Refresh the cache on the
+        // deposition right after a push step, so that it holds the post-push
+        // charge density for the whole subcycle. istep == 0 covers the
+        // initial field solve during init.
+        int const istep_now = WarpX::GetInstance().getistep(0);
         bool const do_deposit_cached_rho =
-            WarpX::GetInstance().getistep(0) % m_cached_rho_ndt == 0;
+            (istep_now == 0) || ((istep_now - 1) % m_cached_rho_ndt == 0);
         for (int lev = 0; lev <= finest_level; ++lev) {
             if (do_deposit_cached_rho) {
                 m_cached_rho[lev].setVal(0.0_rt);
