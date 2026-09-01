@@ -24,6 +24,7 @@
 #   endif
 #endif
 #include "FieldSolver/ImplicitSolvers/ImplicitSolver.H"
+#include "Insert/Boundary/AnalyticBoundaryInteraction.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Parallelization/GuardCellManager.H"
 #include "Particles/MultiParticleContainer.H"
@@ -752,6 +753,7 @@ void WarpX::HandleParticlesAtBoundaries (int step, amrex::Real cur_time, int num
     ExecutePythonCallback("particlescraper");
 
     mypc->ApplyBoundaryConditions();
+    Insert::AnalyticBoundaryInteraction();
     m_particle_boundary_buffer->gatherParticlesFromDomainBoundaries(*mypc, cur_time);
 
     // Without mesh refinement, use a local redistribute when particles can only
