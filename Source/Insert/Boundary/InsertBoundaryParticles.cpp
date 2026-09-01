@@ -9,6 +9,8 @@
 #include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Math/ThermalVelocity.h"
+#include "Insert/Math/VectorOps.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/MultiParticleContainer.H"
@@ -327,10 +329,8 @@ struct NeutralAtomReflectionTransform {
         // Move a fixed distance along the reflected direction. Proper velocity
         // and physical velocity have the same direction, so no gamma
         // conversion is required for this displacement.
-        using std::sqrt;
         amrex::ParticleReal const u_out_norm =
-            sqrt(u_out.x * u_out.x + u_out.y * u_out.y +
-                 u_out.z * u_out.z);
+            static_cast<amrex::ParticleReal>(Math::Norm(u_out));
         if (u_out_norm > amrex::ParticleReal(0.0)) {
             amrex::ParticleReal const displacement_scale =
                 m_position_epsilon / u_out_norm;
@@ -781,8 +781,8 @@ NeutralAtomEBInteraction () {
     amrex::ParticleReal diffuse_vth = 0.0;
     if (specular_fraction < amrex::ParticleReal(1.0)) {
         diffuse_vth = static_cast<amrex::ParticleReal>(
-            std::sqrt(PhysConst::kb * wall_temperature /
-                      neutral_atoms.getMass()));
+            Math::ThermalVelocityFromTemperature(
+                wall_temperature, neutral_atoms.getMass()));
     }
 
     NeutralAtomReflectionDecisionFunc const decision_func{
@@ -841,8 +841,8 @@ SecondaryEmission () {
         constexpr amrex::ParticleReal emission_temperature_eV =
             amrex::ParticleReal(3.0);
         const amrex::ParticleReal emission_vth =
-            static_cast<amrex::ParticleReal>(std::sqrt(
-                emission_temperature_eV * PhysConst::q_e / elec_pc.getMass()));
+            static_cast<amrex::ParticleReal>(Math::ThermalVelocityFromEV(
+                emission_temperature_eV, elec_pc.getMass()));
 
         ZMinWallChargeGrid wall_charge_grid{};
         amrex::Array4<amrex::Real> wall_charge_density;
@@ -910,7 +910,8 @@ AnodeIonNeutralization () {
         constexpr amrex::ParticleReal atom_temperature_K =
             amrex::ParticleReal(400.0);
         const amrex::ParticleReal atom_vth = static_cast<amrex::ParticleReal>(
-            std::sqrt(PhysConst::kb * atom_temperature_K / atom_pc.getMass()));
+            Math::ThermalVelocityFromTemperature(
+                atom_temperature_K, atom_pc.getMass()));
 
         auto& ion_pc = mypc.GetParticleContainerFromName("xe_ions");
 
@@ -920,7 +921,8 @@ AnodeIonNeutralization () {
         constexpr amrex::ParticleReal ion_temperature_eV =
             amrex::ParticleReal(3.0);
         const amrex::ParticleReal ion_vth = static_cast<amrex::ParticleReal>(
-            std::sqrt(ion_temperature_eV * PhysConst::q_e / ion_pc.getMass()));
+            Math::ThermalVelocityFromEV(
+                ion_temperature_eV, ion_pc.getMass()));
 
         const AnodeRingIonFilter ring_filter{plo, anode_ring, true};
         const AnodeRingIonFilter non_ring_filter{plo, anode_ring, false};

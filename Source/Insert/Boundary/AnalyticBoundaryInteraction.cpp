@@ -3,6 +3,7 @@
 #include "Insert/Boundary/AnalyticBoundaryGeometry.h"
 #include "Insert/Boundary/BoundaryMathUtils.h"
 #include "Insert/Core/WarpXInsert.h"
+#include "Insert/Math/ThermalVelocity.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/Pusher/GetAndSetPosition.H"
 #include "Particles/WarpXParticleContainer.H"
@@ -237,8 +238,8 @@ AnalyticBoundaryInteraction ()
             amrex::ParticleReal(1.0))
         {
             diffuse_vth = static_cast<amrex::ParticleReal>(
-                std::sqrt(PhysConst::kb * cfg.wall_temperature /
-                          pc.getMass()));
+                Math::ThermalVelocityFromTemperature(
+                    cfg.wall_temperature, pc.getMass()));
         }
 
         ApplyAnalyticBoundaryInteraction(

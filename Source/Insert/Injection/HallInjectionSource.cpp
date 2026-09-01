@@ -2,6 +2,7 @@
 
 #include "WarpX.H"
 
+#include "Insert/Math/Sampling.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Utils/TextMsg.H"
@@ -153,21 +154,21 @@ HallInjectionSource::samplePosition (
 {
     EmissionSample sample;
     if (m_use_hole_array_plane) {
-        const auto radius =
-            m_hole_array_plane.hole_radius * std::sqrt(amrex::Random(engine));
-        const auto theta = TwoPi() * amrex::Random(engine);
+        const auto radius = Math::SampleAreaUniformRadius<amrex::Real>(
+            amrex::Real(0.0), m_hole_array_plane.hole_radius, engine);
+        const auto theta =
+            Math::SampleUniform<amrex::Real>(amrex::Real(0.0), TwoPi(), engine);
         const int hole_index =
             (particle_index + m_hole_start) % m_hole_array_plane.hole_count;
         const auto hole_theta =
             static_cast<amrex::ParticleReal>(hole_index) * TwoPi() /
             static_cast<amrex::ParticleReal>(m_hole_array_plane.hole_count);
 
-        sample.x =
-            radius * std::cos(theta) +
-            m_hole_array_plane.ring_radius * std::cos(hole_theta);
-        sample.y =
-            radius * std::sin(theta) +
-            m_hole_array_plane.ring_radius * std::sin(hole_theta);
+        const auto in_hole = Math::PolarToCartesian(radius, theta);
+        const auto hole_offset =
+            Math::PolarToCartesian(m_hole_array_plane.ring_radius, hole_theta);
+        sample.x = static_cast<amrex::ParticleReal>(in_hole.x + hole_offset.x);
+        sample.y = static_cast<amrex::ParticleReal>(in_hole.y + hole_offset.y);
         sample.z = m_hole_array_plane.z;
     } else {
         sample = m_position_space->samplePosition(engine);

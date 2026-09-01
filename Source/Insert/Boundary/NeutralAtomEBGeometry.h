@@ -1,6 +1,8 @@
 #ifndef WARPX_INSERT_NEUTRALATOMEBGEOMETRY_H_
 #define WARPX_INSERT_NEUTRALATOMEBGEOMETRY_H_
 
+#include "Insert/Math/VectorOps.h"
+
 #include <AMReX_Extension.H>
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_REAL.H>
@@ -34,13 +36,14 @@ GetTruncatedConeNormal (
         return false;
     }
 
-    amrex::ParticleReal const inv_normal_norm =
-        amrex::ParticleReal(1.0) /
-        sqrt(cone.m_k * cone.m_k + amrex::ParticleReal(1.0));
-    normal_to_domain = {
-        -cone.m_k * x_relative / radius * inv_normal_norm,
-        -cone.m_k * y_relative / radius * inv_normal_norm,
-        inv_normal_norm};
+    // The unnormalized normal has z component 1, so normalization cannot
+    // fail; the return value is intentionally discarded.
+    amrex::XDim3 const unnormalized_normal{
+        static_cast<amrex::Real>(-cone.m_k * x_relative / radius),
+        static_cast<amrex::Real>(-cone.m_k * y_relative / radius),
+        amrex::Real(1.0)};
+    static_cast<void>(Math::Normalize<amrex::ParticleReal>(
+        unnormalized_normal, normal_to_domain));
     return true;
 }
 

@@ -8,6 +8,7 @@
 #include "Fields.H"
 #include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Math/Hyperbolic.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/WarpXConst.H"
 #include "WarpX.H"
@@ -156,23 +157,6 @@ ReadConfig () {
         state.config_read = true;
     }
     return state.config;
-}
-
-/**
- * Evaluate `coth(x)` without overflowing for large positive `x`.
- *
- * @param x Positive argument.
- * @return Stable `coth(x)`.
- */
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE amrex::Real
-StableCoth (amrex::Real x) {
-    constexpr amrex::Real threshold = static_cast<amrex::Real>(40.0);
-    if (x > threshold) {
-        return static_cast<amrex::Real>(1.0);
-    }
-    amrex::Real const exp_neg_2x = std::exp(-static_cast<amrex::Real>(2.0) * x);
-    return (static_cast<amrex::Real>(1.0) + exp_neg_2x) /
-           (static_cast<amrex::Real>(1.0) - exp_neg_2x);
 }
 
 #if defined(WARPX_DIM_3D)
@@ -571,33 +555,6 @@ BuildMaskAndRhsMF (
 }
 
 /**
- * Compute `sinh(k(Lz-z)) / sinh(kLz)` without large-argument overflow.
- *
- * @param k Transverse modal wave number.
- * @param z Distance from zmin.
- * @param lz Domain length in z.
- * @return Harmonic extension decay factor.
- */
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE amrex::Real
-SinhDecayRatio (amrex::Real k, amrex::Real z, amrex::Real lz) {
-    amrex::Real const a = k * lz;
-    amrex::Real const b = k * (lz - z);
-    constexpr amrex::Real threshold = static_cast<amrex::Real>(40.0);
-    if (a <= threshold) {
-        amrex::Real const denom = std::sinh(a);
-        return std::sinh(b) / denom;
-    }
-
-    amrex::Real const numerator_correction =
-        static_cast<amrex::Real>(1.0) -
-        std::exp(-static_cast<amrex::Real>(2.0) * b);
-    amrex::Real const denominator_correction =
-        static_cast<amrex::Real>(1.0) -
-        std::exp(-static_cast<amrex::Real>(2.0) * a);
-    return std::exp(-k * z) * numerator_correction / denominator_correction;
-}
-
-/**
  * Apply the masked Schur operator to a full-face MultiFab.
  *
  * @param v Full interior face vector with zero Dirichlet/anode entries.
@@ -630,7 +587,7 @@ ApplySchurOperatorMF (amrex::MultiFab const& v, amrex::MultiFab& av,
             amrex::Real const ky =
                 static_cast<amrex::Real>(n + 1) * MathConst::pi / ly;
             amrex::Real const k = std::sqrt(kx * kx + ky * ky);
-            spectral_data *= k * StableCoth(k * lz) * scale;
+            spectral_data *= k * Insert::Math::StableCoth(k * lz) * scale;
         });
 
     ApplyMaskMF(av, av, neumann_mask);
@@ -780,7 +737,7 @@ ReconstructPhiCorrection (amrex::Geometry const& geom,
                 amrex::Real const ky =
                     static_cast<amrex::Real>(n + 1) * MathConst::pi / ly;
                 amrex::Real const kmn = std::sqrt(kx * kx + ky * ky);
-                amrex::Real const r = SinhDecayRatio(kmn, z, lz);
+                amrex::Real const r = Insert::Math::SinhDecayRatio(kmn, z, lz);
                 a_ptr[Index2D(m, n, nx)] =
                     r * u_hat_ptr[Index2D(m, n, nx)];
             });

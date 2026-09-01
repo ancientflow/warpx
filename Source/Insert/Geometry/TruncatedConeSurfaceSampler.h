@@ -46,8 +46,8 @@ public:
 
 private:
     amrex::ParticleReal m_slope;
-    amrex::ParticleReal m_r2_min;
-    amrex::ParticleReal m_r2_max;
+    amrex::ParticleReal m_r_min;
+    amrex::ParticleReal m_r_max;
     amrex::ParticleReal m_r_reference;
     amrex::ParticleReal m_z_reference;
     amrex::ParticleReal m_theta_min;
