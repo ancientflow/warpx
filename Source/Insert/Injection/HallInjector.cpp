@@ -12,6 +12,7 @@
 #ifdef IONIZATION_SOURCE_INJECT
 #include "Utils/WarpXConst.H"
 #include "Insert/Injection/IonizationSourceSampler.h"
+#include "Insert/Math/ThermalVelocity.h"
 #endif
 
 #include <AMReX_Math.H>
@@ -298,7 +299,7 @@ MakeIonizationSource ()
         "ionization_source_fab/metadata.txt.");
 
     const auto electron_sigma = static_cast<amrex::ParticleReal>(
-        std::sqrt(PhysConst::q_e * BirthElectronTemperatureEV / PhysConst::m_e));
+        Math::ThermalVelocityFromEV(BirthElectronTemperatureEV, PhysConst::m_e));
 
     std::vector<HallSpeciesVelocityConfig> species;
     species.push_back(MakeSpecies(

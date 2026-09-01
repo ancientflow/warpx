@@ -9,6 +9,7 @@
 #include "Insert/Collisions/FilterCopyTransformCoupled.H"
 #include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Math/ThermalVelocity.h"
 
 #include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/Collision/BackgroundMCC/ImpactIonization.H"
@@ -678,7 +679,7 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
         const amrex::ParticleReal col_select = amrex::Random(engine);
 
         // get velocities of gas particles from a Maxwellian distribution
-        auto const vel_std = sqrt(PhysConst::kb * T_a / M);
+        auto const vel_std = Insert::Math::ThermalVelocityFromTemperature(T_a, M);
         ua_x = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
         ua_y = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
         ua_z = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);

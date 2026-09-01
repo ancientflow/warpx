@@ -1,5 +1,7 @@
 #include "ECDIChargeFilter.h"
 
+#include "Insert/Math/InterpUtils.h"
+
 #include "WarpX.H"
 
 #include <ablastr/profiler/ProfilerWrapper.H>
@@ -66,22 +68,20 @@ AddWeightedChargeToBins (
     }
 
     // Linear hat-function weights: each node contributes to at most two radial bins.
-    int i_left = static_cast<int>(amrex::Math::floor(r / dr));
-    i_left = amrex::max(0, amrex::min(i_left, nr - 1));
-    int const i_right = i_left + 1;
-
-    amrex::Real const r_left = static_cast<amrex::Real>(i_left) * dr;
-    amrex::Real const r_right = static_cast<amrex::Real>(i_right) * dr;
-    amrex::Real const denom = r_right - r_left;
-
-    if (denom < amrex::Real(1.0e-15)) {
+    // The cell index is clamped (not discarded); InterpolateFromBins below
+    // uses the same Insert::Math::LinearHatWeightsClamped helper so that
+    // scatter and gather weights agree exactly and charge is conserved.
+    int i_left = 0;
+    amrex::Real w_left = amrex::Real(0.0);
+    amrex::Real w_right = amrex::Real(0.0);
+    if (!Insert::Math::LinearHatWeightsClamped(r, dr, nr, i_left, w_left,
+                                               w_right))
+    {
         amrex::HostDevice::Atomic::Add(&q[base + i_left], charge * volume);
         amrex::HostDevice::Atomic::Add(&d[base + i_left], volume);
         return;
     }
-
-    amrex::Real const w_right = (r - r_left) / denom;
-    amrex::Real const w_left = (r_right - r) / denom;
+    int const i_right = i_left + 1;
 
     amrex::HostDevice::Atomic::Add(&q[base + i_left], charge * volume * w_left);
     amrex::HostDevice::Atomic::Add(&d[base + i_left], volume * w_left);
@@ -101,25 +101,21 @@ InterpolateFromBins (
 {
     long const base = static_cast<long>(k_bin) * static_cast<long>(nr + 1);
 
-    // Use exactly the same radial weights as projection to preserve charge.
+    // Use exactly the same radial weights as projection (the shared
+    // Insert::Math::LinearHatWeightsClamped helper) to preserve charge.
     if (nr == 0 || r >= rmax) {
         return bar_rho[base + nr];
     }
 
-    int i_left = static_cast<int>(amrex::Math::floor(r / dr));
-    i_left = amrex::max(0, amrex::min(i_left, nr - 1));
-    int const i_right = i_left + 1;
-
-    amrex::Real const r_left = static_cast<amrex::Real>(i_left) * dr;
-    amrex::Real const r_right = static_cast<amrex::Real>(i_right) * dr;
-    amrex::Real const denom = r_right - r_left;
-
-    if (denom < amrex::Real(1.0e-15)) {
+    int i_left = 0;
+    amrex::Real w_left = amrex::Real(0.0);
+    amrex::Real w_right = amrex::Real(0.0);
+    if (!Insert::Math::LinearHatWeightsClamped(r, dr, nr, i_left, w_left,
+                                               w_right))
+    {
         return bar_rho[base + i_left];
     }
-
-    amrex::Real const w_right = (r - r_left) / denom;
-    amrex::Real const w_left = (r_right - r) / denom;
+    int const i_right = i_left + 1;
     return bar_rho[base + i_left] * w_left + bar_rho[base + i_right] * w_right;
 }
 

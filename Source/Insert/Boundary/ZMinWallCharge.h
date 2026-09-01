@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Insert/Math/InterpUtils.h"
+
 #include <AMReX.H>
 #include <AMReX_Array4.H>
 #include <AMReX_Box.H>
@@ -46,26 +48,18 @@ DepositZMinWallChargeToNodes (amrex::Array4<amrex::Real> const& wall_charge,
 
     amrex::Real const x_node = (x - grid.problo_x) * grid.inv_dx;
     amrex::Real const y_node = (y - grid.problo_y) * grid.inv_dy;
-    if (x_node < amrex::Real(0.0) ||
-        x_node > static_cast<amrex::Real>(grid.nx - 1) ||
-        y_node < amrex::Real(0.0) ||
-        y_node > static_cast<amrex::Real>(grid.ny - 1))
+
+    // Positions outside the node range are discarded.
+    int i_left = 0;
+    int j_left = 0;
+    amrex::Real wx_right = amrex::Real(0.0);
+    amrex::Real wy_right = amrex::Real(0.0);
+    if (!Math::LinearHatWeightsDiscardOutside(x_node, grid.nx, i_left,
+                                              wx_right) ||
+        !Math::LinearHatWeightsDiscardOutside(y_node, grid.ny, j_left,
+                                              wy_right))
     {
         return;
-    }
-
-    int i_left = static_cast<int>(amrex::Math::floor(x_node));
-    int j_left = static_cast<int>(amrex::Math::floor(y_node));
-    amrex::Real wx_right = x_node - static_cast<amrex::Real>(i_left);
-    amrex::Real wy_right = y_node - static_cast<amrex::Real>(j_left);
-
-    if (i_left >= grid.nx - 1) {
-        i_left = grid.nx - 2;
-        wx_right = amrex::Real(1.0);
-    }
-    if (j_left >= grid.ny - 1) {
-        j_left = grid.ny - 2;
-        wy_right = amrex::Real(1.0);
     }
 
     amrex::Real const wx_left = amrex::Real(1.0) - wx_right;

@@ -1,8 +1,7 @@
 #include "TruncatedConeSurfaceSampler.h"
 
+#include "Insert/Math/Sampling.h"
 #include "Utils/TextMsg.H"
-
-#include <AMReX_Random.H>
 
 #include <cmath>
 
@@ -17,8 +16,8 @@ TruncatedConeSurfaceSampler::TruncatedConeSurfaceSampler (
     amrex::ParticleReal theta_min,
     amrex::ParticleReal theta_max)
     : m_slope(slope),
-      m_r2_min(r_min * r_min),
-      m_r2_max(r_max * r_max),
+      m_r_min(r_min),
+      m_r_max(r_max),
       m_r_reference(r_reference),
       m_z_reference(z_reference),
       m_theta_min(theta_min),
@@ -44,9 +43,10 @@ TruncatedConeSurfaceSampler::coordinates (
     amrex::ParticleReal radius,
     amrex::ParticleReal theta) const noexcept
 {
+    const auto planar = Math::PolarToCartesian(radius, theta);
     return amrex::XDim3{
-        radius * std::cos(theta),
-        radius * std::sin(theta),
+        planar.x,
+        planar.y,
         m_z_reference + m_slope * (radius - m_r_reference)};
 }
 
@@ -54,16 +54,14 @@ amrex::ParticleReal
 TruncatedConeSurfaceSampler::sampleRadius (
     amrex::RandomEngine const& engine) const
 {
-    return std::sqrt(
-        m_r2_min + (m_r2_max - m_r2_min) * amrex::Random(engine));
+    return Math::SampleAreaUniformRadius(m_r_min, m_r_max, engine);
 }
 
 amrex::ParticleReal
 TruncatedConeSurfaceSampler::sampleTheta (
     amrex::RandomEngine const& engine) const
 {
-    return m_theta_min +
-           (m_theta_max - m_theta_min) * amrex::Random(engine);
+    return Math::SampleUniform(m_theta_min, m_theta_max, engine);
 }
 
 amrex::XDim3

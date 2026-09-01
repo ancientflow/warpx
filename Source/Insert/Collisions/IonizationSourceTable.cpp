@@ -6,6 +6,7 @@
 #include "Utils/WarpXConst.H"
 #include "WarpX.H"
 
+#include "Insert/Math/BilinearCell.h"
 #include "Insert/Utils/InsertUtils.h"
 
 #include <AMReX_Array.H>
@@ -13,6 +14,7 @@
 #include <AMReX_DistributionMapping.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_IntVect.H>
+#include <AMReX_Math.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_PlotFileUtil.H>
@@ -32,8 +34,6 @@
 namespace {
 
 using namespace amrex::literals;
-
-constexpr amrex::Real pi = 3.141592653589793238462643383279502884_rt;
 
 struct IonizationSourceTable {
     static constexpr int nr = IONIZATION_SOURCE_NR;
@@ -130,7 +130,8 @@ struct IonizationSourceTable {
                     upper_r_node ? (0.5_rt * r0 + (1.0_rt / 3.0_rt) * dr)
                                  : (0.5_rt * r0 + (1.0_rt / 6.0_rt) * dr);
 
-                volume += pi * dz * dr * radial_basis_integral;
+                volume += amrex::Math::pi<amrex::Real>() * dz * dr *
+                          radial_basis_integral;
             }
         }
 
@@ -148,19 +149,19 @@ struct IonizationSourceTable {
         amrex::Real const s01 = node_rate[node_index(iz, ir + 1)];
         amrex::Real const s11 = node_rate[node_index(iz + 1, ir + 1)];
 
-        amrex::Real const a = s00;
-        amrex::Real const b = s10 - s00;
-        amrex::Real const c = s01 - s00;
-        amrex::Real const d = s11 - s10 - s01 + s00;
-        amrex::Real const alpha = a + 0.5_rt * b;
-        amrex::Real const beta = c + 0.5_rt * d;
+        // The bilinear cell model is shared with the sampling side
+        // (IonizationSourceSampler::samplePosition); keep the two in sync
+        // through the shared Insert::Math helpers.
+        auto const coef =
+            Insert::Math::MakeBilinearCoefficients(s00, s10, s01, s11);
         amrex::Real const r0 = r_min + static_cast<amrex::Real>(ir) * dr;
-        amrex::Real const q0 = alpha * r0;
-        amrex::Real const q1 = alpha * dr + beta * r0;
-        amrex::Real const q2 = beta * dr;
-        amrex::Real const integral = q0 + 0.5_rt * q1 + (1.0_rt / 3.0_rt) * q2;
+        auto const q =
+            Insert::Math::MakeRadialCdfCoefficients(coef, r0, dr);
+        amrex::Real const integral =
+            Insert::Math::CubicCdfIntegral(q.q0, q.q1, q.q2);
 
-        return std::max(0.0_rt, 2.0_rt * pi * dz * dr * integral);
+        return std::max(0.0_rt, 2.0_rt * amrex::Math::pi<amrex::Real>() * dz *
+                                        dr * integral);
     }
 
     void
@@ -243,7 +244,8 @@ struct IonizationSourceTable {
                         rmin + static_cast<amrex::Real>(ir) * dr_plot;
                     amrex::Real const r1 = r0 + dr_plot;
                     amrex::Real const volume =
-                        pi * (r1 * r1 - r0 * r0) * dz_plot;
+                        amrex::Math::pi<amrex::Real>() * (r1 * r1 - r0 * r0) *
+                        dz_plot;
                     arr(i, j, k, 0) = cell_rate_ptr[idx];
                     arr(i, j, k, 1) = cell_rate_ptr[idx] / volume;
                     arr(i, j, k, 2) = cell_count_ptr[idx];
