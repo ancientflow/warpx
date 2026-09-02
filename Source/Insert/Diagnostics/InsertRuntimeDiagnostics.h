@@ -23,6 +23,7 @@ void ZMinWallChargeDeposit ();
 void ThrustCalc ();
 void BeamDivergenceCalc ();
 void IEDFCalc ();
+void ZmaxRadialExitStatsCalc ();
 void ClearHallBoundaryParticleCache ();
 
 } // namespace Insert

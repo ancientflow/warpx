@@ -15,6 +15,7 @@ make
 - `bin/CrossSectionInterpolator`
 - `bin/CrossSectionScaler`
 - `bin/SpokeAzimuthalDensity`
+- `bin/ZmaxRadialExitAnalyzer`
 
 ---
 
@@ -167,3 +168,45 @@ cd Source/Insert/tool
 - 形状参数取自当前 spoke 工况（`Script/3d_hall_spoke`）：中性耗尽宽度 0.30π、最小比 1/6、下降指数 4、reverse=1；等离子体峰 σ=π/8，相位相对中性最小值向峰方向偏移 15°
 - **相位经过平移**：中性峰与等离子体峰（相隔 39°）关于绘图域中心对称，即中性峰在 199.5°、等离子体峰在 160.5°，仅为绘图方便，不改变形状
 - 修改默认参数需编辑源文件顶部的常量并重新编译
+
+---
+
+## 工具四：ZmaxRadialExitAnalyzer
+
+分析 WarpX `zmax_radial_exit_diag` 诊断的输出（`zmax_radial/density.dat` 与 `vdist.dat`），给出各半径档的平均速度、方向温度以及各速度分量与麦克斯韦分布的偏离程度。
+
+### 用法
+
+```bash
+ZmaxRadialExitAnalyzer <zmax_radial_dir> [mass_kg] [output_file]
+```
+
+| 参数 | 说明 |
+|------|------|
+| `zmax_radial_dir` | 包含 `density.dat` 和 `vdist.dat` 的目录 |
+| `mass_kg` | **可选**。粒子质量，默认 2.18017e-25（Xe 原子） |
+| `output_file` | **可选**。默认 `<zmax_radial_dir>/radial_analysis.dat` |
+
+### 示例
+
+```bash
+cd Source/Insert/tool
+./bin/ZmaxRadialExitAnalyzer zmax_radial
+```
+
+### 输出列
+
+`r_center_m  weight  num_macro  mean_vx  mean_vy  mean_vz  drift_speed  T_x  T_y  T_z  T_avg  TV_x  TV_y  TV_z  KL_x  KL_y  KL_z`
+
+- 方向温度 `T_i = m·sigma_i^2 / k_B`，`T_avg` 为三分量平均
+- `TV`（全变差距离）与 `KL`（KL 散度，nats）衡量该分量直方图与同均值、同方差麦克斯韦分布的差异，0 表示完全一致
+- 直方图按 bin 中心取值；权重为累积宏粒子权重，归一化在内部完成
+
+### 径向剖面拟合
+
+工具还会对 `flux(r)`、`T_x/T_y/T_z(r)`、`mean_vz(r)` 做以 `num_macro` 为权重的最小二乘拟合（`u = r/R ∈ [0,1]`，`R` 取 `density.dat` 最后一档的 `r_hi`）：
+
+- 多项式 `polyN`：`y = c0 + c1 u + … + cN u^N`（N = 0–3，正规方程 + Gauss-Jordan 部分主元消元）
+- 形状族（仅通量）：`pow` = `A(1-u²)^p`，`cos` = `A·cos(πu/2)^p`；`p` 网格搜索（0.1–4，步长 0.02），`A` 对固定 `p` 解析求解
+
+stdout 打印每个量全部模型的系数、加权 RMS 相对误差和最大相对误差，并标出最佳模型；`mean_vx`/`mean_vy` 按对称性应恒为 0，只报告加权绝对 RMS（m/s）。各量的测量值与最佳拟合值写入 `<zmax_radial_dir>/radial_fit.dat`（每量两列，便于绘图）。
