@@ -13,6 +13,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Collisions/CoupledBackgroundMCCCollision.cpp
         Collisions/IonizationSourceTable.cpp
         Diagnostics/InsertRuntimeDiagnostics.cpp
+        Diagnostics/ZmaxRadialExitStats.cpp
         Fields/ECDIChargeFilter.cpp
         Fields/SpectralBoundarySchur.cpp
         Geometry/TruncatedConeSurfaceSampler.cpp

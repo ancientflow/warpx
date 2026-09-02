@@ -7,6 +7,7 @@
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Diagnostics/ZmaxRadialExitStats.h"
 #include "Insert/Injection/InsertInjection.h"
 
 #include <AMReX_ParmParse.H>
@@ -123,6 +124,10 @@ CollisionRecord (amrex::Vector<int> vec) {
 
 void
 AfterDiagnostics () {
+    // Must run before any diagnostic that clears the boundary buffer
+    // (e.g. ClearHallBoundaryParticleCache), otherwise the zmax exit
+    // statistics see an already-cleared buffer and record nothing.
+    ZmaxRadialExitStatsCalc();
 #ifdef HALL3D
     // NeutralAtomEBInteraction();
     // SecondaryEmission();
