@@ -64,16 +64,6 @@ HasParameter (std::string const& name)
     return pp.contains(name);
 }
 
-std::unique_ptr<HallCoordinateDistribution>
-MakeDummyPositionDistribution ()
-{
-    return std::make_unique<HallCoordinateDistribution>(
-        HallCoordinateSystem::cartesian,
-        std::make_unique<HallConstantDistribution1D>(amrex::ParticleReal(0.0)),
-        std::make_unique<HallConstantDistribution1D>(amrex::ParticleReal(0.0)),
-        std::make_unique<HallConstantDistribution1D>(amrex::ParticleReal(0.0)));
-}
-
 class HallTruncatedConePositionSampler final : public HallPositionSampler
 {
 public:
@@ -173,7 +163,11 @@ MakeConfiguredPositionDistribution (
             coupled_distribution == "hole_array_plane",
             "Unsupported Hall coupled position distribution: " +
                 coupled_distribution);
-        return MakeDummyPositionDistribution();
+        // hole_array_plane implements no distribution itself: position.*
+        // must define the within-hole distribution, which the hole layer
+        // then dispatches and offsets to each hole center.
+        return MakeHallCoordinateDistribution(
+            pp, prefix, HallCoordinateSpace::position, "hole_array_plane");
     }
     return MakeHallCoordinateDistribution(pp, prefix, HallCoordinateSpace::position);
 }
@@ -226,8 +220,6 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
         HallHoleArrayPlaneConfig hole_config;
         hole_config.hole_count =
             QueryWithParser<int>(pp, source_name, "hole_count", 48);
-        hole_config.hole_radius = static_cast<amrex::ParticleReal>(
-            GetWithParser<amrex::Real>(pp, source_name, "hole_radius"));
         amrex::Real ring_radius = 0.0;
         if (!utils::parser::queryWithParser(
                 pp, source_name, "hole_ring_radius", ring_radius)) {
@@ -236,8 +228,6 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
         }
         hole_config.ring_radius =
             static_cast<amrex::ParticleReal>(ring_radius);
-        hole_config.z = static_cast<amrex::ParticleReal>(
-            QueryWithParser<amrex::Real>(pp, source_name, "z", 0.0));
         source.setHoleArrayPlane(hole_config);
     }
 

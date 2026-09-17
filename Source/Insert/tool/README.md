@@ -15,6 +15,7 @@ make
 - `bin/CrossSectionInterpolator`
 - `bin/CrossSectionScaler`
 - `bin/SpokeAzimuthalDensity`
+- `bin/XeXeVHSGenerator`
 - `bin/ZmaxRadialExitAnalyzer`
 
 ---
@@ -166,12 +167,61 @@ cd Source/Insert/tool
 - 每条曲线按各自最大值归一化（峰值 = 1）
 - 分布公式与 `Source/Insert/Injection/HallDistribution1D.cpp` 完全一致
 - 形状参数取自当前 spoke 工况（`Script/3d_hall_spoke`）：中性耗尽宽度 0.30π、最小比 1/6、下降指数 4、reverse=1；等离子体峰 σ=π/8，相位相对中性最小值向峰方向偏移 15°
-- **相位经过平移**：中性峰与等离子体峰（相隔 39°）关于绘图域中心对称，即中性峰在 199.5°、等离子体峰在 160.5°，仅为绘图方便，不改变形状
+- **相位经过平移**：整体平移 180°，中性峰在 200°、等离子体峰在 161°，坐标取整便于绘图标注，仅为绘图方便，不改变形状
 - 修改默认参数需编辑源文件顶部的常量并重新编译
 
 ---
 
-## 工具四：ZmaxRadialExitAnalyzer
+## 工具四：XeXeVHSGenerator
+
+用 VHS（Variable Hard Sphere）模型生成 Xe–Xe 中性原子弹性碰撞截面文件，供 WarpX DSMC 模块使用。物理规范见 `xe_coll.md`。
+
+### 用法
+
+```bash
+XeXeVHSGenerator [output_file] [num_points] [E_min_eV] [E_max_eV]
+```
+
+| 参数 | 说明 |
+|------|------|
+| `output_file` | **可选**。输出文件路径，默认 `Xe_Xe_VHS_elastic.dat` |
+| `num_points` | **可选**。对数间隔能量点数，默认 1000 |
+| `E_min_eV` | **可选**。最小质心系能量（eV），默认 1e-6 |
+| `E_max_eV` | **可选**。最大质心系能量（eV），默认 10 |
+
+### 示例
+
+```bash
+cd Source/Insert/tool
+./bin/XeXeVHSGenerator
+```
+
+- 输出 `build/bin/Xe_Xe_VHS_elastic.dat`（通过 `paths.conf` 重定向）
+
+### 物理模型
+
+- VHS 参数：T_ref = 273 K，d_ref = 5.74e-10 m，omega = 0.85，m_Xe = 131.293 u
+- 截面公式：`sigma(E) = pi*d_ref^2 / Gamma(2.5-omega) * (E_ref/E)^(omega-1/2)`，其中 `E_ref = k_B*T_ref/e`
+- 即 `sigma ∝ E^(-0.35)`
+- 第一列为质心系相对能量（eV），对数间隔、严格递增，不含 E = 0
+
+### 输出与自检
+
+输出为纯两列 ASCII（`能量[eV]` `截面[m²]`），无注释行，与 WarpX `ScatteringProcess::readCrossSectionFile` 兼容。程序运行后打印若干测试能量点的截面值及 log-log 斜率（应约为 -0.35），并在截面非正或网格非严格递增/单调下降时报错退出。
+
+WarpX 输入中使用方式：
+
+```text
+XeXe.type = dsmc
+XeXe.species = neutral_Xe
+XeXe.scattering_processes = elastic
+XeXe.elastic_cross_section = Xe_Xe_VHS_elastic.dat
+XeXe.elastic_scattering_angle_model = isotropic
+```
+
+---
+
+## 工具五：ZmaxRadialExitAnalyzer
 
 分析 WarpX `zmax_radial_exit_diag` 诊断的输出（`zmax_radial/density.dat` 与 `vdist.dat`），给出各半径档的平均速度、方向温度以及各速度分量与麦克斯韦分布的偏离程度。
 

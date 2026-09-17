@@ -41,11 +41,11 @@
  *                                    minimum toward the neutral peak)
  *     plasma phase       = spoke_phase - spoke_ion_width + spoke_plasma_shift
  *
- * For plotting, the phase is re-centered so that the neutral peak and the
- * plasma peak straddle the middle of the [0, 360] deg domain: the plasma
- * peak sits 39 deg behind the neutral peak, so the neutral peak is placed
- * at 199.5 deg and the plasma peak at 160.5 deg. This is a pure phase
- * shift and does not change the profile shapes.
+ * For plotting, both profiles are shifted by exactly 180 deg so that the
+ * peaks land on round coordinates near the middle of the [0, 360] deg
+ * domain: the neutral peak moves from 20 deg to 200 deg and the plasma
+ * peak from -19 deg to 161 deg. This is a pure phase shift and does not
+ * change the profile shapes.
  *
  * Each curve is normalized by its own maximum so that the peak value is 1.
  */
@@ -64,12 +64,12 @@ constexpr double spoke_sigma = pi / 8.0;
 constexpr double spoke_plasma_shift = pi / 12.0; // 15 deg
 constexpr int max_spoke_count = 4;
 
-// The physical phase is 20 deg (pi/9). For plotting, the phase is re-centered
-// so that the neutral peak and the plasma peak straddle the middle of the
-// plot domain (180 deg): the plasma peak sits (ion_width - shift) = 39 deg
-// behind the neutral peak, so the neutral peak is placed 19.5 deg past 180.
-constexpr double spoke_phase =
-    pi + 0.5 * (spoke_ion_width - spoke_plasma_shift);
+// The physical phase is 20 deg (pi/9). For plotting, both profiles are
+// shifted by exactly 180 deg so that the peaks land on round coordinates
+// near the middle of the [0, 360] deg domain: the neutral peak moves from
+// 20 deg to 200 deg and the plasma peak from -19 deg to 161 deg. This is a
+// pure phase shift and does not change the profile shapes.
+constexpr double spoke_phase = pi / 9.0 + pi;
 constexpr double plasma_phase =
     spoke_phase - spoke_ion_width + spoke_plasma_shift;
 

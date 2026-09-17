@@ -47,6 +47,30 @@
  * printed to stdout and measured-vs-fit values are written to
  * <zmax_radial_dir>/radial_fit.dat.
  *
+ * Post-simulation workflow (updating the fit parameters after a DSMC run):
+ *   1. Run the channel DSMC simulation (Script/3d_xe_dsmc) to completion.
+ *      At the final step it writes the exit statistics directory
+ *      zmax_radial/ (density.dat and vdist.dat) in the run directory.
+ *   2. Run this tool on that directory:
+ *          cd Source/Insert/tool
+ *          ./bin/ZmaxRadialExitAnalyzer <run_dir>/zmax_radial
+ *      An absolute path bypasses the bin/paths.conf redirection; a relative
+ *      path is resolved against the base path configured there (build/bin).
+ *      The default particle mass is already the Xe atom, so mass_kg can be
+ *      omitted.
+ *   3. From stdout, take the poly3 (cubic in u = r/r_inj) coefficients of
+ *      flux, T_x, T_y, T_z and mean_vz, and update the 20 my_constants in
+ *      the downstream input files (both must be kept in sync):
+ *          Script/3d_xe_exit_inlet   (jf_c0..c3, tx_c0..c3, ty_c0..c3,
+ *                                     tz_c0..c3, mvz_c0..c3)
+ *          Script/3d_hall_exit_inlet (same parameter set)
+ *   4. (Optional) Run Script/3d_xe_exit_inlet (1 step, collisions off) to
+ *      validate that injection sampling of the new profiles is correct
+ *      before using Script/3d_hall_exit_inlet for production runs.
+ *   Note: the fit coefficients are condition-dependent (e.g. wall
+ *   temperature). After changing the DSMC setup, the coefficients in both
+ *   downstream files must be re-fitted from the new run output.
+ *
  * Input file formats (tab-separated, '#' comment lines, one column-header
  * row, vdist.dat has one blank line between radial-bin blocks):
  *   density.dat: r_lo_m  r_hi_m  r_center_m  weight  num_macro  flux_per_m2_s

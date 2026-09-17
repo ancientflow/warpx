@@ -392,6 +392,30 @@ xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / mass)
 ```
 
+### 径向关联速度（sigma(r)/mean(r)）
+
+仅对 `gaussian` / `positive_gaussian` 类型的速度轴，可把 `sigma`、`mean`
+写成局部半径 `r` 的 parser 函数，逐粒子按注入位置求值（坐标关联速度采样）：
+
+```text
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*(r/r_prof)) / mass)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*(r/r_prof)
+xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*(r/r_prof)) / mass)
+```
+
+- `r` 为注入局部半径：`r = sqrt((x-x_offset)^2 + (y-y_offset)^2)`，
+  即以注入源轴线为圆心，与 `x_offset`/`y_offset` 平移无关。
+- 一旦某轴给出 `sigma(r)`，该轴的常量 `sigma` 不再需要（忽略）；
+  `mean(r)` 可选，缺省时回退到常量 `mean`（默认 0）。只给 `mean(r)`
+  而不给 `sigma(r)` 会报错。
+- 可与常量参数轴混用（未配置 `(r)` 形式的轴仍按常量采样）。
+- 典型用途：把出口平面统计的 T_x/T_y/T_z(r)、mean_vz(r) 拟合剖面
+  回灌为入口条件；配合 `position.r.distribution = parser` 与
+  `function(r) = r * flux(r)` 实现通量加权的径向位置采样（几何权重 r
+  需显式写在表达式中）。完整示例见 `Script/3d_hall_exit_inlet`。
+
 ### 轴对称旋转进气速度
 
 `rotating_axis` 在局部坐标中独立采样非各向同性漂移麦克斯韦分布，局部
@@ -450,17 +474,37 @@ xe_neutral_inlet.position.theta_max = 2*pi
 
 ## 孔阵列平面位置分布
 
-孔阵列配置为：
+孔阵列是更高一层的坐标分派：它本身不实现任何分布，必须与 `position.*`
+的常规分布搭配。底层分布定义单孔内的局部坐标（通常为圆斑），孔阵列
+层先把粒子轮流分派到环上的某个孔，再把采样位置连同局部坐标原点一起
+偏移到该孔中心：
 
 ```text
 xe_neutral_inlet.position.coupled_distribution = hole_array_plane
 xe_neutral_inlet.hole_count = 48
-xe_neutral_inlet.hole_radius = 0.001 / l_factor
 xe_neutral_inlet.hole_ring_radius = (0.021 + 0.031) / 4 / l_factor
-xe_neutral_inlet.z = 0.0
+
+# 孔内圆斑分布（通量加权）
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = parser
+xe_neutral_inlet.position.r.min = 0.0
+xe_neutral_inlet.position.r.max = hole_radius
+xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*(r/hole_radius) + jf_c2*(r/hole_radius)**2 + jf_c3*(r/hole_radius)**3)
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = 0.0
 ```
 
-`hole_ring_radius` 可用旧参数名 `ring_radius` 替代。使用 `hole_array_plane` 时，`position.coordinate_system` 和 `position.r/theta/z` 不参与采样。
+`hole_ring_radius` 可用旧参数名 `ring_radius` 替代。孔径、孔内剖面和注入
+平面 z 完全由底层 `position.*` 分布决定，孔阵列层不再接受 `hole_radius`、
+`z` 参数。孔分派按粒子序号轮流进行（每次注入随机起始孔），各孔均分
+粒子数，即均分质量流量。
+
+由于局部坐标原点随粒子偏移到孔中心，径向关联速度 `sigma(r)/mean(r)`
+中的 `r` 是相对于孔中心的孔内半径，圆柱/旋转轴速度变换的局部方位角
+同样以孔中心为参考。
 
 ## 特殊 source：average_ionization_source
 

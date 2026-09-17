@@ -319,14 +319,24 @@ my_constants.dt = 3e-12
 
 ### hole_array_plane 位置耦合分布
 
-位置分布可以使用特殊耦合分布：
+孔阵列是更高一层的坐标分派层，本身不实现任何分布，必须与
+`<source>.position.*` 的常规分布搭配；底层分布定义单孔内的局部坐标：
 
 ```text
 <source>.position.coupled_distribution = hole_array_plane
 <source>.hole_count = 48
-<source>.hole_radius = <radius>
 <source>.hole_ring_radius = <ring_radius>
-<source>.z = 0.0
+
+<source>.position.coordinate_system = cylindrical
+<source>.position.r.distribution = parser
+<source>.position.r.min = 0.0
+<source>.position.r.max = <hole_radius>
+<source>.position.r.function(r) = r * flux(r)
+<source>.position.theta.distribution = uniform
+<source>.position.theta.min = 0.0
+<source>.position.theta.max = 2*pi
+<source>.position.z.distribution = constant
+<source>.position.z.value = 0.0
 ```
 
 参数：
@@ -334,12 +344,13 @@ my_constants.dt = 3e-12
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | `<source>.hole_count` | `48` | 孔数量，必须 `> 0`。 |
-| `<source>.hole_radius` | 必填 | 单个孔半径，必须 `> 0`。 |
 | `<source>.hole_ring_radius` | 若缺省则读取 `<source>.ring_radius` | 孔中心所在环半径，必须 `>= 0`。 |
-| `<source>.z` | `0.0` | 注入平面 z 坐标。 |
 
-使用该模式时，`<source>.position.*` 的普通三轴分布不会用于位置采样。
-速度仍按普通 velocity 分布配置。
+粒子按序号轮流分派到各孔（每次注入随机起始孔），采样位置连同局部
+坐标原点一起偏移到孔中心；`sigma(r)/mean(r)` 的 `r` 与局部方位角均
+以孔中心为参考。孔径与孔内剖面由底层 `position.*` 分布定义（例如
+`r` 轴用 `function(r) = r * flux(r)` 实现通量加权）。速度仍按普通
+velocity 分布配置。
 
 ### 平均电离源
 
@@ -427,9 +438,17 @@ xe_neutral_inlet.y_offset = 0.025 / l_factor
 
 xe_neutral_inlet.position.coupled_distribution = hole_array_plane
 xe_neutral_inlet.hole_count = 48
-xe_neutral_inlet.hole_radius = 0.001 / l_factor
 xe_neutral_inlet.hole_ring_radius = (0.021 + 0.031) / 4 / l_factor
-xe_neutral_inlet.z = 0.0
+
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = area_uniform
+xe_neutral_inlet.position.r.min = 0.0
+xe_neutral_inlet.position.r.max = 0.001 / l_factor
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = 0.0
 
 xe_neutral_inlet.velocity.coordinate_system = cartesian
 xe_neutral_inlet.velocity.vx.distribution = gaussian
