@@ -66,9 +66,6 @@ HallInjectionSource::setHoleArrayPlane (HallHoleArrayPlaneConfig config)
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         config.ring_radius >= amrex::ParticleReal(0.0),
         "Hall hole_array_plane requires ring_radius >= 0.");
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        config.hole_radius > amrex::ParticleReal(0.0),
-        "Hall hole_array_plane requires hole_radius > 0.");
     m_hole_array_plane = config;
     m_use_hole_array_plane = true;
 }
@@ -152,30 +149,23 @@ EmissionSample
 HallInjectionSource::samplePosition (
     int particle_index, amrex::RandomEngine& engine)
 {
-    EmissionSample sample;
+    EmissionSample sample = m_position_space->samplePosition(engine);
+    sample.x_offset = m_x_offset;
+    sample.y_offset = m_y_offset;
     if (m_use_hole_array_plane) {
-        const auto radius = Math::SampleAreaUniformRadius<amrex::Real>(
-            amrex::Real(0.0), m_hole_array_plane.hole_radius, engine);
-        const auto theta =
-            Math::SampleUniform<amrex::Real>(amrex::Real(0.0), TwoPi(), engine);
+        // The hole layer only dispatches the particle to a hole and shifts
+        // the local frame origin to that hole's center, so radial velocity
+        // profiles (sigma(r)/mean(r)) evaluate at the within-hole radius.
         const int hole_index =
             (particle_index + m_hole_start) % m_hole_array_plane.hole_count;
         const auto hole_theta =
             static_cast<amrex::ParticleReal>(hole_index) * TwoPi() /
             static_cast<amrex::ParticleReal>(m_hole_array_plane.hole_count);
-
-        const auto in_hole = Math::PolarToCartesian(radius, theta);
         const auto hole_offset =
             Math::PolarToCartesian(m_hole_array_plane.ring_radius, hole_theta);
-        sample.x = static_cast<amrex::ParticleReal>(in_hole.x + hole_offset.x);
-        sample.y = static_cast<amrex::ParticleReal>(in_hole.y + hole_offset.y);
-        sample.z = m_hole_array_plane.z;
-    } else {
-        sample = m_position_space->samplePosition(engine);
+        sample.x_offset += static_cast<amrex::ParticleReal>(hole_offset.x);
+        sample.y_offset += static_cast<amrex::ParticleReal>(hole_offset.y);
     }
-
-    sample.x_offset = m_x_offset;
-    sample.y_offset = m_y_offset;
     sample.x += sample.x_offset;
     sample.y += sample.y_offset;
     return sample;

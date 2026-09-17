@@ -231,6 +231,18 @@ AxisNameFromPrefix (std::string const& prefix)
     return prefix.substr(pos + 1);
 }
 
+/** True when <prefix>.<name>(r) is given, i.e. the parameter is a parser
+ *  function of the local radius evaluated in HallCoordinateDistribution;
+ *  the constant <prefix>.<name> is then unused. */
+bool
+HasRadialParam (amrex::ParmParse const& pp, std::string const& prefix,
+                std::string const& name)
+{
+    std::string expression;
+    return utils::parser::Query_parserString(
+        pp, prefix + "." + name + "(r)", expression);
+}
+
 } // namespace
 
 HallConstantDistribution1D::HallConstantDistribution1D (
@@ -609,12 +621,22 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
             GetWithParser<amrex::ParticleReal>(pp, prefix, "max"));
     }
     if (distribution == "gaussian") {
+        if (HasRadialParam(pp, prefix, "sigma")) {
+            // sigma/mean are functions of r, evaluated per particle in
+            // HallCoordinateDistribution; the constant base is unused.
+            return std::make_unique<HallGaussianDistribution1D>(
+                amrex::ParticleReal(0.0), amrex::ParticleReal(0.0));
+        }
         return std::make_unique<HallGaussianDistribution1D>(
             QueryWithParser<amrex::ParticleReal>(
                 pp, prefix, "mean", amrex::ParticleReal(0.0)),
             GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "positive_gaussian") {
+        if (HasRadialParam(pp, prefix, "sigma")) {
+            return std::make_unique<HallPositiveGaussianDistribution1D>(
+                amrex::ParticleReal(0.0), amrex::ParticleReal(0.0));
+        }
         return std::make_unique<HallPositiveGaussianDistribution1D>(
             QueryWithParser<amrex::ParticleReal>(
                 pp, prefix, "mean", amrex::ParticleReal(0.0)),

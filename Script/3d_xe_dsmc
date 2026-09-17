@@ -5,7 +5,7 @@
 # Xe 中性原子以 0.6 mg/s 从 zmin 面直径 1mm 的圆形区域、
 # 400K 半麦克斯韦分布流入。
 # 计算域在通道出口 z = 5mm 处截断: z < 5mm 内 r > r_inj 为固体
-# (通道壁与 z = 5mm 环形端面, 400K 漫反射, analytic_boundary);
+# (通道壁与 z = 5mm 环形端面, 600K 漫反射, analytic_boundary);
 # 通道出口即 zmax 边界, 粒子出通道直接吸收 (自由流出, 忽略外部
 # 羽流碰撞与回流)。
 # 物种只有中性 Xe 原子, 只考虑 Xe-Xe 弹性碰撞(VHS 截面)。
@@ -30,7 +30,7 @@ warpx.grid_type = collocated
 #------------------------------------
 my_constants.m_xe = 2.18017e-25     # Xe 原子质量 [kg]
 my_constants.m_dot = 0.6e-6         # 质量流率 0.6 mg/s [kg/s]
-my_constants.T_inj = 400            # 注入气体与壁面温度 [K]
+my_constants.T_inj = 400            # 注入气体温度 [K] (壁面温度 400K, 见 wall_temperature)
 my_constants.r_inj = 0.5e-3         # 注入圆/通道半径 (直径 1mm) [m]
 my_constants.z_wall = 5e-3          # 通道出口 (端面) 位置 [m]
 my_constants.xe_weight = 2e6        # 宏粒子权重, 每步约 6.9e4 个宏粒子
@@ -78,7 +78,7 @@ xe_neutral.do_not_deposit = 1
 xe_neutral.save_particles_at_zhi = 1
 
 #------------------------------------
-# 通道壁/端面边界: 400K 漫反射
+# 通道壁/端面边界: 600K 漫反射
 #------------------------------------
 # 固体区: r > r_inj 且 z < z_wall (通道壁材料)
 # 记 f1 = r_inj^2 - x^2 - y^2 (管内为正), f2 = z - z_wall (端面上方为正),
@@ -154,10 +154,10 @@ diag1.fields_to_plot = rho_xe_neutral
 diag1.write_species = 0
 diag1.format = openpmd
 
-warpx.reduced_diags_names = particle_number
+warpx.reduced_diags_names = particle_number_inlet
 
-particle_number.type = ParticleNumber
-particle_number.intervals = 100
+particle_number_inlet.type = ParticleNumber
+particle_number_inlet.intervals = 100
 
 #------------------------------------
 # zmax (= 通道出口) 径向统计 (稳态后累积, 最后一步写出 zmax_radial/*.dat)

@@ -248,7 +248,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
     amrex::Print() << "Reading averaged background density FAB from "
                    << m_input_fab << "\n";
     amrex::VisMF::Read(m_background_density_fabs[0], m_input_fab);
-    m_background_density_fabs[0].mult(0.5);
+    //m_background_density_fabs[0].mult(0.5);
 #endif
 }
 

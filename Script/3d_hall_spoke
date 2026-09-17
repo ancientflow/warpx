@@ -28,7 +28,7 @@ my_constants.Ty = 200
 my_constants.Tz = 140
 my_constants.vz0 = 240
 my_constants.Te0 = 10
-my_constants.anode_current_path = "anode_current_spoke1_200V.txt"
+my_constants.anode_current_path = "anode_current_spoke4_200V.txt"
 
 # Spoke azimuthal distribution parameters
 # Neutral density peak (ionization front) at spoke_phase.
@@ -48,7 +48,7 @@ my_constants.spoke_min_ratio = 1.0/6.0
 my_constants.spoke_drop_exponent = 4.0
 my_constants.spoke_reverse = 1
 my_constants.spoke_sigma = pi / 8
-my_constants.spoke_count = 1
+my_constants.spoke_count = 4
 
 #粒子参数定义
 my_constants.weight_ratio = 4
@@ -246,7 +246,7 @@ xe_netural.injection_sources = xeinit
 
 #初始注入
 xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = ../../data/spoke_init_1.bp5
+xe_netural.xeinit.injection_file = ../../data/spoke_init_4.bp5
 
 
 #碰撞设置
@@ -265,10 +265,10 @@ intensive_diag.intervals = 500
 intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural phi
 intensive_diag.format = openpmd
 intensive_diag.write_species = 0
-intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag1_200V
+intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag4_200V
 #宏观统计
-warpx.reduced_diags_names = particle_number_spoke1_200V
+warpx.reduced_diags_names = particle_number_spoke4_200V
 
-particle_number_spoke1_200V.type = ParticleNumber
-particle_number_spoke1_200V.intervals = 500
+particle_number_spoke4_200V.type = ParticleNumber
+particle_number_spoke4_200V.intervals = 500
 

@@ -27,7 +27,7 @@ my_constants.Tx = 200
 my_constants.Ty = 200
 my_constants.Tz = 140
 my_constants.vz0 = 240
-my_constants.anode_current_path = "anode_current_spoke0_200V.txt"
+my_constants.anode_current_path = "anode_current_spoke_200V.txt"
 
 #粒子参数定义
 my_constants.weight_ratio = 4
@@ -121,7 +121,7 @@ my_constants.collision_record_diag = 0
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
-insert.initial_sources = channel_plasma
+#insert.initial_sources = channel_plasma
 insert.continuous_sources = cathode_electron xe_neutral_inlet
 
 # --- Initial channel plasma (electrons + xe_ions) ---
@@ -224,7 +224,8 @@ xe_netural.injection_sources = xeinit
 
 #初始注入
 xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = ../../data/spoke_init_0.bp5
+#xe_netural.xeinit.injection_file = ../../data/spoke_init_0.bp5
+xe_netural.xeinit.injection_file = diags/particle_diag/openpmd_015000.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_test
@@ -240,9 +241,9 @@ intensive_diag.intervals = 500
 intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural phi
 intensive_diag.format = openpmd
 intensive_diag.write_species = 0
-intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag0_200V
+intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag_200V
 #宏观统计
-warpx.reduced_diags_names = particle_number_spoke0_200V
+warpx.reduced_diags_names = particle_number_spoke_200V
 
-particle_number_spoke0_200V.type = ParticleNumber
-particle_number_spoke0_200V.intervals = 500
+particle_number_spoke_200V.type = ParticleNumber
+particle_number_spoke_200V.intervals = 500

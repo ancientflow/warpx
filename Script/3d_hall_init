@@ -56,7 +56,7 @@ warpx.poisson_solver = multigrid
 
 #几何
 
-my_constants.n_cell = 64
+my_constants.n_cell = 256
 
 amr.n_cell = n_cell n_cell n_cell
 amr.blocking_factor = n_cell

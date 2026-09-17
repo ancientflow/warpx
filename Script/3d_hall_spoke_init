@@ -20,7 +20,7 @@ my_constants.spoke_ion_width = 0.30*pi
 my_constants.spoke_min_ratio = 1.0/6.0
 my_constants.spoke_drop_exponent = 4.0
 my_constants.spoke_reverse = 1
-my_constants.spoke_count = 3
+my_constants.spoke_count = 4
 
 ##几何参数定义
 my_constants.L = 0.05

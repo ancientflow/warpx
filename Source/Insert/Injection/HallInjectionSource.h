@@ -21,12 +21,14 @@ struct HallSpeciesVelocityConfig
     std::unique_ptr<HallCoordinateDistribution> velocity_space;
 };
 
+/** Higher-layer hole assignment: implements no distribution of its own and
+ *  must be paired with a regular position distribution that defines the
+ *  within-hole local coordinates. Each particle is dispatched to one hole
+ *  on the ring and its sampled position is offset to that hole's center. */
 struct HallHoleArrayPlaneConfig
 {
     int hole_count = 48;
     amrex::ParticleReal ring_radius = amrex::ParticleReal(0.0);
-    amrex::ParticleReal hole_radius = amrex::ParticleReal(0.0);
-    amrex::ParticleReal z = amrex::ParticleReal(0.0);
 };
 
 class HallInjectionSource

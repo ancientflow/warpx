@@ -1,5 +1,5 @@
 #场诊断
-diagnostics.diags_names = ECDI_diag full_diag
+diagnostics.diags_names = ECDI_diag #full_diag
 
 
 full_diag.diag_type = Full
@@ -7,18 +7,18 @@ full_diag.intervals = 3000000:5000000:10000
 full_diag.fields_to_plot = rho_electrons Ex Ey Ez
 full_diag.write_species = 0
 full_diag.format = openpmd
-full_diag.file_prefix = /media/ps/disk1/WarpXData/full_diag
+full_diag.file_prefix = /media/ps/disk2/WarpXData/full_diag
 
 
 ECDI_diag.diag_type = Full
 ECDI_diag.intervals = 500
-ECDI_diag.fields_to_plot = rho_electrons
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_netural phi rho_xe_ions
 ECDI_diag.write_species = 0
 ECDI_diag.format = openpmd
-ECDI_diag.file_prefix = /media/ps/disk1/WarpXData/ECDI_diag
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/carbon_diag
 
 #宏观统计
-warpx.reduced_diags_names = particle_number
+warpx.reduced_diags_names = particle_number_carbon
 
-particle_number.type = ParticleNumber
-particle_number.intervals = 500
+particle_number_carbon.type = ParticleNumber
+particle_number_carbon.intervals = 500
