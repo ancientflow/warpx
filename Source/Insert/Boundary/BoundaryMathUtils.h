@@ -99,12 +99,15 @@ BisectBoundaryIntersection (
     // then recompute the intersection point at that fraction.
     dt_fraction_hit = amrex::bisect(
         amrex::Real(0.0), amrex::Real(1.0), signed_value_at, tol);
-    x_hit = x_end;
-    UpdatePosition(x_hit.x, x_hit.y, x_hit.z, u.x, u.y, u.z,
-                   -dt_fraction_hit * dt, mass);
+    amrex::ParticleReal xh = x_end.x;
+    amrex::ParticleReal yh = x_end.y;
+    amrex::ParticleReal zh = x_end.z;
+    UpdatePosition(xh, yh, zh, u.x, u.y, u.z, -dt_fraction_hit * dt, mass);
+    x_hit = amrex::XDim3{xh, yh, zh};
 }
 
-/** \brief Advance a position with a constant proper velocity u over dt. */
+/** \brief Advance a position with a constant proper velocity u over dt.
+ *         The position is updated in place. */
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void
 AdvancePosition (
@@ -112,8 +115,14 @@ AdvancePosition (
     amrex::ParticleReal const mass, amrex::Real const dt) noexcept
 {
     // UpdatePosition internally converts the proper velocity u = gamma * v
-    // to the physical velocity using the particle mass.
-    UpdatePosition(x.x, x.y, x.z, u.x, u.y, u.z, dt, mass);
+    // to the physical velocity using the particle mass. XDim3 stores
+    // amrex::Real while UpdatePosition works on amrex::ParticleReal, so the
+    // coordinates go through local copies.
+    amrex::ParticleReal xt = x.x;
+    amrex::ParticleReal yt = x.y;
+    amrex::ParticleReal zt = x.z;
+    UpdatePosition(xt, yt, zt, u.x, u.y, u.z, dt, mass);
+    x = amrex::XDim3{xt, yt, zt};
 }
 
 /** \brief Specular reflection of the proper velocity about the boundary

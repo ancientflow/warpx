@@ -128,7 +128,7 @@ struct AnodeElectronCurrentFunctor
     amrex::ParticleReal const* AMREX_RESTRICT pvz;
     amrex::ParticleReal zmin;
     HallAnodeRingConfig anode_ring;
-    amrex::Real* AMREX_RESTRICT data;
+    amrex::ParticleReal* AMREX_RESTRICT data;
 
     AMREX_GPU_DEVICE AMREX_FORCE_INLINE
     void operator() (long const ip) const noexcept
@@ -162,7 +162,7 @@ struct AnodeIonCurrentFunctor
     amrex::ParticleReal const* AMREX_RESTRICT pvz;
     amrex::ParticleReal zmin;
     HallAnodeRingConfig anode_ring;
-    amrex::Real* AMREX_RESTRICT data;
+    amrex::ParticleReal* AMREX_RESTRICT data;
 
     AMREX_GPU_DEVICE AMREX_FORCE_INLINE
     void operator() (long const ip) const noexcept
@@ -378,11 +378,11 @@ AnodeCurrentCalc () {
         auto* xe_ion_zmin =
             mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
 
-        amrex::Gpu::DeviceVector<amrex::Real> device_charge(
-            anode_current_data_size, 0.0_rt);
+        amrex::Gpu::DeviceVector<amrex::ParticleReal> device_charge(
+            anode_current_data_size, 0.0_prt);
         amrex::Vector<amrex::Real> host_charge(
             anode_current_data_size, 0.0_rt);
-        amrex::Real* device_ptr = device_charge.dataPtr();
+        amrex::ParticleReal* device_ptr = device_charge.dataPtr();
         HallAnodeRingConfig const anode_ring =
             ReadHallAnodeRingConfig(warpx_instance.Geom(0));
         amrex::ParticleReal const zmin =
@@ -427,8 +427,13 @@ AnodeCurrentCalc () {
             }
         }
 
+        amrex::Vector<amrex::ParticleReal> host_buffer(
+            device_charge.size());
         amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_charge.begin(),
-                         device_charge.end(), host_charge.begin());
+                         device_charge.end(), host_buffer.begin());
+        for (std::size_t i = 0; i < host_buffer.size(); ++i) {
+            host_charge[i] = static_cast<amrex::Real>(host_buffer[i]);
+        }
         amrex::ParallelDescriptor::ReduceRealSum(
             host_charge.data(), static_cast<int>(host_charge.size()),
             amrex::ParallelDescriptor::IOProcessorNumber());

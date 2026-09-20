@@ -312,7 +312,7 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
             int* p_particle_num = (*npIter).dataPtr();*/
             auto& soa = ptile.GetStructOfArrays();
             auto& soa_arr = soa.GetRealData();
-            amrex::Real const* pw = soa_arr[PIdx::w].dataPtr();
+            amrex::ParticleReal const* pw = soa_arr[PIdx::w].dataPtr();
             amrex::ParallelFor(numbins, [=] AMREX_GPU_DEVICE(long ibin) {
                 const int offset_start = offsets[ibin],
                           offset_end = offsets[ibin + 1];
@@ -425,7 +425,7 @@ BackgroundCoupledDensity::backgroundSpeciesClean (
             auto& soa = ptile.GetStructOfArrays();
             uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
             auto& soa_arr = soa.GetRealData();
-            amrex::Real const* pw = soa_arr[PIdx::w].dataPtr();
+            amrex::ParticleReal const* pw = soa_arr[PIdx::w].dataPtr();
             amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE(int ip) {
                 if (std::abs(pw[ip]) < 10.0_prt) {
                     auto pidw = amrex::ParticleIDWrapper{idcpu[ip]};

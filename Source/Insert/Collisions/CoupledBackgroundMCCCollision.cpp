@@ -679,7 +679,8 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
         const amrex::ParticleReal col_select = amrex::Random(engine);
 
         // get velocities of gas particles from a Maxwellian distribution
-        auto const vel_std = Insert::Math::ThermalVelocityFromTemperature(T_a, M);
+        auto const vel_std =
+            Insert::Math::ThermalVelocityFromTemperature(T_a, M);
         ua_x = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
         ua_y = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
         ua_z = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
@@ -849,7 +850,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
             auto get_atom_postion = GetParticlePosition<PIdx>(ptile);
             uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
             auto& soa_arr = soa.GetRealData();
-            amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
+            amrex::ParticleReal* pw = soa_arr[PIdx::w].dataPtr();
 #endif
 
             amrex::Gpu::DeviceVector<int> num_delete(numbins, 0);
@@ -963,10 +964,11 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                 Compute_shape_factor<depos_order> const
                                     compute_shape_factor;
 
-                                amrex::Real sx[depos_order +
-                                               1] = {0._rt},
-                                               sy[depos_order + 1] = {0._rt},
-                                               sz[depos_order + 1] = {0._rt};
+                                amrex::ParticleReal
+                                    sx[depos_order +
+                                       1] = {0._rt},
+                                       sy[depos_order + 1] = {0._rt},
+                                       sz[depos_order + 1] = {0._rt};
                                 int px = compute_shape_factor(sx, rpx),
                                     py = compute_shape_factor(sy, rpy),
                                     pz = compute_shape_factor(sz, rpz);
@@ -994,8 +996,8 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                         &consumption_arr(
                                             lo.x + px + ix, lo.y + py + iy,
                                             lo.z + pz + iz),
-                                        sx[ix] * sy[iy] * sz[iz] *
-                                            consumed_density);
+                                        static_cast<amrex::Real>(sx[ix] * sy[iy] * sz[iz] *
+                                            consumed_density));
                                 }
                             }
                         }
@@ -1025,12 +1027,9 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                     amrex::ParticleReal x, y, z;
                     get_ion_position(i, x, y, z);
 
-                    const amrex::ParticleReal rpx = (x - xyzmin.x) *
-                                                    inv_cell_size.x,
-                                              rpy = (y - xyzmin.y) *
-                                                    inv_cell_size.y,
-                                              rpz = (z - xyzmin.z) *
-                                                    inv_cell_size.z;
+                    const amrex::Real rpx = (x - xyzmin.x) * inv_cell_size.x,
+                                      rpy = (y - xyzmin.y) * inv_cell_size.y,
+                                      rpz = (z - xyzmin.z) * inv_cell_size.z;
                     Compute_shape_factor<depos_order> const
                         compute_shape_factor;
                     amrex::Real sx[depos_order + 1] = {0._rt},
