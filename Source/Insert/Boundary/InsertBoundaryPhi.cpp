@@ -118,7 +118,7 @@ AnodeVoltage () {
                                                domain.smallEnd(0),
                                                domain.smallEnd(1), problo_x,
                                                problo_y, dx, dy, config1)) {
-                    phi(i, j, k) = config1.voltage;
+                    //phi(i, j, k) = config1.voltage;
                 }
             });
         }

@@ -124,7 +124,7 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                       pj = static_cast<int>(rpy - grow_dim.y),
                       pk = static_cast<int>(rpz - grow_dim.z);
             Compute_shape_factor<depos_order> const compute_shape_factor;
-            amrex::Real sx[depos_order + 1] = {0._rt},
+            amrex::ParticleReal sx[depos_order + 1] = {0._rt},
                                          sy[depos_order + 1] = {0._rt},
                                          sz[depos_order + 1] = {0._rt};
 

@@ -85,7 +85,7 @@ ReplaceParticlesEachCell (int* p_delete, const int* p_offset, int* p_indices,
 
     uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
     auto& soa_arr = soa.GetRealData();
-    amrex::Real* pw = soa_arr[PIdx::w].dataPtr();
+    amrex::ParticleReal* pw = soa_arr[PIdx::w].dataPtr();
     amrex::Box box = pti.tilebox();
     box.grow(ground_rho.nGrowVect());
     const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0.0_rt);

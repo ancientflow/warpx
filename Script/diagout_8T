@@ -11,14 +11,14 @@ full_diag.file_prefix = /media/ps/disk2/WarpXData/full_diag
 
 
 ECDI_diag.diag_type = Full
-ECDI_diag.intervals = 500
+ECDI_diag.intervals = 5000
 ECDI_diag.fields_to_plot = rho_electrons rho_xe_netural phi rho_xe_ions
 ECDI_diag.write_species = 0
 ECDI_diag.format = openpmd
-ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/carbon_diag
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/compare_diag
 
 #宏观统计
-warpx.reduced_diags_names = particle_number_carbon
+warpx.reduced_diags_names = particle_number_compare
 
-particle_number_carbon.type = ParticleNumber
-particle_number_carbon.intervals = 500
+particle_number_compare.type = ParticleNumber
+particle_number_compare.intervals = 500

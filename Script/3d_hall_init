@@ -1,11 +1,12 @@
 #全局定义
-max_step = 5000
+max_step = 10000
 my_constants.diag_num = 40
 my_constants.reduced_diag_num = diag_num*10
 my_constants.dt = 5.6e-10
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
 warpx.self_fields_required_precision = 1e-06
+warpx.self_fields_absolute_tolerance = 1e-3
 warpx.sort_intervals = 50
 amrex.the_arena_init_size = 1024*1024*1024*8
 #参数定义
