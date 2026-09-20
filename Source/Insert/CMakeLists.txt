@@ -1,5 +1,8 @@
 foreach(D IN LISTS WarpX_DIMS)
     warpx_set_suffix_dims(SD ${D})
+    if(D STREQUAL "3")
+        target_compile_definitions(lib_${SD} PUBLIC WARPX_USE_HALL_ELECTROSTATIC_MATERIALS)
+    endif()
     target_sources(lib_${SD}
       PRIVATE
         Core/WarpXInsert.cpp

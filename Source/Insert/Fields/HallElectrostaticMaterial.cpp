@@ -183,22 +183,19 @@ HallElectrostaticMaterial::readParametersOnce ()
         "insert.use_electrostatic_materials cannot be combined with a Python "
         "poissonsolver callback.");
 
-    std::string relative_permittivity_expression;
-    std::string anode_implicit_expression;
-    std::string anode_potential_expression;
     utils::parser::Store_parserString(
-        pp, "relative_permittivity_function(x,y,z)", relative_permittivity_expression);
+        pp, "relative_permittivity_function(x,y,z)", m_relative_permittivity_expression);
     utils::parser::Store_parserString(
-        pp, "anode_implicit_function(x,y,z)", anode_implicit_expression);
+        pp, "anode_implicit_function(x,y,z)", m_anode_implicit_expression);
     utils::parser::Store_parserString(
-        pp, "anode_potential_function(x,y,z)", anode_potential_expression);
+        pp, "anode_potential_function(x,y,z)", m_anode_potential_expression);
 
     m_relative_permittivity_parser = std::make_unique<amrex::Parser>(
-        utils::parser::makeParser(relative_permittivity_expression, {"x", "y", "z"}));
+        utils::parser::makeParser(m_relative_permittivity_expression, {"x", "y", "z"}));
     m_anode_implicit_parser = std::make_unique<amrex::Parser>(
-        utils::parser::makeParser(anode_implicit_expression, {"x", "y", "z"}));
+        utils::parser::makeParser(m_anode_implicit_expression, {"x", "y", "z"}));
     m_anode_potential_parser = std::make_unique<amrex::Parser>(
-        utils::parser::makeParser(anode_potential_expression, {"x", "y", "z"}));
+        utils::parser::makeParser(m_anode_potential_expression, {"x", "y", "z"}));
 
     m_relative_permittivity =
         utils::parser::compileParser<3>(m_relative_permittivity_parser.get());
@@ -240,6 +237,33 @@ HallElectrostaticMaterial::prepare (
 
     if (!layoutMatches(phi, max_level)) {
         defineOrRebuild(phi, max_level);
+    }
+
+    for (int lev = 0; lev <= max_level; ++lev) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            rho[lev]->boxArray().CellEqual(m_anode_mask[lev]->boxArray()) &&
+                rho[lev]->DistributionMap() == m_anode_mask[lev]->DistributionMap() &&
+                rho[lev]->ixType().nodeCentered(),
+            "The volume-anode mask requires rho and phi to share the nodal layout.");
+
+        for (amrex::MFIter mfi(*m_anode_mask[lev], amrex::TilingIfNotGPU());
+             mfi.isValid(); ++mfi)
+        {
+            amrex::Box const& box = mfi.tilebox();
+            auto const mask = m_anode_mask[lev]->const_array(mfi);
+            auto const fixed_phi = m_anode_phi[lev]->const_array(mfi);
+            auto const phi_array = phi[lev]->array(mfi);
+            auto const rho_array = rho[lev]->array(mfi);
+            amrex::ParallelFor(
+                box,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                {
+                    if (mask(i, j, k) == 0) {
+                        phi_array(i, j, k) = fixed_phi(i, j, k);
+                        rho_array(i, j, k) = 0.0;
+                    }
+                });
+        }
     }
 }
 
@@ -371,7 +395,11 @@ HallElectrostaticMaterial::defineOrRebuild (
     if (warpx.Verbose()) {
         amrex::Print() << "Hall electrostatic material initialized: epsilon_r in ["
                        << epsilon_min << ", " << epsilon_max << "], "
-                       << masked_nodes << " masked nodal entries.\n";
+                       << masked_nodes << " masked nodal entries.\n"
+                       << "  relative permittivity (dimensionless): "
+                       << m_relative_permittivity_expression << "\n"
+                       << "  anode implicit function: " << m_anode_implicit_expression << "\n"
+                       << "  anode potential [V]: " << m_anode_potential_expression << "\n";
     }
 }
 

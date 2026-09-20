@@ -151,6 +151,9 @@ ElectrostaticSolver::computePhi (
     bool const is_igf_2d,
     std::optional<ablastr::fields::MultiLevelVectorField> efield,
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    , ablastr::fields::ConstMultiLevelScalarField const* const relative_permittivity
+#endif
 ) const
 {
     // create a vector to our fields, sorted by level
@@ -240,6 +243,9 @@ ElectrostaticSolver::computePhi (
         warpx.gett_new(0),
         eb_farray_box_factory,
         overset_masks
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        , relative_permittivity
+#endif
     );
 
 }

@@ -11,6 +11,7 @@
 #include <AMReX_iMultiFab.H>
 
 #include <memory>
+#include <string>
 
 namespace Insert {
 
@@ -60,6 +61,9 @@ private:
     amrex::ParserExecutor<3> m_relative_permittivity;
     amrex::ParserExecutor<3> m_anode_implicit;
     amrex::ParserExecutor<3> m_anode_potential;
+    std::string m_relative_permittivity_expression;
+    std::string m_anode_implicit_expression;
+    std::string m_anode_potential_expression;
 
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_epsilon_r;
     amrex::Vector<std::unique_ptr<amrex::iMultiFab>> m_anode_mask;

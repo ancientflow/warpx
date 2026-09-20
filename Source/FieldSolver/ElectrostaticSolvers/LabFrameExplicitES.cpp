@@ -16,6 +16,9 @@
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/HallElectrostaticMaterial.H"
+#endif
 #ifdef HALL3D
 #include "Insert/Fields/SpectralBoundarySchur.h"
 #endif
@@ -211,7 +214,20 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    auto& electrostatic_material = Insert::HallElectrostaticMaterial::GetInstance();
+    std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
+    ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr;
+    if (electrostatic_material.enabled()) {
+        electrostatic_material.prepare(rho_fp, phi_fp, max_level);
+        anode_masks = *electrostatic_material.anodeMasks();
+        relative_permittivity = electrostatic_material.relativePermittivity();
+    } else {
+        Insert::SetBoundaryPhi();//修正电势
+    }
+#else
     Insert::SetBoundaryPhi();//修正电势
+#endif
 
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
@@ -230,7 +246,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         int const verbosity = verbose_step ? self_fields_verbosity : 0;
         computePhi(rho_fp, phi_fp, beta, self_fields_required_precision,
                    self_fields_absolute_tolerance, self_fields_max_iters,
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+                   verbosity, is_igf_2d_slices, Efield_fp,
+                   anode_masks, relative_permittivity);
+#else
                    verbosity, is_igf_2d_slices, Efield_fp);
+#endif
 #endif
 
     }

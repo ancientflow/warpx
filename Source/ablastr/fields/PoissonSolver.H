@@ -42,6 +42,9 @@
 #include <AMReX_MFInterp_C.H>
 #include <AMReX_MLMG.H>
 #include <AMReX_MLLinOp.H>
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#   include <AMReX_MLNodeLaplacian.H>
+#endif
 #include <AMReX_MLNodeTensorLaplacian.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_Parser.H>
@@ -220,6 +223,9 @@ computePhi (
     [[maybe_unused]] std::optional<amrex::Real const> current_time = std::nullopt, // only used for EB
     [[maybe_unused]] const std::optional<amrex::Vector<T_FArrayBoxFactory const *> >& eb_farray_box_factory = std::nullopt, // only used for EB
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr
+#endif
 )
 {
     using namespace amrex::literals;
@@ -228,6 +234,24 @@ computePhi (
 
     auto const finest_level = static_cast<int>(rho.size() - 1);
 
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    if (relative_permittivity != nullptr) {
+        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+            static_cast<int>(relative_permittivity->size()) == finest_level + 1,
+            "Relative-permittivity data must cover every Poisson level.");
+        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+            !is_solver_igf_on_lev0,
+            "Variable relative permittivity is supported only by the MLMG Poisson solver.");
+        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+            !eb_enabled,
+            "Variable relative permittivity cannot be combined with embedded boundaries.");
+        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+            std::all_of(beta.begin(), beta.end(), [](amrex::Real const value) {
+                return value == 0.0;
+            }),
+            "Variable relative permittivity is supported only for a lab-frame solve.");
+    }
+#endif
     if (!rel_ref_ratio.has_value()) {
         ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(finest_level == 0u,
                                            "rel_ref_ratio must be set if mesh-refinement is used");
@@ -318,6 +342,29 @@ computePhi (
         }
 
         std::unique_ptr<amrex::MLNodeLinOp> linop;
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        if (relative_permittivity != nullptr) {
+            amrex::MultiFab const* const epsilon_r = (*relative_permittivity)[lev];
+            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                epsilon_r != nullptr,
+                "Relative-permittivity data contains a null level pointer.");
+            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                epsilon_r->ixType().cellCentered() && epsilon_r->nComp() == 1,
+                "Relative permittivity must be a single-component cell-centered field.");
+            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                epsilon_r->boxArray().CellEqual(grids[lev]) &&
+                    epsilon_r->DistributionMap() == dmap[lev],
+                "Relative permittivity must use the Poisson grid layout.");
+
+            auto linop_nodelap = std::make_unique<amrex::MLNodeLaplacian>(
+                amrex::Vector<amrex::Geometry>{geom[lev]},
+                amrex::Vector<amrex::BoxArray>{grids[lev]},
+                amrex::Vector<amrex::DistributionMapping>{dmap[lev]},
+                info);
+            linop_nodelap->setSigma(0, *epsilon_r);
+            linop = std::move(linop_nodelap);
+        } else {
+#endif
         if (eb_enabled || is_rz) {
             // In the presence of EB or RZ: the solver assumes that the beam is
             // propagating along  one of the axes of the grid, i.e. that only *one*
@@ -390,6 +437,9 @@ computePhi (
             linop_tenslap->setBeta(beta_solver); // for the non-axis-aligned solver
             linop = std::move(linop_tenslap);
         }
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        }
+#endif
 
         // Level 0 domain boundary
         if constexpr (std::is_same_v<T_BoundaryHandler, std::nullopt_t>) {

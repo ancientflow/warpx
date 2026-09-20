@@ -100,6 +100,9 @@ public:
         bool is_igf_2d_slices,
         std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt, // only used for EB
         std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr
+#endif
     ) const;
 
     /**
