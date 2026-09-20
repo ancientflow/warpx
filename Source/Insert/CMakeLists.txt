@@ -15,6 +15,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Diagnostics/ZmaxRadialExitStats.cpp
         Fields/ECDIChargeFilter.cpp
+        Fields/HallElectrostaticMaterial.cpp
         Fields/SpectralBoundarySchur.cpp
         Geometry/TruncatedConeSurfaceSampler.cpp
         Injection/DistributionSampler1D.cpp
