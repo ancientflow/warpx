@@ -3,6 +3,57 @@
 本文档整理 `Source/Insert` 当前运行时诊断和 Hall 注入输入参数。参数名按
 AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 
+## 静电介质与体阳极
+
+该功能只用于 3D Cartesian、lab-frame、MLMG、单层网格计算，不支持 EB、IGF、
+relativistic electrostatic solver 或 Python `poissonsolver` callback。
+
+官方 WarpX/ablastr 求解路径由唯一的编译宏
+`WARPX_USE_HALL_ELECTROSTATIC_MATERIALS` 控制。宏在
+`Source/Insert/CMakeLists.txt` 中只为 3D target 定义。注释对应的
+`target_compile_definitions` 行并重新加载 CMake，即可使官方目录编译原有求解路径；
+Insert 下的材料实现仍可保留在源文件列表中。
+
+宏启用后，使用以下输入打开材料功能：
+
+```text
+insert.use_electrostatic_materials = 1
+
+my_constants.ceramic_top = 2.0e-3
+my_constants.ceramic_epsilon_r = 4.0
+my_constants.anode_xmin = -5.0e-3
+my_constants.anode_xmax =  5.0e-3
+my_constants.anode_ymin = -5.0e-3
+my_constants.anode_ymax =  5.0e-3
+my_constants.anode_zmin =  1.8e-3
+my_constants.anode_zmax =  2.0e-3
+my_constants.anode_voltage = 300.0
+
+# Cell-centered、无量纲的相对介电常数。这里 z < ceramic_top 为陶瓷。
+insert.relative_permittivity_function(x,y,z) = \
+    "if(z < ceramic_top, ceramic_epsilon_r, 1.0)"
+
+# Nodal 隐式函数；小于或等于零的节点属于体阳极。
+insert.anode_implicit_function(x,y,z) = \
+    "max(max(x-anode_xmax, anode_xmin-x), \
+          max(max(y-anode_ymax, anode_ymin-y), \
+              max(z-anode_zmax, anode_zmin-z)))"
+
+# Nodal 阳极固定电势，单位 V；第一版为静态空间表达式。
+insert.anode_potential_function(x,y,z) = "anode_voltage"
+```
+
+`relative_permittivity_function` 必须在整个 cell-centered 网格上返回有限且严格大于
+零的值。等离子体和真空通常取 `1`，陶瓷可取 `4`。输入值是
+`epsilon_r`，不能乘入 `epsilon_0`；Poisson 方程右端仍由 WarpX 除以
+`epsilon_0`。
+
+阳极表达式在节点上只解析一次，`anode_implicit_function <= 0` 的节点写入 overset
+mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z 向 nodal 层。
+每次 Poisson 求解前，mask 为零的节点恢复到阳极电势，并清除这些节点上的 `rho`。
+陶瓷和阳极均处于统一场计算域中；粒子吸收、壁面自由电荷和阳极电流仍由独立的
+Insert 模块处理。
+
 ## 运行时诊断
 
 ### 总体节奏
