@@ -131,6 +131,8 @@ class HallWallCharge {
      * kernels. */
     [[nodiscard]] amrex::MultiFab& get (int lev);
 
+    [[nodiscard]] bool isDefined () const noexcept { return m_defined; }
+
     /** Record that a deposition kernel has written into the persistent source.
      */
     void

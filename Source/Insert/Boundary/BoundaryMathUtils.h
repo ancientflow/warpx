@@ -1,6 +1,7 @@
 #ifndef WARPX_INSERT_BOUNDARYMATHUTILS_H_
 #define WARPX_INSERT_BOUNDARYMATHUTILS_H_
 
+#include "Insert/Boundary/AnalyticBoundaryGeometry.h"
 #include "Insert/Boundary/WallInteractionOperators.h"
 #include "Particles/Pusher/UpdatePosition.H"
 
@@ -25,9 +26,8 @@
  *  particle invalidation are policy and deliberately do NOT live here; they
  *  belong to the particle-processing driver layer.
  *
- *  Velocities are relativistic proper velocities u = gamma * v, matching
- *  the WarpX particle storage convention. Position updates go through
- *  UpdatePosition and therefore require the particle mass.
+ *  Analytic-wall trajectory reconstruction treats the stored velocity as a
+ *  non-relativistic velocity. This is the model used by the wall policies.
  */
 namespace Insert::BoundaryMath {
 
@@ -40,7 +40,7 @@ inline constexpr amrex::Real bisection_tolerance = amrex::Real(1.0e-6);
 template <typename Boundary>
 [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 bool
-IsOutsideDomain (Boundary const& boundary, amrex::XDim3 const& x) noexcept
+IsOutsideDomain (Boundary const& boundary, AnalyticBoundaryPosition const& x) noexcept
 {
     // A negative sign marks the solid side of the boundary.
     return boundary.SignedValue(x) < amrex::ParticleReal(0.0);
@@ -60,8 +60,7 @@ IsOutsideDomain (Boundary const& boundary, amrex::XDim3 const& x) noexcept
  *
  * \param boundary        geometry operator
  * \param x_end           end-of-step particle position
- * \param u               particle proper velocity (assumed constant over the step)
- * \param mass            particle mass (needed for the u -> v conversion)
+ * \param ux,uy,uz        particle velocity (assumed constant over the step)
  * \param dt              timestep
  * \param x_hit           output: intersection point on the boundary
  * \param dt_fraction_hit output: fraction of dt between x_hit and x_end
@@ -71,9 +70,10 @@ template <typename Boundary>
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void
 BisectBoundaryIntersection (
-    Boundary const& boundary, amrex::XDim3 const& x_end,
-    amrex::XDim3 const& u, amrex::ParticleReal const mass,
-    amrex::Real const dt, amrex::XDim3& x_hit,
+    Boundary const& boundary, AnalyticBoundaryPosition const& x_end,
+    amrex::ParticleReal const ux, amrex::ParticleReal const uy,
+    amrex::ParticleReal const uz,
+    amrex::Real const dt, AnalyticBoundaryPosition& x_hit,
     amrex::Real& dt_fraction_hit,
     amrex::Real const tol = bisection_tolerance) noexcept
 {
@@ -83,7 +83,9 @@ BisectBoundaryIntersection (
         amrex::ParticleReal xt = x_end.x;
         amrex::ParticleReal yt = x_end.y;
         amrex::ParticleReal zt = x_end.z;
-        UpdatePosition(xt, yt, zt, u.x, u.y, u.z, -dt_fraction * dt, mass);
+        xt -= ux * dt_fraction * dt;
+        yt -= uy * dt_fraction * dt;
+        zt -= uz * dt_fraction * dt;
         return boundary.SignedValue({xt, yt, zt});
     };
 
@@ -102,8 +104,10 @@ BisectBoundaryIntersection (
     amrex::ParticleReal xh = x_end.x;
     amrex::ParticleReal yh = x_end.y;
     amrex::ParticleReal zh = x_end.z;
-    UpdatePosition(xh, yh, zh, u.x, u.y, u.z, -dt_fraction_hit * dt, mass);
-    x_hit = amrex::XDim3{xh, yh, zh};
+    xh -= ux * dt_fraction_hit * dt;
+    yh -= uy * dt_fraction_hit * dt;
+    zh -= uz * dt_fraction_hit * dt;
+    x_hit = AnalyticBoundaryPosition{xh, yh, zh};
 }
 
 /** \brief Advance a position with a constant proper velocity u over dt.

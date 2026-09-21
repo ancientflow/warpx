@@ -62,6 +62,29 @@ mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z
 陶瓷和阳极均处于统一场计算域中；粒子吸收、壁面自由电荷和阳极电流仍由独立的
 Insert 模块处理。
 
+## 解析吸收壁面（阶段 2）
+
+解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。
+每个物种可独立选择与每个壁面是否交互；当前阶段只支持 `absorb`。
+
+```text
+insert.analytic_walls = ceramic anode
+
+# F > 0 是有效的等离子体区域，F < 0 是该壁面的无效区域。
+analytic_wall.ceramic.signed_value(x,y,z) = "z - ceramic_top"
+analytic_wall.ceramic.normal_x(x,y,z) = "0.0"
+analytic_wall.ceramic.normal_y(x,y,z) = "0.0"
+analytic_wall.ceramic.normal_z(x,y,z) = "1.0"
+
+electrons.analytic_wall.ceramic.behaviors = absorb
+ions.analytic_wall.anode.behaviors = absorb
+```
+
+吸收仅在物种实际推进的步执行。粒子进入无效区域后，在轨迹和零等值面的交点沉积
+`q * w` 到持久 `wall_charge`，随后失效并由本步的 `Redistribute` 删除。交点坐标及
+形函数权重使用 `ParticleReal`；只有写入场 FAB 时转换为 `Real`。该功能要求前述材料
+Poisson 路径已启用，以分配和求解持久壁面电荷。
+
 ## 运行时诊断
 
 ### 总体节奏
