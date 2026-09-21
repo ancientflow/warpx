@@ -38,14 +38,10 @@ my_constants.anode_zmax =  2.0e-3
 my_constants.anode_voltage = 300.0
 
 # Cell-centered、无量纲的相对介电常数。这里 z < ceramic_top 为陶瓷。
-insert.relative_permittivity_function(x,y,z) = \
-    "if(z < ceramic_top, ceramic_epsilon_r, 1.0)"
+insert.relative_permittivity_function(x,y,z) = "if(z < ceramic_top, ceramic_epsilon_r, 1.0)"
 
 # Nodal 隐式函数；小于或等于零的节点属于体阳极。
-insert.anode_implicit_function(x,y,z) = \
-    "max(max(x-anode_xmax, anode_xmin-x), \
-          max(max(y-anode_ymax, anode_ymin-y), \
-              max(z-anode_zmax, anode_zmin-z)))"
+insert.anode_implicit_function(x,y,z) = "if((x >= anode_xmin) * (x <= anode_xmax) * (y >= anode_ymin) * (y <= anode_ymax) * (z >= anode_zmin) * (z <= anode_zmax), -1.0, 1.0)"
 
 # Nodal 阳极固定电势，单位 V；第一版为静态空间表达式。
 insert.anode_potential_function(x,y,z) = "anode_voltage"
@@ -62,10 +58,13 @@ mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z
 陶瓷和阳极均处于统一场计算域中；粒子吸收、壁面自由电荷和阳极电流仍由独立的
 Insert 模块处理。
 
-## 解析吸收壁面（阶段 2）
+## 解析壁面粒子相互作用
 
 解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。
-每个物种可独立选择与每个壁面是否交互；当前阶段只支持 `absorb`。
+每个物种可独立选择与每个壁面是否交互。`behaviors` 的顺序定义累积概率抽样；除
+最后一项外，每项以 `p_<behavior>(E_eV,u_n,u_t,x,y,z,t)` 给出概率，最后一项采用余量。
+支持 `absorb`、`specular`、`diffuse`、`neutralize`、`secondary_electron_1` 和
+`secondary_electron_2`，最多六项。
 
 ```text
 insert.analytic_walls = ceramic anode
@@ -76,12 +75,24 @@ analytic_wall.ceramic.normal_x(x,y,z) = "0.0"
 analytic_wall.ceramic.normal_y(x,y,z) = "0.0"
 analytic_wall.ceramic.normal_z(x,y,z) = "1.0"
 
-electrons.analytic_wall.ceramic.behaviors = absorb
-ions.analytic_wall.anode.behaviors = absorb
+electrons.analytic_wall.ceramic.behaviors = absorb secondary_electron_1 diffuse
+electrons.analytic_wall.ceramic.p_absorb(E_eV,u_n,u_t,x,y,z,t) = "0.8"
+electrons.analytic_wall.ceramic.p_secondary_electron_1(E_eV,u_n,u_t,x,y,z,t) = "0.1"
+electrons.analytic_wall.ceramic.secondary_electron_species = electrons
+electrons.analytic_wall.ceramic.secondary_electron_temperature_eV = 3.0
+electrons.analytic_wall.ceramic.wall_temperature = 400.0
+
+ions.analytic_wall.anode.behaviors = neutralize specular
+ions.analytic_wall.anode.p_neutralize(E_eV,u_n,u_t,x,y,z,t) = "0.5"
+ions.analytic_wall.anode.neutral_species = xe_neutral
+ions.analytic_wall.anode.wall_temperature = 400.0
 ```
 
-吸收仅在物种实际推进的步执行。粒子进入无效区域后，在轨迹和零等值面的交点沉积
-`q * w` 到持久 `wall_charge`，随后失效并由本步的 `Redistribute` 删除。交点坐标及
+相互作用仅在物种实际推进的步执行。`specular` 与 `diffuse` 保留入射粒子并从交点推进
+剩余子步；`neutralize` 和二次电子发射使入射粒子失效，并以相同宏粒子权重创建目标
+物种。中和产物的温度为 `wall_temperature`（K），二次电子产物的温度为
+`secondary_electron_temperature_eV`。壁面获得的电荷为
+`(q_in - sum(q_out)) * weight`，以交点形函数沉积到持久 `wall_charge`。交点坐标及
 形函数权重使用 `ParticleReal`；只有写入场 FAB 时转换为 `Real`。该功能要求前述材料
 Poisson 路径已启用，以分配和求解持久壁面电荷。
 
