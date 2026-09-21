@@ -37,20 +37,21 @@ namespace Insert::Math {
  * \param i_left   output: left node index, in [0, n_nodes - 2]
  * \param w_right  output: weight of node i_left + 1, in [0, 1]
  */
+template <typename RealType>
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 bool
 LinearHatWeightsDiscardOutside (
-    amrex::Real const u, int const n_nodes,
-    int& i_left, amrex::Real& w_right) noexcept
+    RealType const u, int const n_nodes,
+    int& i_left, RealType& w_right) noexcept
 {
-    if (u < amrex::Real(0.0) || u > static_cast<amrex::Real>(n_nodes - 1)) {
+    if (u < RealType(0.0) || u > static_cast<RealType>(n_nodes - 1)) {
         return false;
     }
     i_left = static_cast<int>(amrex::Math::floor(u));
-    w_right = u - static_cast<amrex::Real>(i_left);
+    w_right = u - static_cast<RealType>(i_left);
     if (i_left >= n_nodes - 1) {
         i_left = n_nodes - 2;
-        w_right = amrex::Real(1.0);
+        w_right = RealType(1.0);
     }
     return true;
 }
