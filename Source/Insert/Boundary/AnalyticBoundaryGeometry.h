@@ -12,6 +12,14 @@
 
 namespace Insert {
 
+/** Particle position kept in particle precision, independently of field precision. */
+struct AnalyticBoundaryPosition
+{
+    amrex::ParticleReal x;
+    amrex::ParticleReal y;
+    amrex::ParticleReal z;
+};
+
 /** \brief Geometry operator for an analytic particle boundary.
  *
  *  Stores the boundary expression and the three component functions of the
@@ -43,7 +51,7 @@ public:
 
         [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
         amrex::ParticleReal
-        SignedValue (amrex::XDim3 const& x) const noexcept
+        SignedValue (AnalyticBoundaryPosition const& x) const noexcept
         {
             // Evaluate the boundary expression F(x, y, z). By convention
             // F > 0 on the computational-domain side and F < 0 on the solid
@@ -54,7 +62,7 @@ public:
 
         [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
         amrex::ParticleReal
-        NormalX (amrex::XDim3 const& x) const noexcept
+        NormalX (AnalyticBoundaryPosition const& x) const noexcept
         {
             // x component of the domain-pointing normal at x.
             return static_cast<amrex::ParticleReal>(m_normal_x(x.x, x.y, x.z));
@@ -62,7 +70,7 @@ public:
 
         [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
         amrex::ParticleReal
-        NormalY (amrex::XDim3 const& x) const noexcept
+        NormalY (AnalyticBoundaryPosition const& x) const noexcept
         {
             // y component of the domain-pointing normal at x.
             return static_cast<amrex::ParticleReal>(m_normal_y(x.x, x.y, x.z));
@@ -70,7 +78,7 @@ public:
 
         [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
         amrex::ParticleReal
-        NormalZ (amrex::XDim3 const& x) const noexcept
+        NormalZ (AnalyticBoundaryPosition const& x) const noexcept
         {
             // z component of the domain-pointing normal at x.
             return static_cast<amrex::ParticleReal>(m_normal_z(x.x, x.y, x.z));
@@ -80,8 +88,8 @@ public:
          *         assembled from the three component functions. Assumes x is
          *         on the boundary. Not necessarily normalized. */
         [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-        amrex::XDim3
-        Normal (amrex::XDim3 const& x) const noexcept
+        AnalyticBoundaryPosition
+        Normal (AnalyticBoundaryPosition const& x) const noexcept
         {
             // Assemble the full normal vector from the three independently
             // defined component functions.

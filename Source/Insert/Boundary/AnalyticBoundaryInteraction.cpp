@@ -3,64 +3,104 @@
 #include "Insert/Boundary/AnalyticBoundaryGeometry.h"
 #include "Insert/Boundary/BoundaryMathUtils.h"
 #include "Insert/Core/WarpXInsert.h"
-#include "Insert/Math/ThermalVelocity.h"
+#include "Insert/Fields/HallWallCharge.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Particles/Pusher/GetAndSetPosition.H"
 #include "Particles/WarpXParticleContainer.H"
 #include "Utils/Parser/ParserUtils.H"
-#include "Utils/WarpXConst.H"
 #include "WarpX.H"
 
+#include <AMReX_BLassert.H>
 #include <AMReX_ParmParse.H>
-#include <AMReX_Random.H>
+#include <AMReX_ParallelFor.H>
 
-#include <cmath>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Insert {
 namespace {
 
-/** \brief Per-species analytic-boundary configuration, parsed once from
- *         <species>.analytic_boundary.* and cached for the whole run. */
-struct SpeciesBoundaryConfig {
-    amrex::ParticleReal absorb_fraction = 0.0;
-    amrex::ParticleReal specular_fraction = 0.0;
-    amrex::ParticleReal wall_temperature = 0.0;
+#if defined(WARPX_DIM_3D)
+
+struct AnalyticWall
+{
+    std::string name;
     std::unique_ptr<AnalyticBoundaryGeometry> geometry;
 };
 
-/** \brief Apply the analytic-boundary interaction to all live particles of
- *         one species, in place.
- *
- *  For each valid particle on the solid side of the boundary, the wall
- *  behavior is drawn once from the configured probabilities:
- *    - absorb:   the particle is invalidated (removed by Redistribute);
- *    - specular: the proper velocity is mirrored about the boundary normal;
- *    - diffuse:  the velocity is re-drawn from the wall Maxwellian.
- *  Reflected particles are placed at the trajectory/boundary intersection
- *  and advanced with their new velocity for the remaining fraction of the
- *  timestep.
- *
- * \param pc                particle container of the interacting species
- * \param boundary          geometry operator (device view)
- * \param absorb_fraction   absorption probability in [0, 1]
- * \param specular_fraction specular reflection probability in [0, 1];
- *                          the remaining probability is diffuse re-emission
- * \param wall_vth          thermal velocity spread for diffuse re-emission
- * \param mass              species mass (for the u -> v conversion)
- * \param dt                timestep
- */
+struct AnalyticWallConfiguration
+{
+    std::vector<AnalyticWall> walls;
+    std::map<std::string, std::vector<bool>> absorbs;
+};
+
+[[nodiscard]] AnalyticWallConfiguration
+ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
+{
+    AnalyticWallConfiguration result;
+    amrex::ParmParse const pp_insert("insert");
+    std::vector<std::string> wall_names;
+    pp_insert.queryarr("analytic_walls", wall_names);
+    if (wall_names.empty()) {
+        return result;
+    }
+
+    std::set<std::string> unique_names;
+    for (std::string const& wall_name : wall_names) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            unique_names.insert(wall_name).second,
+            "insert.analytic_walls must not contain duplicate wall names.");
+
+        amrex::ParmParse const pp_wall("analytic_wall." + wall_name);
+        std::string signed_value;
+        std::string normal_x;
+        std::string normal_y;
+        std::string normal_z;
+        utils::parser::Store_parserString(pp_wall, "signed_value", signed_value);
+        utils::parser::Store_parserString(pp_wall, "normal_x", normal_x);
+        utils::parser::Store_parserString(pp_wall, "normal_y", normal_y);
+        utils::parser::Store_parserString(pp_wall, "normal_z", normal_z);
+        result.walls.push_back({
+            wall_name,
+            std::make_unique<AnalyticBoundaryGeometry>(
+                signed_value, normal_x, normal_y, normal_z)});
+    }
+
+    for (std::string const& species_name : mpc.GetSpeciesNames()) {
+        std::vector<bool> absorbs(result.walls.size(), false);
+        bool has_policy = false;
+        amrex::ParmParse const pp_species(species_name);
+        for (int wall_id = 0; wall_id < static_cast<int>(result.walls.size()); ++wall_id) {
+            std::vector<std::string> behaviors;
+            std::string const parameter =
+                "analytic_wall." + result.walls[wall_id].name + ".behaviors";
+            if (!pp_species.queryarr(parameter.c_str(), behaviors)) {
+                continue;
+            }
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+                behaviors.size() == 1 && behaviors.front() == "absorb",
+                species_name + "." + parameter +
+                    " must be exactly 'absorb' in analytic-wall stage 2.");
+            absorbs[wall_id] = true;
+            has_policy = true;
+        }
+        if (has_policy) {
+            result.absorbs.emplace(species_name, std::move(absorbs));
+        }
+    }
+    return result;
+}
+
 template <typename Boundary>
 void
-ApplyAnalyticBoundaryInteraction (
+ApplyAbsorbingWall (
     WarpXParticleContainer& pc, Boundary const& boundary,
-    amrex::ParticleReal const absorb_fraction,
-    amrex::ParticleReal const specular_fraction,
-    amrex::ParticleReal const wall_vth,
-    amrex::ParticleReal const mass, amrex::Real const dt)
+    amrex::ParticleReal const species_charge, amrex::Real const dt,
+    WallChargeGrid const& grid, amrex::MultiFab& wall_charge)
 {
     for (int lev = 0; lev <= pc.finestLevel(); ++lev) {
 #ifdef AMREX_USE_OMP
@@ -68,80 +108,47 @@ ApplyAnalyticBoundaryInteraction (
 #endif
         for (WarpXParIter pti(pc, lev); pti.isValid(); ++pti) {
             auto GetPosition = GetParticlePosition<PIdx>(pti);
-            auto SetPosition = SetParticlePosition<PIdx>(pti);
-
-            auto& ptile = pti.GetParticleTile();
-            auto& soa = ptile.GetStructOfArrays();
+            auto const charge_grid = wall_charge.array(pti);
+            auto& soa = pti.GetParticleTile().GetStructOfArrays();
             uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
             auto* const AMREX_RESTRICT ux = soa.GetRealData(PIdx::ux).data();
             auto* const AMREX_RESTRICT uy = soa.GetRealData(PIdx::uy).data();
             auto* const AMREX_RESTRICT uz = soa.GetRealData(PIdx::uz).data();
+            auto* const AMREX_RESTRICT weight = soa.GetRealData(PIdx::w).data();
 
-            amrex::ParallelForRNG(
-                pti.numParticles(),
-                [=] AMREX_GPU_DEVICE(
-                    long i, amrex::RandomEngine const& engine) noexcept {
-#if defined(WARPX_DIM_3D)
-                    auto pidw = amrex::ParticleIDWrapper{idcpu[i]};
-                    if (!pidw.is_valid()) { return; }
+            // Deposition scatters several particles onto shared nodes. amrex::For
+            // is required here; HostDevice atomics alone do not make ParallelFor
+            // safe on CPU OpenMP execution.
+            amrex::For(pti.numParticles(), [=] AMREX_GPU_DEVICE (long const i) noexcept {
+                auto pidw = amrex::ParticleIDWrapper{idcpu[i]};
+                if (!pidw.is_valid()) {
+                    return;
+                }
 
-                    amrex::ParticleReal x, y, z;
-                    GetPosition.AsStored(i, x, y, z);
-                    amrex::XDim3 const x_end{x, y, z};
-                    amrex::XDim3 const u_in{ux[i], uy[i], uz[i]};
+                amrex::ParticleReal x;
+                amrex::ParticleReal y;
+                amrex::ParticleReal z;
+                GetPosition.AsStored(i, x, y, z);
+                AnalyticBoundaryPosition const x_end{x, y, z};
+                if (!BoundaryMath::IsOutsideDomain(boundary, x_end)) {
+                    return;
+                }
 
-                    // Particles still on the domain side are untouched.
-                    if (!BoundaryMath::IsOutsideDomain(boundary, x_end)) {
-                        return;
-                    }
-
-                    // Policy: draw the wall behavior once per hit. Absorbed
-                    // particles are invalidated in place and removed by the
-                    // next Redistribute.
-                    amrex::ParticleReal const selector =
-                        static_cast<amrex::ParticleReal>(
-                            amrex::Random(engine));
-                    if (selector < absorb_fraction) {
-                        pidw.make_invalid();
-                        return;
-                    }
-
-                    // Locate the contact point on the boundary by bisecting
-                    // along the trajectory, and evaluate the domain-pointing
-                    // normal there.
-                    amrex::XDim3 x_hit;
-                    amrex::Real dt_fraction_hit;
-                    BoundaryMath::BisectBoundaryIntersection(
-                        boundary, x_end, u_in, mass, dt, x_hit,
-                        dt_fraction_hit);
-                    amrex::XDim3 const normal = boundary.Normal(x_hit);
-
-                    amrex::XDim3 u_out;
-                    if (selector < absorb_fraction + specular_fraction) {
-                        u_out = BoundaryMath::ReflectVelocity(
-                            normal, u_in, engine);
-                    } else {
-                        u_out = BoundaryMath::DiffuseVelocity(
-                            normal, wall_vth, engine);
-                    }
-
-                    // Advance from the contact point with the new velocity
-                    // for the remaining fraction of the timestep.
-                    BoundaryMath::AdvancePosition(
-                        x_hit, u_out, mass, dt_fraction_hit * dt);
-                    SetPosition.AsStored(i, x_hit.x, x_hit.y, x_hit.z);
-                    ux[i] = u_out.x;
-                    uy[i] = u_out.y;
-                    uz[i] = u_out.z;
-#else
-                    amrex::ignore_unused(
-                        engine, boundary, mass, dt, absorb_fraction,
-                        specular_fraction, wall_vth);
-#endif
-                });
+                AnalyticBoundaryPosition x_hit;
+                amrex::Real dt_fraction_hit;
+                BoundaryMath::BisectBoundaryIntersection(
+                    boundary, x_end, ux[i], uy[i], uz[i], dt, x_hit,
+                    dt_fraction_hit);
+                DepositWallChargeToNodes(
+                    charge_grid, grid, x_hit.x, x_hit.y, x_hit.z,
+                    species_charge * weight[i]);
+                pidw.make_invalid();
+            });
         }
     }
 }
+
+#endif
 
 } // namespace
 
@@ -151,101 +158,34 @@ AnalyticBoundaryInteraction ()
 #if defined(WARPX_DIM_3D)
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& mpc = warpx_instance.GetPartContainer();
-
-    // Per-species configuration, built once on the first call: each species
-    // may define its own analytic boundary and wall behavior under
-    // <species>.analytic_boundary.*.
-    static std::map<std::string, SpeciesBoundaryConfig> const configs =
-        [&mpc] {
-            std::map<std::string, SpeciesBoundaryConfig> result;
-            for (auto const& name : mpc.GetSpeciesNames()) {
-                amrex::ParmParse const pp(name);
-                int enabled = 0;
-                pp.query("analytic_boundary.enabled", enabled);
-                if (!enabled) {
-                    continue;
-                }
-
-                SpeciesBoundaryConfig cfg;
-                pp.query("analytic_boundary.absorb_fraction",
-                         cfg.absorb_fraction);
-                pp.query("analytic_boundary.specular_fraction",
-                         cfg.specular_fraction);
-                pp.query("analytic_boundary.wall_temperature",
-                         cfg.wall_temperature);
-                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-                    cfg.absorb_fraction >= amrex::ParticleReal(0.0) &&
-                        cfg.absorb_fraction <= amrex::ParticleReal(1.0),
-                    name + ".analytic_boundary.absorb_fraction must be in "
-                    "[0, 1].");
-                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-                    cfg.specular_fraction >= amrex::ParticleReal(0.0) &&
-                        cfg.absorb_fraction + cfg.specular_fraction <=
-                            amrex::ParticleReal(1.0),
-                    name + ".analytic_boundary.specular_fraction must be in "
-                    "[0, 1] and absorb_fraction + specular_fraction must "
-                    "not exceed 1; the remaining probability is diffuse "
-                    "re-emission.");
-                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-                    cfg.absorb_fraction + cfg.specular_fraction >=
-                            amrex::ParticleReal(1.0) ||
-                        cfg.wall_temperature > amrex::ParticleReal(0.0),
-                    name + ".analytic_boundary.wall_temperature must be "
-                    "positive for a non-zero diffuse reflection fraction.");
-
-                std::string signed_value;
-                std::string normal_x;
-                std::string normal_y;
-                std::string normal_z;
-                utils::parser::Store_parserString(
-                    pp, "analytic_boundary.signed_value", signed_value);
-                utils::parser::Store_parserString(
-                    pp, "analytic_boundary.normal_x", normal_x);
-                utils::parser::Store_parserString(
-                    pp, "analytic_boundary.normal_y", normal_y);
-                utils::parser::Store_parserString(
-                    pp, "analytic_boundary.normal_z", normal_z);
-                cfg.geometry = std::make_unique<AnalyticBoundaryGeometry>(
-                    signed_value, normal_x, normal_y, normal_z);
-
-                result.emplace(name, std::move(cfg));
-            }
-            return result;
-        }();
-
-    if (configs.empty()) {
+    static AnalyticWallConfiguration const config = ReadAnalyticWallConfiguration(mpc);
+    if (config.walls.empty()) {
         return;
     }
 
-    for (auto const& [name, cfg] : configs) {
-        auto& pc = mpc.GetParticleContainerFromName(name);
+    HallWallCharge& persistent_wall_charge = HallWallCharge::GetInstance();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        persistent_wall_charge.isDefined(),
+        "Analytic absorbing walls require the material Poisson path to initialize wall_charge.");
+    WallChargeGrid const grid = MakeWallChargeGrid(warpx_instance.Geom(0));
 
-        // Species under particle subcycling are only pushed every ndt
-        // steps. Mirror the official boundary treatment
-        // (MultiParticleContainer::ApplyBoundaryConditions): skip the sweep
-        // on steps where this species was not pushed, and use its effective
-        // timestep ndt * dt for the backtrace and post-reflection advance.
-        if (pc.getDoNotPush()) {
-            continue;
+    // Process walls in declaration order. Inputs must keep invalid regions
+    // disjoint; this order is also the deterministic fallback at a shared edge.
+    for (int wall_id = 0; wall_id < static_cast<int>(config.walls.size()); ++wall_id) {
+        for (auto const& [species_name, policies] : config.absorbs) {
+            if (!policies[wall_id]) {
+                continue;
+            }
+            auto& pc = mpc.GetParticleContainerFromName(species_name);
+            if (pc.getDoNotPush()) {
+                continue;
+            }
+            amrex::Real const dt_effective =
+                warpx_instance.getdt(0) * ParticleSubcyclingNdt(species_name);
+            ApplyAbsorbingWall(
+                pc, config.walls[wall_id].geometry->GetDeviceView(), pc.getCharge(),
+                dt_effective, grid, persistent_wall_charge.get(0));
         }
-        amrex::Real const dt_effective =
-            warpx_instance.getdt(0) * ParticleSubcyclingNdt(name);
-
-        // The temperature to thermal-velocity conversion needs the species
-        // mass, so it happens here in the driver layer.
-        amrex::ParticleReal diffuse_vth = 0.0;
-        if (cfg.absorb_fraction + cfg.specular_fraction <
-            amrex::ParticleReal(1.0))
-        {
-            diffuse_vth = static_cast<amrex::ParticleReal>(
-                Math::ThermalVelocityFromTemperature(
-                    cfg.wall_temperature, pc.getMass()));
-        }
-
-        ApplyAnalyticBoundaryInteraction(
-            pc, cfg.geometry->GetDeviceView(), cfg.absorb_fraction,
-            cfg.specular_fraction, diffuse_vth,
-            static_cast<amrex::ParticleReal>(pc.getMass()), dt_effective);
     }
 #endif
 }
