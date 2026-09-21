@@ -5,8 +5,8 @@ my_constants.dt = 3e-12
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
-warpx.self_fields_required_precision = 1e-6
-#warpx.self_fields_absolute_tolerance = 1e-3
+warpx.self_fields_required_precision = 1e-4
+warpx.self_fields_absolute_tolerance = 1
 warpx.sort_intervals = 25
 warpx.use_filter = 0
 warpx.grid_type = collocated
@@ -24,6 +24,12 @@ my_constants.m_dot = 0.6e-6
 my_constants.Ic = 0.5
 my_constants.voltage = 300
 my_constants.ifhole = 0
+my_constants.ifhole = 0
+my_constants.Tx = 200
+my_constants.Ty = 200
+my_constants.Tz = 140
+my_constants.vz0 = 240
+
 # 小孔几何: 孔中心所在环半径与孔半径 (孔半径取缝半宽, 与单孔 DSMC 通道一致)
 my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
 my_constants.w_slit = 0.001 / l_factor
@@ -70,7 +76,7 @@ warpx.poisson_solver = multigrid
 #几何：z 方向向下扩展 2 mm，保持与横向接近的网格分辨率
 amr.n_cell = 256 256 320
 amr.blocking_factor = 64
-amr.max_grid_size = 256
+amr.max_grid_size = 320
 amr.max_level = 0
 
 #内存使用
@@ -99,7 +105,7 @@ my_constants.anode_center_x = lx / 2
 my_constants.anode_center_y = ly / 2
 my_constants.anode_inner_radius = 0.021 / (2 * l_factor)
 my_constants.anode_outer_radius = 0.031 / (2 * l_factor)
-my_constants.anode_zmin = -0.001
+my_constants.anode_zmin = -0.00125
 my_constants.anode_zmax = 0.0
 my_constants.anode_voltage = voltage
 
@@ -113,8 +119,8 @@ insert.anode_implicit_function(x,y,z) = "if(((x-anode_center_x)**2 + (y-anode_ce
 insert.anode_potential_function(x,y,z) = "anode_voltage"
 
 warpx.self_fields_phi_extrapolation_order = 2
-warpx.self_fields_phi_extrapolation_alpha = 0.4
-warpx.self_fields_phi_extrapolation_beta = 0.15
+warpx.self_fields_phi_extrapolation_alpha = 0.3
+warpx.self_fields_phi_extrapolation_beta = 0.1
 
 #粒子设置
 algo.particle_shape = 1
@@ -122,11 +128,9 @@ algo.particle_shape = 1
 particles.species_names = electrons xe_ions xe_netural
 
 electrons.species_type = electron
-#electrons.do_not_deposit = 1
 
 xe_ions.species_type = xenon
 xe_ions.charge = q_e
-#xe_ions.do_not_deposit = 1
 
 xe_netural.mass = m_xe
 xe_netural.charge = 0
@@ -134,24 +138,25 @@ xe_netural.do_not_gather = 1
 xe_netural.do_not_deposit = 1
 
 # z=0 上的解析边界分为两个互不重叠区域：阳极环及其余陶瓷平面。
+
 # 两个 signed_value 均只在各自区域使用 z，因此零面是 z=0，法向指向 +z。
 insert.analytic_walls = anode_ring ceramic_wall
-analytic_wall.anode_ring.signed_value(x,y,z) = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2), z, 1.0)"
-analytic_wall.anode_ring.normal_x(x,y,z) = "0.0"
-analytic_wall.anode_ring.normal_y(x,y,z) = "0.0"
-analytic_wall.anode_ring.normal_z(x,y,z) = "1.0"
-analytic_wall.ceramic_wall.signed_value(x,y,z) = "if(min(((x-anode_center_x)**2 + (y-anode_center_y)**2) - anode_inner_radius**2, anode_outer_radius**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2)) < 0.0, z, 1.0)"
-analytic_wall.ceramic_wall.normal_x(x,y,z) = "0.0"
-analytic_wall.ceramic_wall.normal_y(x,y,z) = "0.0"
-analytic_wall.ceramic_wall.normal_z(x,y,z) = "1.0"
+analytic_wall.anode_ring.signed_value = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2), z, 1.0)"
+analytic_wall.anode_ring.normal_x = "0.0"
+analytic_wall.anode_ring.normal_y = "0.0"
+analytic_wall.anode_ring.normal_z = "1.0"
+analytic_wall.ceramic_wall.signed_value = "if(min(((x-anode_center_x)**2 + (y-anode_center_y)**2) - anode_inner_radius**2, anode_outer_radius**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2)) < 0.0, z, 1.0)"
+analytic_wall.ceramic_wall.normal_x = "0.0"
+analytic_wall.ceramic_wall.normal_y = "0.0"
+analytic_wall.ceramic_wall.normal_z = "1.0"
 
 # 电子：阳极环完全吸收；陶瓷的三个前置概率由用户填写，最后的
 # secondary_electron_2 自动使用剩余概率。漫反射温度暂设为 400 K。
 electrons.analytic_wall.anode_ring.behaviors = absorb
-electrons.analytic_wall.ceramic_wall.behaviors = absorb diffuse secondary_electron_1 secondary_electron_2
-electrons.analytic_wall.ceramic_wall.p_absorb(E_eV,u_n,u_t,x,y,z,t) = "0.5*exp(-(E_eV/43.4592)**2)"
-electrons.analytic_wall.ceramic_wall.p_diffuse(E_eV,u_n,u_t,x,y,z,t) = "0.5*exp(-(E_eV/30)**2)"
-electrons.analytic_wall.ceramic_wall.p_secondary_electron_1(E_eV,u_n,u_t,x,y,z,t) = "1-exp(-(E_eV/127.8958)**2)"
+electrons.analytic_wall.ceramic_wall.behaviors = absorb diffuse secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.ceramic_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
+electrons.analytic_wall.ceramic_wall.p_diffuse = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.ceramic_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
 electrons.analytic_wall.ceramic_wall.wall_temperature = 40000
 electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
@@ -282,37 +287,25 @@ xe_neutral_inlet.batch_multiplier = 100.0
 xe_neutral_inlet.x_offset = 0.025 / l_factor
 xe_neutral_inlet.y_offset = 0.025 / l_factor
 
-# 位置: 小孔阵列 (孔分派 + 坐标偏移, 本身不实现分布); 底层柱坐标分布
-# 定义孔内圆斑, r 按 P(r) ∝ r * flux(u) 采样, u = r/hole_radius
-# (parser 任意一维 CDF, 几何权重 r 显式写在表达式中);
-# theta 均匀, z 固定在 zmin 面
-xe_neutral_inlet.position.coupled_distribution = hole_array_plane
-xe_neutral_inlet.hole_count = hole_count
-xe_neutral_inlet.hole_ring_radius = r_ring
 xe_neutral_inlet.position.coordinate_system = cylindrical
-xe_neutral_inlet.position.r.distribution = parser
-xe_neutral_inlet.position.r.min = 0.0
-xe_neutral_inlet.position.r.max = hole_radius
-xe_neutral_inlet.position.r.num_bins = 1024
-xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*(r/hole_radius) + jf_c2*(r/hole_radius)**2 + jf_c3*(r/hole_radius)**3)
+xe_neutral_inlet.position.r.distribution = area_uniform
+xe_neutral_inlet.position.r.min = ((0.021 + 0.031) / 4 - 0.001) / l_factor
+xe_neutral_inlet.position.r.max = ((0.021 + 0.031) / 4 + 0.001) / l_factor
 xe_neutral_inlet.position.theta.distribution = uniform
 xe_neutral_inlet.position.theta.min = 0.0
 xe_neutral_inlet.position.theta.max = 2*pi
 xe_neutral_inlet.position.z.distribution = constant
 xe_neutral_inlet.position.z.value = 0.0
 
-# 速度: 各分量参数为孔内局部半径 r 的函数 (sigma(r)/mean(r), 逐粒子求值,
-# 局部坐标原点随孔分派偏移到孔中心, 即 r 相对于孔中心);
-# 剖面坐标归一化为 u = r/hole_radius;
-# vx/vy 全高斯, vz 截断 vz > 0 的漂移高斯 (截断尾部约 1%)
 xe_neutral_inlet.velocity.coordinate_system = cartesian
 xe_neutral_inlet.velocity.vx.distribution = gaussian
-xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*(r/hole_radius) + tx_c2*(r/hole_radius)**2 + tx_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
 xe_neutral_inlet.velocity.vy.distribution = gaussian
-xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*(r/hole_radius) + ty_c2*(r/hole_radius)**2 + ty_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
 xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
-xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*(r/hole_radius) + mvz_c2*(r/hole_radius)**2 + mvz_c3*(r/hole_radius)**3
-xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*(r/hole_radius) + tz_c2*(r/hole_radius)**2 + tz_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vz.mean = vz0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
+
 
 xe_netural.injection_sources = xeinit
 
@@ -325,10 +318,24 @@ FILE = ../../Script/3d_hall_mcccoll_test
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file
-warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
+warpx.read_fields_from_path = ../../data/B3D_dielectric.bp5
 
-#输出定义
-FILE = ../../Script/diagout_8T
+#场诊断
+diagnostics.diags_names = ECDI_diag
+
+ECDI_diag.diag_type = Full
+ECDI_diag.intervals = 5000
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_netural phi rho_xe_ions
+ECDI_diag.write_species = 0
+ECDI_diag.format = openpmd
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/try_diag
 
 #ECDI抑制
 insert.ecdi_control.enabled = 0
+
+
+#宏观统计
+warpx.reduced_diags_names = particle_number_dielectric
+
+particle_number_dielectric.type = ParticleNumber
+particle_number_dielectric.intervals = 100
