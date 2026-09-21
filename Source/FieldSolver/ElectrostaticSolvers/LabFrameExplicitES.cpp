@@ -18,6 +18,7 @@
 #include "Insert/Fields/ECDIChargeFilter.h"
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 #include "Insert/Fields/HallElectrostaticMaterial.H"
+#include "Insert/Fields/HallWallCharge.H"
 #endif
 #ifdef HALL3D
 #include "Insert/Fields/SpectralBoundarySchur.h"
@@ -219,6 +220,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
     ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr;
     if (electrostatic_material.enabled()) {
+        auto& wall_charge = Insert::HallWallCharge::GetInstance();
+        wall_charge.addTo(rho_fp, max_level);
         electrostatic_material.prepare(rho_fp, phi_fp, max_level);
         anode_masks = *electrostatic_material.anodeMasks();
         relative_permittivity = electrostatic_material.relativePermittivity();
