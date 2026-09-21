@@ -3,8 +3,6 @@
 
 #include <ablastr/fields/MultiFabRegister.H>
 
-#include <AMReX_Array.H>
-#include <AMReX_Box.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_Parser.H>
 #include <AMReX_Vector.H>
@@ -28,6 +26,7 @@ public:
 
     [[nodiscard]] bool enabled ();
 
+    /** Clear deposited volume charge in the cached anode. */
     void prepare (
         ablastr::fields::MultiLevelScalarField const& rho,
         ablastr::fields::MultiLevelScalarField const& phi,
@@ -43,11 +42,9 @@ private:
     HallElectrostaticMaterial () = default;
     ~HallElectrostaticMaterial () = default;
 
+public:
     void readParametersOnce ();
-    [[nodiscard]] bool layoutMatches (
-        ablastr::fields::MultiLevelScalarField const& phi,
-        int max_level) const;
-    void defineOrRebuild (
+    void initialize (
         ablastr::fields::MultiLevelScalarField const& phi,
         int max_level);
 
@@ -72,10 +69,6 @@ private:
     ablastr::fields::ConstMultiLevelScalarField m_epsilon_r_ptrs;
     amrex::Vector<amrex::iMultiFab const*> m_anode_mask_ptrs;
 
-    amrex::Vector<amrex::Box> m_domains;
-    amrex::Vector<amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>> m_prob_lo;
-    amrex::Vector<amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>> m_prob_hi;
-    amrex::Vector<amrex::GpuArray<amrex::Real, AMREX_SPACEDIM>> m_cell_size;
 };
 
 } // namespace Insert

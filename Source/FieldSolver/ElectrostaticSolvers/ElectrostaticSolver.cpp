@@ -152,7 +152,9 @@ ElectrostaticSolver::computePhi (
     std::optional<ablastr::fields::MultiLevelVectorField> efield,
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    , ablastr::fields::ConstMultiLevelScalarField const* const relative_permittivity
+    , ablastr::fields::ConstMultiLevelScalarField const* const relative_permittivity,
+    std::unique_ptr<amrex::MLNodeLaplacian>* const material_linop_cache,
+    std::unique_ptr<amrex::MLMG>* const material_mlmg_cache
 #endif
 ) const
 {
@@ -244,7 +246,7 @@ ElectrostaticSolver::computePhi (
         eb_farray_box_factory,
         overset_masks
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-        , relative_permittivity
+        , relative_permittivity, material_linop_cache, material_mlmg_cache
 #endif
     );
 

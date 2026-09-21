@@ -235,8 +235,8 @@ HallElectrostaticMaterial::prepare (
         warpx.Geom(0).Coord() == amrex::CoordSys::cartesian,
         "insert.use_electrostatic_materials requires Cartesian geometry.");
 
-    if (!layoutMatches(phi, max_level)) {
-        defineOrRebuild(phi, max_level);
+    if (!m_defined) {
+        initialize(phi, max_level);
     }
 
     for (int lev = 0; lev <= max_level; ++lev) {
@@ -251,15 +251,16 @@ HallElectrostaticMaterial::prepare (
         {
             amrex::Box const& box = mfi.tilebox();
             auto const mask = m_anode_mask[lev]->const_array(mfi);
-            auto const fixed_phi = m_anode_phi[lev]->const_array(mfi);
-            auto const phi_array = phi[lev]->array(mfi);
+            //auto const fixed_phi = m_anode_phi[lev]->const_array(mfi);
+            //auto const phi_array = phi[lev]->array(mfi);
             auto const rho_array = rho[lev]->array(mfi);
             amrex::ParallelFor(
                 box,
                 [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
                 {
                     if (mask(i, j, k) == 0) {
-                        phi_array(i, j, k) = fixed_phi(i, j, k);
+                        // The overset mask keeps the initial anode potential fixed.
+                        // phi_array(i, j, k) = fixed_phi(i, j, k);
                         rho_array(i, j, k) = 0.0;
                     }
                 });
@@ -267,74 +268,17 @@ HallElectrostaticMaterial::prepare (
     }
 }
 
-bool
-HallElectrostaticMaterial::layoutMatches (
-    ablastr::fields::MultiLevelScalarField const& phi,
-    int const max_level) const
-{
-    int const number_of_levels = max_level + 1;
-    if (!m_defined || static_cast<int>(m_epsilon_r.size()) != number_of_levels ||
-        static_cast<int>(m_anode_mask.size()) != number_of_levels ||
-        static_cast<int>(m_anode_phi.size()) != number_of_levels ||
-        static_cast<int>(m_domains.size()) != number_of_levels ||
-        static_cast<int>(m_prob_lo.size()) != number_of_levels ||
-        static_cast<int>(m_prob_hi.size()) != number_of_levels ||
-        static_cast<int>(m_cell_size.size()) != number_of_levels)
-    {
-        return false;
-    }
-
-    WarpX const& warpx = WarpX::GetInstance();
-    for (int lev = 0; lev < number_of_levels; ++lev) {
-        amrex::Geometry const& geom = warpx.Geom(lev);
-        auto const prob_lo = geom.ProbLoArray();
-        auto const prob_hi = geom.ProbHiArray();
-        auto const cell_size = geom.CellSizeArray();
-
-        if (!m_epsilon_r[lev]->boxArray().CellEqual(warpx.boxArray(lev)) ||
-            m_epsilon_r[lev]->DistributionMap() != warpx.DistributionMap(lev) ||
-            !m_anode_mask[lev]->boxArray().CellEqual(phi[lev]->boxArray()) ||
-            m_anode_mask[lev]->DistributionMap() != phi[lev]->DistributionMap() ||
-            !m_anode_phi[lev]->boxArray().CellEqual(phi[lev]->boxArray()) ||
-            m_anode_phi[lev]->DistributionMap() != phi[lev]->DistributionMap() ||
-            m_domains[lev] != geom.Domain())
-        {
-            return false;
-        }
-
-        for (int dim = 0; dim < AMREX_SPACEDIM; ++dim) {
-            if (m_prob_lo[lev][dim] != prob_lo[dim] ||
-                m_prob_hi[lev][dim] != prob_hi[dim] ||
-                m_cell_size[lev][dim] != cell_size[dim])
-            {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 void
-HallElectrostaticMaterial::defineOrRebuild (
+HallElectrostaticMaterial::initialize (
     ablastr::fields::MultiLevelScalarField const& phi,
     int const max_level)
 {
     WarpX const& warpx = WarpX::GetInstance();
     int const number_of_levels = max_level + 1;
 
-    m_defined = false;
-    m_epsilon_r.clear();
-    m_anode_mask.clear();
-    m_anode_phi.clear();
-    m_epsilon_r_ptrs.clear();
-    m_anode_mask_ptrs.clear();
     m_epsilon_r.resize(number_of_levels);
     m_anode_mask.resize(number_of_levels);
     m_anode_phi.resize(number_of_levels);
-    m_domains.resize(number_of_levels);
-    m_prob_lo.resize(number_of_levels);
-    m_prob_hi.resize(number_of_levels);
-    m_cell_size.resize(number_of_levels);
 
     amrex::Real epsilon_min = std::numeric_limits<amrex::Real>::max();
     amrex::Real epsilon_max = std::numeric_limits<amrex::Real>::lowest();
@@ -342,9 +286,6 @@ HallElectrostaticMaterial::defineOrRebuild (
 
     for (int lev = 0; lev < number_of_levels; ++lev) {
         amrex::Geometry const& geom = warpx.Geom(lev);
-        auto const prob_lo = geom.ProbLoArray();
-        auto const prob_hi = geom.ProbHiArray();
-        auto const cell_size = geom.CellSizeArray();
         amrex::BoxArray const epsilon_ba = warpx.boxArray(lev);
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             epsilon_ba.ixType().cellCentered(),
@@ -367,14 +308,26 @@ HallElectrostaticMaterial::defineOrRebuild (
             m_relative_permittivity, m_anode_implicit, m_anode_potential,
             level_epsilon_min, level_epsilon_max, level_min_masked_k,
             level_max_masked_k, level_masked_nodes);
+
+        for (amrex::MFIter mfi(*m_anode_mask[lev], amrex::TilingIfNotGPU());
+             mfi.isValid(); ++mfi)
+        {
+            amrex::Box const& box = mfi.tilebox();
+            auto const mask = m_anode_mask[lev]->const_array(mfi);
+            auto const fixed_phi = m_anode_phi[lev]->const_array(mfi);
+            auto const phi_array = phi[lev]->array(mfi);
+            amrex::ParallelFor(
+                box,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                {
+                    if (mask(i, j, k) == 0) {
+                        phi_array(i, j, k) = fixed_phi(i, j, k);
+                    }
+                });
+        }
         epsilon_min = std::min(epsilon_min, level_epsilon_min);
         epsilon_max = std::max(epsilon_max, level_epsilon_max);
         masked_nodes += level_masked_nodes;
-
-        m_domains[lev] = geom.Domain();
-        m_prob_lo[lev] = prob_lo;
-        m_prob_hi[lev] = prob_hi;
-        m_cell_size[lev] = cell_size;
 
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             level_masked_nodes > 0,

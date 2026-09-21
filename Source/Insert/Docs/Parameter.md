@@ -10,9 +10,13 @@ relativistic electrostatic solver 或 Python `poissonsolver` callback。
 
 官方 WarpX/ablastr 求解路径由唯一的编译宏
 `WARPX_USE_HALL_ELECTROSTATIC_MATERIALS` 控制。宏在
-`Source/Insert/CMakeLists.txt` 中只为 3D target 定义。注释对应的
-`target_compile_definitions` 行并重新加载 CMake，即可使官方目录编译原有求解路径；
+`Source/Insert/Config/HallElectrostaticConfig.H` 中只为 3D target 定义。注释对应的
+`#define` 行并重新编译，即可使官方目录编译原有求解路径；
 Insert 下的材料实现仍可保留在源文件列表中。
+
+启用后，`LabFrameExplicitES` 会缓存材料 Poisson 算子及其 `MLMG` 实例。静态网格、
+介电常数和阳极 mask 在首次调用时初始化，后续求解始终复用同一多重网格层级。
+该路径不支持运行期间 regrid 或重新分配网格。
 
 宏启用后，使用以下输入打开材料功能：
 
