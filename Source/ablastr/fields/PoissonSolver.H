@@ -17,6 +17,8 @@
 #include <ablastr/fields/MultiFabRegister.H>
 #include <ablastr/profiler/ProfilerWrapper.H>
 
+#include "Insert/Config/HallElectrostaticConfig.H"
+
 #if defined(ABLASTR_USE_FFT) && defined(WARPX_DIM_3D)
 #include <ablastr/fields/IntegratedGreenFunctionSolver.H>
 #endif
@@ -58,6 +60,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 
@@ -224,7 +227,9 @@ computePhi (
     [[maybe_unused]] const std::optional<amrex::Vector<T_FArrayBoxFactory const *> >& eb_farray_box_factory = std::nullopt, // only used for EB
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr
+    , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr,
+    std::unique_ptr<amrex::MLNodeLaplacian>* material_linop_cache = nullptr,
+    std::unique_ptr<amrex::MLMG>* material_mlmg_cache = nullptr
 #endif
 )
 {
@@ -251,6 +256,18 @@ computePhi (
             }),
             "Variable relative permittivity is supported only for a lab-frame solve.");
     }
+    bool const use_material_solver_cache = material_linop_cache != nullptr ||
+                                           material_mlmg_cache != nullptr;
+    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+        (material_linop_cache == nullptr) == (material_mlmg_cache == nullptr),
+        "The material Poisson operator and MLMG caches must be supplied together.");
+    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+        !use_material_solver_cache ||
+            (relative_permittivity != nullptr && finest_level == 0),
+        "The material Poisson solver cache requires a single-level variable-permittivity solve.");
+    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+        !use_material_solver_cache || !(*material_mlmg_cache) || *material_linop_cache,
+        "A cached material MLMG instance requires its cached linear operator.");
 #endif
     if (!rel_ref_ratio.has_value()) {
         ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(finest_level == 0u,
@@ -341,9 +358,16 @@ computePhi (
             }
         }
 
-        std::unique_ptr<amrex::MLNodeLinOp> linop;
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        std::unique_ptr<amrex::MLNodeLinOp> owned_linop;
+        amrex::MLNodeLinOp* linop = nullptr;
+        bool configure_linop = true;
         if (relative_permittivity != nullptr) {
+            // The volume-anode overset mask remains valid for at most four
+            // multigrid coarsening levels.  Set this before constructing the
+            // operator: the material operator and its MLMG instance are cached.
+            info.setMaxCoarseningLevel(4);
+
             amrex::MultiFab const* const epsilon_r = (*relative_permittivity)[lev];
             ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
                 epsilon_r != nullptr,
@@ -356,14 +380,31 @@ computePhi (
                     epsilon_r->DistributionMap() == dmap[lev],
                 "Relative permittivity must use the Poisson grid layout.");
 
-            auto linop_nodelap = std::make_unique<amrex::MLNodeLaplacian>(
-                amrex::Vector<amrex::Geometry>{geom[lev]},
-                amrex::Vector<amrex::BoxArray>{grids[lev]},
-                amrex::Vector<amrex::DistributionMapping>{dmap[lev]},
-                info);
-            linop_nodelap->setSigma(0, *epsilon_r);
-            linop = std::move(linop_nodelap);
+            if (use_material_solver_cache) {
+                if (!(*material_linop_cache)) {
+                    *material_linop_cache = std::make_unique<amrex::MLNodeLaplacian>(
+                        amrex::Vector<amrex::Geometry>{geom[lev]},
+                        amrex::Vector<amrex::BoxArray>{grids[lev]},
+                        amrex::Vector<amrex::DistributionMapping>{dmap[lev]},
+                        info);
+                    (*material_linop_cache)->setSigma(0, *epsilon_r);
+                } else {
+                    configure_linop = false;
+                }
+                linop = material_linop_cache->get();
+            } else {
+                auto linop_nodelap = std::make_unique<amrex::MLNodeLaplacian>(
+                    amrex::Vector<amrex::Geometry>{geom[lev]},
+                    amrex::Vector<amrex::BoxArray>{grids[lev]},
+                    amrex::Vector<amrex::DistributionMapping>{dmap[lev]},
+                    info);
+                linop_nodelap->setSigma(0, *epsilon_r);
+                owned_linop = std::move(linop_nodelap);
+                linop = owned_linop.get();
+            }
         } else {
+#else
+        std::unique_ptr<amrex::MLNodeLinOp> linop;
 #endif
         if (eb_enabled || is_rz) {
             // In the presence of EB or RZ: the solver assumes that the beam is
@@ -424,7 +465,12 @@ computePhi (
                 }
             }
 #endif
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+            owned_linop = std::move(linop_nodelap);
+            linop = owned_linop.get();
+#else
             linop = std::move(linop_nodelap);
+#endif
         } else {
             // In the absence of EB and RZ: use a more generic solver
             // that can handle beams propagating in any direction
@@ -435,12 +481,20 @@ computePhi (
                 info
             );
             linop_tenslap->setBeta(beta_solver); // for the non-axis-aligned solver
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+            owned_linop = std::move(linop_tenslap);
+            linop = owned_linop.get();
+#else
             linop = std::move(linop_tenslap);
+#endif
         }
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
         }
 #endif
 
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        if (configure_linop) {
+#endif
         // Level 0 domain boundary
         if constexpr (std::is_same_v<T_BoundaryHandler, std::nullopt_t>) {
             amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> const lobc = {AMREX_D_DECL(
@@ -459,9 +513,28 @@ computePhi (
         {
             linop->setOversetMask(0, *overset_masks.value()[lev]);
         }
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        }
+#endif
 
         // Solve the Poisson equation
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        std::unique_ptr<amrex::MLMG> owned_mlmg;
+        amrex::MLMG* selected_mlmg = nullptr;
+        if (use_material_solver_cache) {
+            if (!(*material_mlmg_cache)) {
+                *material_mlmg_cache = std::make_unique<amrex::MLMG>(*linop);
+            }
+            selected_mlmg = material_mlmg_cache->get();
+        } else
+        {
+            owned_mlmg = std::make_unique<amrex::MLMG>(*linop);
+            selected_mlmg = owned_mlmg.get();
+        }
+        amrex::MLMG& mlmg = *selected_mlmg;
+#else
         amrex::MLMG mlmg(*linop); // actual solver defined here
+#endif
         mlmg.setVerbose(verbosity);
         mlmg.setMaxIter(max_iters);
         if (num_final_sweeps) {

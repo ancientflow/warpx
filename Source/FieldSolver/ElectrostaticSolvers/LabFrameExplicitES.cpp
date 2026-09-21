@@ -248,7 +248,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
                    self_fields_absolute_tolerance, self_fields_max_iters,
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
                    verbosity, is_igf_2d_slices, Efield_fp,
-                   anode_masks, relative_permittivity);
+                   anode_masks, relative_permittivity,
+                   relative_permittivity ? &m_material_linop : nullptr,
+                   relative_permittivity ? &m_material_mlmg : nullptr);
 #else
                    verbosity, is_igf_2d_slices, Efield_fp);
 #endif

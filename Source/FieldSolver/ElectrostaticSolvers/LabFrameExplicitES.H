@@ -64,6 +64,13 @@ private:
         m_phi_extrapolation_cache;
     int m_phi_extrapolation_history_depth = 0;
 
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    // Declare the operator before MLMG so that MLMG, which holds a reference to
+    // the operator, is destroyed first.
+    std::unique_ptr<amrex::MLNodeLaplacian> m_material_linop;
+    std::unique_ptr<amrex::MLMG> m_material_mlmg;
+#endif
+
 };
 
 #endif  // WARPX_LABFRAMEEXPLICITES_H_
