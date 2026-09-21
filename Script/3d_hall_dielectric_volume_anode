@@ -77,7 +77,7 @@ amr.max_level = 0
 amrex.the_arena_init_size = 1024*1024*1024*75 # 75GB内存
 
 geometry.dims = 3
-geometry.prob_lo = 0.0 0.0 -0.002
+geometry.prob_lo = 0.0 0.0 -0.0025
 geometry.prob_hi = lx ly lz
 
 #边界条件
@@ -106,14 +106,10 @@ my_constants.anode_voltage = voltage
 insert.use_electrostatic_materials = 1
 
 #z < 0 为陶瓷。体阳极内部保持有限正介电常数，由 overset mask 排除其节点。
-insert.relative_permittivity_function(x,y,z) = \
-    "if(z < 0.0, ceramic_epsilon_r, 1.0)"
+insert.relative_permittivity_function(x,y,z) = "if(z < 0.0, ceramic_epsilon_r, 1.0)"
 
 #<= 0 表示体阳极：原环形阳极沿 z 负方向延伸 1 mm。
-insert.anode_implicit_function(x,y,z) = \
-    "max(max(anode_inner_radius**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2), \
-             ((x-anode_center_x)**2 + (y-anode_center_y)**2) - anode_outer_radius**2), \
-         max(z-anode_zmax, anode_zmin-z))"
+insert.anode_implicit_function(x,y,z) = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2) * (z >= anode_zmin) * (z <= anode_zmax), -1.0, 1.0)"
 insert.anode_potential_function(x,y,z) = "anode_voltage"
 
 warpx.self_fields_phi_extrapolation_order = 2
@@ -133,35 +129,44 @@ xe_ions.charge = q_e
 #xe_ions.do_not_deposit = 1
 
 xe_netural.mass = m_xe
-xe_netural.charge = 1
+xe_netural.charge = 0
 xe_netural.do_not_gather = 1
 xe_netural.do_not_deposit = 1
 
-#原 z=0 阳极/陶瓷平面作为粒子解析边界，三个物种越过平面后全部吸收。
-#signed_value >= 0 为等离子体侧，法向指向 +z。
-electrons.analytic_boundary.enabled = 1
-electrons.analytic_boundary.absorb_fraction = 1.0
-electrons.analytic_boundary.specular_fraction = 0.0
-electrons.analytic_boundary.signed_value = "z"
-electrons.analytic_boundary.normal_x = "0.0"
-electrons.analytic_boundary.normal_y = "0.0"
-electrons.analytic_boundary.normal_z = "1.0"
+# z=0 上的解析边界分为两个互不重叠区域：阳极环及其余陶瓷平面。
+# 两个 signed_value 均只在各自区域使用 z，因此零面是 z=0，法向指向 +z。
+insert.analytic_walls = anode_ring ceramic_wall
+analytic_wall.anode_ring.signed_value(x,y,z) = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2), z, 1.0)"
+analytic_wall.anode_ring.normal_x(x,y,z) = "0.0"
+analytic_wall.anode_ring.normal_y(x,y,z) = "0.0"
+analytic_wall.anode_ring.normal_z(x,y,z) = "1.0"
+analytic_wall.ceramic_wall.signed_value(x,y,z) = "if(min(((x-anode_center_x)**2 + (y-anode_center_y)**2) - anode_inner_radius**2, anode_outer_radius**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2)) < 0.0, z, 1.0)"
+analytic_wall.ceramic_wall.normal_x(x,y,z) = "0.0"
+analytic_wall.ceramic_wall.normal_y(x,y,z) = "0.0"
+analytic_wall.ceramic_wall.normal_z(x,y,z) = "1.0"
 
-xe_ions.analytic_boundary.enabled = 1
-xe_ions.analytic_boundary.absorb_fraction = 1.0
-xe_ions.analytic_boundary.specular_fraction = 0.0
-xe_ions.analytic_boundary.signed_value = "z"
-xe_ions.analytic_boundary.normal_x = "0.0"
-xe_ions.analytic_boundary.normal_y = "0.0"
-xe_ions.analytic_boundary.normal_z = "1.0"
+# 电子：阳极环完全吸收；陶瓷的三个前置概率由用户填写，最后的
+# secondary_electron_2 自动使用剩余概率。漫反射温度暂设为 400 K。
+electrons.analytic_wall.anode_ring.behaviors = absorb
+electrons.analytic_wall.ceramic_wall.behaviors = absorb diffuse secondary_electron_1 secondary_electron_2
+electrons.analytic_wall.ceramic_wall.p_absorb(E_eV,u_n,u_t,x,y,z,t) = "0.5*exp(-(E_eV/43.4592)**2)"
+electrons.analytic_wall.ceramic_wall.p_diffuse(E_eV,u_n,u_t,x,y,z,t) = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.ceramic_wall.p_secondary_electron_1(E_eV,u_n,u_t,x,y,z,t) = "1-exp(-(E_eV/127.8958)**2)"
+electrons.analytic_wall.ceramic_wall.wall_temperature = 40000
+electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
+electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
 
-xe_netural.analytic_boundary.enabled = 1
-xe_netural.analytic_boundary.absorb_fraction = 1.0
-xe_netural.analytic_boundary.specular_fraction = 0.0
-xe_netural.analytic_boundary.signed_value = "z"
-xe_netural.analytic_boundary.normal_x = "0.0"
-xe_netural.analytic_boundary.normal_y = "0.0"
-xe_netural.analytic_boundary.normal_z = "1.0"
+# 离子在两面均中性化；中性原子在两面均按 400 K 漫反射。
+xe_ions.analytic_wall.anode_ring.behaviors = neutralize
+xe_ions.analytic_wall.anode_ring.neutral_species = xe_netural
+xe_ions.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_ions.analytic_wall.ceramic_wall.behaviors = neutralize
+xe_ions.analytic_wall.ceramic_wall.neutral_species = xe_netural
+xe_ions.analytic_wall.ceramic_wall.wall_temperature = 400.0
+xe_netural.analytic_wall.anode_ring.behaviors = diffuse
+xe_netural.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_netural.analytic_wall.ceramic_wall.behaviors = diffuse
+xe_netural.analytic_wall.ceramic_wall.wall_temperature = 400.0
 
 ###重采样
 electrons.save_particles_at_zlo = 1
