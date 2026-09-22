@@ -234,6 +234,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 
     }
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
+    Insert::VoltageAdjustment();
+#endif
     // 共置网格guard cell处理
 #ifdef HALL3D
     if (!Insert::SpectralBoundarySchur::Enabled()) {

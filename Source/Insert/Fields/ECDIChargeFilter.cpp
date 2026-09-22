@@ -1,6 +1,7 @@
 #include "ECDIChargeFilter.h"
 
 #include "Insert/Math/InterpUtils.h"
+#include "Insert/Config/WarpXSimulationConfig.h"
 
 #include "WarpX.H"
 
