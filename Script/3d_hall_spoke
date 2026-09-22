@@ -1,7 +1,5 @@
 #全局定义
-max_step = 12000000
-my_constants.diag_num = 100
-my_constants.reduced_diag_num = 12000
+max_step = 6000000
 my_constants.dt = 3e-12
 
 warpx.const_dt = dt
@@ -29,18 +27,28 @@ my_constants.Tx = 200
 my_constants.Ty = 200
 my_constants.Tz = 140
 my_constants.vz0 = 240
-my_constants.anode_current_path = "anode_current_test.txt"
+my_constants.Te0 = 10
+my_constants.anode_current_path = "anode_current_spoke4_200V.txt"
 
 # Spoke azimuthal distribution parameters
 # Neutral density peak (ionization front) at spoke_phase.
-# Plasma spoke peak at neutral minimum: spoke_phase - spoke_ion_width.
+# Plasma spoke peak shifted spoke_plasma_shift from the neutral minimum
+# (spoke_phase - spoke_ion_width) toward the neutral peak for ignition overlap.
 # reverse=1 for neutral_spoke ensures clockwise recovery opposite to CCW propagation.
+# spoke_count repeats the structure around the circumference for both the
+# neutral depletion profile and the initial plasma multi-spoke peaks.
 my_constants.spoke_phase = 20.0 * pi / 180.0
 my_constants.spoke_ion_width = 0.30*pi
-my_constants.spoke_min_ratio = 0.25
+
+#### 此处为相位关系
+my_constants.spoke_plasma_shift = 15.0 * pi / 180.0
+
+
+my_constants.spoke_min_ratio = 1.0/6.0
 my_constants.spoke_drop_exponent = 4.0
 my_constants.spoke_reverse = 1
 my_constants.spoke_sigma = pi / 8
+my_constants.spoke_count = 4
 
 #粒子参数定义
 my_constants.weight_ratio = 4
@@ -80,6 +88,10 @@ boundary.potential_lo_z = 0
 boundary.potential_hi_x = 0
 boundary.potential_hi_y = 0
 boundary.potential_hi_z = 0
+
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 0.4
+warpx.self_fields_phi_extrapolation_beta = 0.15
 
 #粒子设置
 algo.particle_shape = 1
@@ -145,9 +157,11 @@ channel_plasma.position.coordinate_system = cylindrical
 channel_plasma.position.r.distribution = area_uniform
 channel_plasma.position.r.min = 0.0105 / l_factor
 channel_plasma.position.r.max = 0.0155 / l_factor
-channel_plasma.position.theta.distribution = single_spoke
-channel_plasma.position.theta.center = spoke_phase - spoke_ion_width
-channel_plasma.position.theta.sigma = spoke_sigma
+channel_plasma.position.theta.distribution = multi_spoke
+channel_plasma.position.theta.spoke_count = spoke_count
+channel_plasma.position.theta.spoke_sigma = spoke_sigma
+channel_plasma.position.theta.spoke_phase = spoke_phase - spoke_ion_width + spoke_plasma_shift
+channel_plasma.position.theta.num_bins = 1024 * spoke_count
 channel_plasma.position.z.distribution = uniform
 channel_plasma.position.z.min = 0.001 / l_factor
 channel_plasma.position.z.max = 0.004 / l_factor
@@ -155,11 +169,11 @@ channel_plasma.position.z.max = 0.004 / l_factor
 channel_plasma.electrons.weight = elec_weight
 channel_plasma.electrons.velocity.coordinate_system = cartesian
 channel_plasma.electrons.velocity.vx.distribution = gaussian
-channel_plasma.electrons.velocity.vx.sigma = 592982
+channel_plasma.electrons.velocity.vx.sigma = sqrt(Te0*q_e/m_e)
 channel_plasma.electrons.velocity.vy.distribution = gaussian
-channel_plasma.electrons.velocity.vy.sigma = 592982
+channel_plasma.electrons.velocity.vy.sigma = sqrt(Te0*q_e/m_e)
 channel_plasma.electrons.velocity.vz.distribution = gaussian
-channel_plasma.electrons.velocity.vz.sigma = 592982
+channel_plasma.electrons.velocity.vz.sigma = sqrt(Te0*q_e/m_e)
 
 channel_plasma.xe_ions.weight = elec_weight
 channel_plasma.xe_ions.velocity.coordinate_system = cartesian
@@ -232,17 +246,29 @@ xe_netural.injection_sources = xeinit
 
 #初始注入
 xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = spoke_neutral_init/openpmd_005000.bp5
-#xe_netural.xeinit.injection_file = hall_start_256.bp5
+xe_netural.xeinit.injection_file = ../../data/spoke_init_4.bp5
 
 
 #碰撞设置
-FILE = 3d_hall_mcccoll_test
-#FILE = ../../Script/3d_hall_mcccoll
+FILE = ../../Script/3d_hall_mcccoll_test
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file
 warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
 
 #输出定义
-FILE = ../../Script/diagout_test
+
+#场诊断
+diagnostics.diags_names = intensive_diag
+intensive_diag.diag_type = Full
+intensive_diag.intervals = 500
+intensive_diag.fields_to_plot = rho_xe_ions rho_electrons rho_xe_netural phi
+intensive_diag.format = openpmd
+intensive_diag.write_species = 0
+intensive_diag.file_prefix = /media/ps/disk1/WarpXData/spoke_diag4_200V
+#宏观统计
+warpx.reduced_diags_names = particle_number_spoke4_200V
+
+particle_number_spoke4_200V.type = ParticleNumber
+particle_number_spoke4_200V.intervals = 500
+

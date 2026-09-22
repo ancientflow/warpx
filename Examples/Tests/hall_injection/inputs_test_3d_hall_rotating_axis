@@ -1,0 +1,66 @@
+max_step = 0
+
+amr.n_cell = 8 8 8
+amr.max_grid_size = 8
+amr.blocking_factor = 8
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = 1.0 1.0 1.0
+
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+
+warpx.const_dt = 1.0e-12
+warpx.do_electrostatic = labframe
+warpx.poisson_solver = multigrid
+warpx.grid_type = collocated
+algo.particle_shape = 1
+
+particles.species_names = neutrals
+neutrals.charge = 0.0
+neutrals.mass = m_p
+neutrals.initialize_self_fields = 0
+
+insert.initial_sources = rotating_inlet
+
+rotating_inlet.species = neutrals
+rotating_inlet.rate = fixed_count
+rotating_inlet.count = 20000
+rotating_inlet.macro_weight = 1.0
+rotating_inlet.x_offset = 0.35
+rotating_inlet.y_offset = 0.45
+
+rotating_inlet.position.coupled_distribution = truncated_cone_surface
+rotating_inlet.position.slope = 0.0
+rotating_inlet.position.r_min = 0.1
+rotating_inlet.position.r_max = 0.2
+rotating_inlet.position.r_reference = 0.1
+rotating_inlet.position.z_reference = 0.5
+rotating_inlet.position.theta_min = 0.0
+rotating_inlet.position.theta_max = 2*pi
+
+rotating_inlet.velocity.coordinate_system = rotating_axis
+rotating_inlet.velocity.axis_at_theta0 = 3.0 4.0 12.0
+rotating_inlet.velocity.vx.distribution = gaussian
+rotating_inlet.velocity.vx.mean = 0.0
+rotating_inlet.velocity.vx.sigma = 1.0e4
+rotating_inlet.velocity.vy.distribution = gaussian
+rotating_inlet.velocity.vy.mean = 0.0
+rotating_inlet.velocity.vy.sigma = 2.0e4
+rotating_inlet.velocity.vz.distribution = positive_gaussian
+rotating_inlet.velocity.vz.mean = 2.0e5
+rotating_inlet.velocity.vz.sigma = 3.0e4
+
+diagnostics.diags_names = diag
+diag.intervals = 0
+diag.diag_type = Full
+diag.write_species = 1
+diag.species = neutrals
+diag.fields_to_plot = none
+diag.format = plotfile
+diag.file_prefix = diags/diag
+diag.dump_last_timestep = 1

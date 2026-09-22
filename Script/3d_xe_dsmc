@@ -1,0 +1,175 @@
+# ============================================================
+# 三维氙气 DSMC 仿真：气体注入通道
+#
+# 计算域: 4mm x 4mm x 5mm, 网格 160 x 160 x 200 (dx = 25 um)
+# Xe 中性原子以 0.6 mg/s 从 zmin 面直径 1mm 的圆形区域、
+# 400K 半麦克斯韦分布流入。
+# 计算域在通道出口 z = 5mm 处截断: z < 5mm 内 r > r_inj 为固体
+# (通道壁与 z = 5mm 环形端面, 600K 漫反射, analytic_boundary);
+# 通道出口即 zmax 边界, 粒子出通道直接吸收 (自由流出, 忽略外部
+# 羽流碰撞与回流)。
+# 物种只有中性 Xe 原子, 只考虑 Xe-Xe 弹性碰撞(VHS 截面)。
+# 时间步 5e-8 s。所有 WarpX 边界吸收粒子, 电势边界均为 0。
+# ============================================================
+
+#------------------------------------
+# 全局设置
+#------------------------------------
+max_step = 20000                    # 1e-3 s, 约 25 倍气流穿越时间
+my_constants.dt = 5e-8
+
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.poisson_solver = multigrid
+warpx.self_fields_required_precision = 1e-6
+warpx.use_filter = 0
+warpx.grid_type = collocated
+
+#------------------------------------
+# 物理与几何参数
+#------------------------------------
+my_constants.m_xe = 2.18017e-25     # Xe 原子质量 [kg]
+my_constants.m_dot = 0.6e-6         # 质量流率 0.6 mg/s [kg/s]
+my_constants.T_inj = 400            # 注入气体温度 [K] (壁面温度 400K, 见 wall_temperature)
+my_constants.r_inj = 0.5e-3         # 注入圆/通道半径 (直径 1mm) [m]
+my_constants.z_wall = 5e-3          # 通道出口 (端面) 位置 [m]
+my_constants.xe_weight = 2e6        # 宏粒子权重, 每步约 6.9e4 个宏粒子
+
+#------------------------------------
+# 网格 (通道轴线位于 x = y = 0)
+#------------------------------------
+amr.n_cell = 160 160 200
+amr.max_grid_size = 400
+amr.blocking_factor = 8
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = -2e-3 -2e-3 0.0
+geometry.prob_hi =  2e-3  2e-3 5e-3
+
+#------------------------------------
+# 边界条件: 全部吸收粒子, 电势全为 0
+#------------------------------------
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+#------------------------------------
+# 粒子: 只有中性氙原子
+#------------------------------------
+algo.particle_shape = 1
+
+particles.species_names = xe_neutral
+
+xe_neutral.mass = m_xe
+# 原子不沉积也不采集, 电荷不参与场求解; 设为 1 使诊断量 rho_xe_neutral
+# 在数值上直接等于数密度 [1/m^3]
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+# 将 zmax 吸收的粒子存入边界缓冲区, 供 zmax_radial 出口统计诊断使用
+xe_neutral.save_particles_at_zhi = 1
+
+#------------------------------------
+# 通道壁/端面边界: 600K 漫反射
+#------------------------------------
+# 固体区: r > r_inj 且 z < z_wall (通道壁材料)
+# 记 f1 = r_inj^2 - x^2 - y^2 (管内为正), f2 = z - z_wall (端面上方为正),
+# 组合符号函数 F = max(f1, f2): F > 0 为气体区, F < 0 为固体。
+# 法向(指向气体区, 代码内部自行归一化)用 heaviside(f1 - f2) 切换:
+#   管壁 (f1 = 0 处): (-x, -y, 0), 指向管轴
+#   端面 (f2 = 0 处): (0, 0, 1), 指向腔体
+# absorb_fraction 与 specular_fraction 均为 0, 剩余概率 1.0 全部为漫反射。
+# 注意: 这三个 fraction 与 wall_temperature 为普通数值参数, 不支持常数表达式。
+xe_neutral.analytic_boundary.enabled = 1
+xe_neutral.analytic_boundary.absorb_fraction = 0.0
+xe_neutral.analytic_boundary.specular_fraction = 0.05
+xe_neutral.analytic_boundary.wall_temperature = 400
+xe_neutral.analytic_boundary.signed_value = "max(r_inj*r_inj - x*x - y*y, z - z_wall)"
+xe_neutral.analytic_boundary.normal_x = "-x * heaviside((r_inj*r_inj - x*x - y*y) - (z - z_wall), 0.5)"
+xe_neutral.analytic_boundary.normal_y = "-y * heaviside((r_inj*r_inj - x*x - y*y) - (z - z_wall), 0.5)"
+xe_neutral.analytic_boundary.normal_z = "1.0 - heaviside((r_inj*r_inj - x*x - y*y) - (z - z_wall), 0.5)"
+
+#------------------------------------
+# 注入: zmin 面直径 1mm 圆形区域, 0.6 mg/s, 400K 半麦克斯韦
+#------------------------------------
+insert.continuous_sources = xe_inlet
+
+xe_inlet.species = xe_neutral
+xe_inlet.rate = mass_flow
+xe_inlet.mass_flow = m_dot
+xe_inlet.mass = m_xe
+xe_inlet.macro_weight = xe_weight
+
+# 位置: 柱坐标, 圆面内按面积均匀, z 固定在 zmin 面
+xe_inlet.position.coordinate_system = cylindrical
+xe_inlet.position.r.distribution = area_uniform
+xe_inlet.position.r.min = 0.0
+xe_inlet.position.r.max = r_inj
+xe_inlet.position.theta.distribution = uniform
+xe_inlet.position.theta.min = 0.0
+xe_inlet.position.theta.max = 2*pi
+xe_inlet.position.z.distribution = constant
+xe_inlet.position.z.value = 0.0
+
+# 速度: 400K 半麦克斯韦, vx/vy 全高斯, vz 正值截断高斯(无漂移)
+xe_inlet.velocity.coordinate_system = cartesian
+xe_inlet.velocity.vx.distribution = gaussian
+xe_inlet.velocity.vx.sigma = sqrt(kb * T_inj / m_xe)
+xe_inlet.velocity.vy.distribution = gaussian
+xe_inlet.velocity.vy.sigma = sqrt(kb * T_inj / m_xe)
+xe_inlet.velocity.vz.distribution = positive_gaussian
+xe_inlet.velocity.vz.sigma = sqrt(kb * T_inj / m_xe)
+
+my_constants.particle_number_diag = 1
+
+#------------------------------------
+# 碰撞: Xe-Xe 弹性 (VHS 截面, 由 XeXeVHSGenerator 生成)
+#------------------------------------
+collisions.collision_names = xe_xe
+
+xe_xe.type = dsmc
+xe_xe.species = xe_neutral xe_neutral
+xe_xe.scattering_processes = elastic
+xe_xe.elastic_cross_section = Xe2X/Xe_Xe_VHS_elastic.dat
+xe_xe.elastic_scattering_angle_model = isotropic
+xe_xe.ndt_supercycle = 1
+
+#------------------------------------
+# 诊断输出
+#------------------------------------
+diagnostics.diags_names = diag1
+
+diag1.diag_type = Full
+diag1.intervals = 2000
+# charge = 1 时 rho_xe_neutral 数值上即数密度 [1/m^3]
+diag1.fields_to_plot = rho_xe_neutral
+diag1.write_species = 0
+diag1.format = openpmd
+
+warpx.reduced_diags_names = particle_number_inlet
+
+particle_number_inlet.type = ParticleNumber
+particle_number_inlet.intervals = 100
+
+#------------------------------------
+# zmax (= 通道出口) 径向统计 (稳态后累积, 最后一步写出 zmax_radial/*.dat)
+# 统计范围即通道截面 r <= r_inj; 径向档宽 = dx = 25 um,
+# r_max 必须能被 dx 整除 (0.5mm / 25um = 20 档)
+#------------------------------------
+my_constants.hall_diag_interval = 10        # 采样间隔 (现有控制参数)
+my_constants.zmax_radial_exit_diag = 1
+my_constants.zmax_radial_start_step = 10000 # 稳态后开始累积
+my_constants.zmax_radial_r_max = 0.5e-3
+my_constants.zmax_radial_v_max = 1000       # 速度直方图范围 [-1000, 1000] m/s
+my_constants.zmax_radial_v_bins = 100
+# 定期清空边界缓冲区 (与 zmax_radial 相同的 hall_diag_interval 间隔;
+# zmax_radial 统计在清空之前执行, 两者不冲突)
+my_constants.clear_hall_boundary_particle_cache_diag = 1

@@ -1,34 +1,55 @@
 #include "HallCoordinateTransform.h"
 
+#include "Insert/Math/Sampling.h"
+#include "Insert/Math/VectorOps.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/TextMsg.H"
 
 #include <AMReX_Math.H>
 
 #include <cmath>
+#include <limits>
 
 namespace Insert {
 namespace {
 
-amrex::XDim3
-Normalize (amrex::XDim3 value)
+amrex::Real
+LocalAzimuth (EmissionSample const& position) noexcept
 {
-    const auto norm = std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        norm > amrex::Real(0.0), "Cannot normalize a zero vector.");
-    return amrex::XDim3{value.x / norm, value.y / norm, value.z / norm};
-}
-
-amrex::XDim3
-Cross (amrex::XDim3 const& a, amrex::XDim3 const& b) noexcept
-{
-    return amrex::XDim3{
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x};
+    return std::atan2(
+        static_cast<amrex::Real>(position.y - position.y_offset),
+        static_cast<amrex::Real>(position.x - position.x_offset));
 }
 
 } // namespace
+
+HallRotatingAxisFrame
+MakeHallRotatingAxisFrame (amrex::XDim3 const& axis_at_theta0)
+{
+    const auto z_axis = Math::NormalizeChecked(axis_at_theta0);
+    const auto denominator = amrex::Real(1.0) + z_axis.z;
+    const auto threshold = amrex::Real(16.0) *
+                           std::numeric_limits<amrex::Real>::epsilon();
+
+    if (denominator <= threshold) {
+        return HallRotatingAxisFrame{
+            amrex::XDim3{1.0, 0.0, 0.0},
+            amrex::XDim3{0.0, -1.0, 0.0},
+            amrex::XDim3{0.0, 0.0, -1.0}};
+    }
+
+    const auto inverse_denominator = amrex::Real(1.0) / denominator;
+    return HallRotatingAxisFrame{
+        amrex::XDim3{
+            amrex::Real(1.0) - z_axis.x * z_axis.x * inverse_denominator,
+            -z_axis.x * z_axis.y * inverse_denominator,
+            -z_axis.x},
+        amrex::XDim3{
+            -z_axis.x * z_axis.y * inverse_denominator,
+            amrex::Real(1.0) - z_axis.y * z_axis.y * inverse_denominator,
+            -z_axis.y},
+        z_axis};
+}
 
 HallCoordinateSystem
 ParseHallCoordinateSystem (std::string value)
@@ -42,6 +63,9 @@ ParseHallCoordinateSystem (std::string value)
     }
     if (value == "local_normal") {
         return HallCoordinateSystem::local_normal;
+    }
+    if (value == "rotating_axis") {
+        return HallCoordinateSystem::rotating_axis;
     }
     WARPX_ABORT_WITH_MESSAGE("Unknown Hall coordinate system: " + value);
     return HallCoordinateSystem::cartesian;
@@ -58,7 +82,8 @@ HallCoordinateAxisNames (
         if (system == HallCoordinateSystem::cylindrical) {
             return {"r", "theta", "z"};
         }
-        WARPX_ABORT_WITH_MESSAGE("local_normal is not a valid position coordinate system.");
+        WARPX_ABORT_WITH_MESSAGE(
+            "local_normal and rotating_axis are not valid position coordinate systems.");
     }
 
     if (system == HallCoordinateSystem::cartesian) {
@@ -66,6 +91,9 @@ HallCoordinateAxisNames (
     }
     if (system == HallCoordinateSystem::cylindrical) {
         return {"vr", "vtheta", "vz"};
+    }
+    if (system == HallCoordinateSystem::rotating_axis) {
+        return {"vx", "vy", "vz"};
     }
     return {"vnormal", "vt1", "vt2"};
 }
@@ -85,10 +113,9 @@ MakeEmissionSample (
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         system == HallCoordinateSystem::cylindrical,
         "Only cartesian and cylindrical position coordinate systems are supported.");
-    const auto radius = coordinates.x;
-    const auto theta = coordinates.y;
-    sample.x = static_cast<amrex::ParticleReal>(radius * std::cos(theta));
-    sample.y = static_cast<amrex::ParticleReal>(radius * std::sin(theta));
+    const auto planar = Math::PolarToCartesian(coordinates.x, coordinates.y);
+    sample.x = static_cast<amrex::ParticleReal>(planar.x);
+    sample.y = static_cast<amrex::ParticleReal>(planar.y);
     sample.z = static_cast<amrex::ParticleReal>(coordinates.z);
     return sample;
 }
@@ -96,39 +123,42 @@ MakeEmissionSample (
 amrex::XDim3
 TransformVelocityToCartesian (
     HallCoordinateSystem system, amrex::XDim3 const& velocity,
-    EmissionSample const& position)
+    EmissionSample const& position,
+    HallRotatingAxisFrame const& rotating_axis_frame)
 {
     if (system == HallCoordinateSystem::cartesian) {
         return velocity;
     }
 
     if (system == HallCoordinateSystem::cylindrical) {
-        const auto theta = std::atan2(
-            static_cast<amrex::Real>(position.y),
-            static_cast<amrex::Real>(position.x));
-        const auto cos_theta = std::cos(theta);
-        const auto sin_theta = std::sin(theta);
-        return amrex::XDim3{
-            velocity.x * cos_theta - velocity.y * sin_theta,
-            velocity.x * sin_theta + velocity.y * cos_theta,
-            velocity.z};
+        return Math::RotateAroundZ(velocity, LocalAzimuth(position));
     }
 
-    const auto normal = Normalize(amrex::XDim3{
+    if (system == HallCoordinateSystem::rotating_axis) {
+        const amrex::XDim3 velocity_at_theta0 = Math::ExpandInBasis(
+            velocity, rotating_axis_frame.x_axis, rotating_axis_frame.y_axis,
+            rotating_axis_frame.z_axis);
+        return Math::RotateAroundZ(velocity_at_theta0, LocalAzimuth(position));
+    }
+
+    const auto normal = Math::NormalizeChecked(amrex::XDim3{
         static_cast<amrex::Real>(position.nx),
         static_cast<amrex::Real>(position.ny),
         static_cast<amrex::Real>(position.nz)});
+    // The reference-vector construction is kept here (rather than
+    // Math::BuildOrthonormalBasis) because its tangent sign convention
+    // differs: user-specified tangential velocity components would change
+    // sign under the wall-operator convention.
     const amrex::XDim3 reference =
         (std::abs(normal.z) < amrex::Real(0.9))
             ? amrex::XDim3{0.0, 0.0, 1.0}
             : amrex::XDim3{1.0, 0.0, 0.0};
-    const auto tangent1 = Normalize(Cross(reference, normal));
-    const auto tangent2 = Cross(normal, tangent1);
+    const auto tangent1 = Math::NormalizeChecked(Math::Cross(reference, normal));
+    const auto tangent2 = Math::Cross(normal, tangent1);
 
-    return amrex::XDim3{
-        velocity.x * normal.x + velocity.y * tangent1.x + velocity.z * tangent2.x,
-        velocity.x * normal.y + velocity.y * tangent1.y + velocity.z * tangent2.y,
-        velocity.x * normal.z + velocity.y * tangent1.z + velocity.z * tangent2.z};
+    // Local components are (vnormal, vt1, vt2); expand them in the
+    // (normal, tangent1, tangent2) basis to get Cartesian components.
+    return Math::ExpandInBasis(velocity, normal, tangent1, tangent2);
 }
 
 } // namespace Insert
