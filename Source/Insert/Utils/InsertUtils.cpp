@@ -122,37 +122,4 @@ TwoPi ()
     return amrex::ParticleReal(2.0) * amrex::Math::pi<amrex::ParticleReal>();
 }
 
-HallAnodeRingConfig
-ReadHallAnodeRingConfig (amrex::Geometry const& geom)
-{
-    amrex::ParmParse pp_mc("my_constants");
-    auto voltage = amrex::Real(0.0);
-    auto l_factor = amrex::ParticleReal(1.0);
-    auto length = static_cast<amrex::ParticleReal>(
-        geom.ProbHi(0) - geom.ProbLo(0));
-    pp_mc.query("voltage", voltage);
-    pp_mc.query("l_factor", l_factor);
-    pp_mc.query("L", length);
-
-    amrex::ParticleReal const center_x =
-        static_cast<amrex::ParticleReal>(geom.ProbLo(0)) +
-        length / l_factor / amrex::ParticleReal(2.0);
-    amrex::ParticleReal const center_y =
-        static_cast<amrex::ParticleReal>(geom.ProbLo(1)) +
-        length / l_factor / amrex::ParticleReal(2.0);
-    amrex::ParticleReal const r_min =
-        amrex::ParticleReal(0.021) / amrex::ParticleReal(2.0) / l_factor;
-    amrex::ParticleReal const r_max =
-        amrex::ParticleReal(0.031) / amrex::ParticleReal(2.0) / l_factor;
-
-    return HallAnodeRingConfig{
-        voltage,
-        center_x,
-        center_y,
-        r_min,
-        r_max,
-        r_min * r_min,
-        r_max * r_max};
-}
-
 } // namespace Insert

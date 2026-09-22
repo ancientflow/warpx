@@ -118,14 +118,10 @@ my_constants.hall_diag_interval = 10
 作为阳极电流的采样窗口（写出并清零累加器）。以下路径均使用该间隔读取
 `ParticleBoundaryBuffer`：
 
-- `ZMinWallChargeDeposit` 的电荷沉积部分
 - `ThrustCalc`
 - `BeamDivergenceCalc`
 - `IEDFCalc`
 - `ClearHallBoundaryParticleCache`
-- `SecondaryEmission`
-- `AnodeIonNeutralization`
-- `NeutralAtomEBInteraction`
 
 这意味着边界粒子缓存的读取和清理使用同一时步判断，避免诊断间隔不一致导致
 粒子在被统计前被清掉。
@@ -138,7 +134,6 @@ my_constants.hall_diag_interval = 10
 | `my_constants.collision_record_diag` | `0` | 写出碰撞产生的电子和离子宏粒子数到 `collision_record.dat`。需要编译宏 `COLLISION_RECORD`。 |
 | `my_constants.anode_current_diag` | `0` | 统计每面解析壁面吸收的电流，每壁面一个输出文件。需要启用 `insert.analytic_walls`。 |
 | `my_constants.anode_current_prefix` | `anode_current` | 壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
-| `my_constants.zmin_wall_charge_diag` | `0` | 沉积 zmin 非阳极环壁面电荷。需要 `HALL3D`。 |
 | `my_constants.thrust_diag` | `0` | 统计出口离子轴向动量并计算推力。需要 `HALL3D`。 |
 | `my_constants.beam_divergence_diag` | `0` | 统计出口离子束流发散角。需要 `HALL3D`。 |
 | `my_constants.iedf_diag` | `0` | 统计出口离子能量分布函数。需要 `HALL3D`。 |
@@ -146,39 +141,6 @@ my_constants.hall_diag_interval = 10
 
 `clear_hall_boundary_particle_cache_diag` 应在所有读取边界缓存的诊断之后执行。
 当前 `Insert::AfterDiagnostics()` 中的调用顺序已满足这一点。
-
-### 中性原子 EB 壁面作用
-
-```text
-insert.neutral_atom_eb.enabled = 1
-insert.neutral_atom_eb.species = xe_netural
-insert.neutral_atom_eb.model = diffuse
-# Optional; overrides model. Diffuse fraction is 1-specular_fraction.
-insert.neutral_atom_eb.specular_fraction = 0.25
-insert.neutral_atom_eb.k = 1.0
-insert.neutral_atom_eb.a1 = 0.001
-insert.neutral_atom_eb.b1 = 0.004
-insert.neutral_atom_eb.wall_temperature = 400.0
-# Optional reflected-path displacement; defaults to 0.1 times the minimum cell size
-# insert.neutral_atom_eb.position_epsilon = 1.0e-6
-xe_netural.save_particles_at_eb = 1
-```
-
-该功能默认关闭，触发间隔复用 `my_constants.hall_diag_interval`。当前解析处理
-三维旋转圆锥段 `z = k*(sqrt(x*x+y*y)-a1)` 且要求 `a1 < r < b1`；
-`r > b1` 的平面段不参与反射。代码直接使用 WarpX EB 二分后保存在粒子缓存中的
-撞击位置，并根据解析圆锥方程计算指向 `z` 增大侧计算域的法向量。速度反射后，
-粒子沿反射速度方向移动 `position_epsilon`，以避免下一次 EB 检测时被立即重新
-吸收；不再反算解析撞击点或对齐撞击后的剩余时间。`model` 可取 `diffuse` 或
-`specular`，默认值为 `diffuse`。可选参数 `specular_fraction` 的范围为
-`[0, 1]`，指定后覆盖 `model`：每个圆锥撞击粒子以该概率执行镜面反射，其余粒子
-执行漫反射。只要漫反射比例非零，就必须给出以 K 为单位的
-`wall_temperature`。处理后不会单独清理中性原子 buffer；如需与电子、离子统一
-清理，应同时设置：
-
-```text
-my_constants.clear_hall_boundary_particle_cache_diag = 1
-```
 
 ### 阳极电流
 
@@ -216,49 +178,6 @@ zlo 缓存实现）已移除，设置它会触发报错并提示改用
 缓存，故旧实现已删除。一步内穿越壁面到 domain zmin 之间区域的粒子
 （`v * dt` 大于壁面到 zmin 的距离）会被域边界吸收而不经壁面模型，两种
 实现都统计不到。
-
-阳极环几何相关参数（`ReadHallAnodeRingConfig()`，用于阳极电势边界）：
-
-```text
-my_constants.L = <physical length>
-my_constants.l_factor = <scale factor>
-my_constants.voltage = <stored in config>
-```
-
-其中阳极环中心为 `(ProbLo(0) + L/l_factor/2, ProbLo(1) + L/l_factor/2)`，
-半径范围固定为 `0.021/2/l_factor` 到 `0.031/2/l_factor`。
-
-### zmin 壁面电荷
-
-```text
-my_constants.zmin_wall_charge_diag = 1
-my_constants.zmin_wall_charge_dir = "zmin_wall_charge"
-my_constants.zmin_wall_charge_write_interval = 100
-```
-
-参数：
-
-| 参数 | 默认值 | 作用 |
-| --- | --- | --- |
-| `my_constants.zmin_wall_charge_dir` | `"zmin_wall_charge"` | 写出目录。空字符串会回退到默认目录。 |
-| `my_constants.zmin_wall_charge_write_interval` | `100` | 文件写出步号间隔。 |
-| `my_constants.zmin_wall_charge_interval` | `100` | 兼容旧参数名；现在仅作为写出间隔读取。 |
-
-壁面电荷沉积不使用写出间隔，而是使用 `my_constants.hall_diag_interval`。
-写出文件名格式：
-
-```text
-<zmin_wall_charge_dir>/zmin_wall_charge_00000100.dat
-```
-
-文件内容是从运行开始累计到当前写出步的 zmin 壁面电荷密度
-`sigma_s(x,y)`，单位为 `C/m^2`。沉积使用粒子的物理电荷符号：电子贡献为负，
-离子贡献为正。数组按 y 节点为行、x 节点为列写出，x 是最快变化索引。
-
-当该累计量用于 zmin 非齐次 Neumann 边界时，约定 zmin 面外法向
-`n = -z`，并施加 `dphi/dn = sigma_s/epsilon0`，等价于
-`dphi/dz = -sigma_s/epsilon0`。因此 `InsertBoundaryPhi` 的 guard cell 更新为
-`phi(k0-1) = phi(k0+1) + 2*dz*sigma_s/epsilon0`。
 
 ### 推力
 
