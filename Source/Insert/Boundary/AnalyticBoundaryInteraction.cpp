@@ -6,6 +6,7 @@
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/HallWallCharge.H"
 #include "Insert/Math/ThermalVelocity.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Particles/Gather/FieldGather.H"
 #include "Particles/Gather/GetExternalFields.H"
 #include "Particles/MultiParticleContainer.H"
@@ -20,6 +21,8 @@
 
 #include <AMReX_BLassert.H>
 #include <AMReX_FArrayBox.H>
+#include <AMReX_GpuAtomic.H>
+#include <AMReX_GpuContainers.H>
 #include <AMReX_IndexType.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
@@ -31,6 +34,7 @@
 
 #include <array>
 #include <cmath>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <set>
@@ -105,6 +109,40 @@ struct AnalyticWallConfiguration
     std::vector<AnalyticWall> walls;
     std::map<std::string, std::vector<WallPolicy>> policies;
 };
+
+// Wall-current diagnostic: for every wall accumulate the electron macro
+// weight, the ion macro weight and the net charge [C] delivered to that
+// wall. Accumulated every step inside AnalyticBoundaryInteraction; written
+// (one file per wall) and reset by AnodeCurrentDiagOutput.
+constexpr int anode_current_class_size = 3;
+
+struct AnodeCurrentDiagState
+{
+    bool enabled = false;
+    amrex::Gpu::DeviceVector<amrex::Real> stats;
+};
+
+AnodeCurrentDiagState&
+GetAnodeCurrentDiagState (std::size_t const wall_count)
+{
+    static AnodeCurrentDiagState state = [wall_count] {
+        AnodeCurrentDiagState result;
+        amrex::ParmParse const pp_mc("my_constants");
+        pp_mc.query("anode_current_diag", result.enabled);
+        if (result.enabled && wall_count > 0) {
+            result.stats = amrex::Gpu::DeviceVector<amrex::Real>(
+                wall_count * anode_current_class_size, 0.0);
+        }
+        return result;
+    }();
+    return state;
+}
+
+std::string
+WallCurrentPath (std::string const& prefix, std::string const& wall_name)
+{
+    return prefix + "_" + wall_name + ".dat";
+}
 
 [[nodiscard]] AnalyticWallConfiguration
 ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
@@ -209,6 +247,13 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
     return result;
 }
 
+AnalyticWallConfiguration const&
+GetAnalyticWallConfiguration (MultiParticleContainer const& mpc)
+{
+    static AnalyticWallConfiguration const config = ReadAnalyticWallConfiguration(mpc);
+    return config;
+}
+
 template <typename Boundary>
 void
 CreateWallProducts (WarpXParticleContainer& source, WarpXParticleContainer& destination,
@@ -279,7 +324,8 @@ void
 ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary const& boundary,
                  amrex::Real const time, amrex::Real const dt, WallChargeGrid const& grid,
                  amrex::MultiFab& wall_charge, MultiParticleContainer& mpc,
-                 std::array<amrex::Long, max_wall_behaviors>& counts)
+                 std::array<amrex::Long, max_wall_behaviors>& counts,
+                 amrex::Real* const anode_stats, int const wall_id)
 {
     amrex::ParticleReal const mass = pc.getMass();
     amrex::ParticleReal const charge = pc.getCharge();
@@ -569,6 +615,35 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 pidw.make_invalid();
             });
 
+            if (anode_stats != nullptr) {
+                // Wall-current bookkeeping: scatter weighted sums into the
+                // per-wall slots. amrex::For plus HostDevice atomics is safe
+                // on both CPU (OpenMP) and GPU.
+                int const base = wall_id * anode_current_class_size;
+                amrex::For(np, [=] AMREX_GPU_DEVICE (long const i) noexcept {
+                    WallBehavior const selected = static_cast<WallBehavior>(choice[i]);
+                    if (selected == WallBehavior::none || selected == WallBehavior::specular ||
+                        selected == WallBehavior::diffuse) { return; }
+                    amrex::ParticleReal out_charge = 0.0_prt;
+                    if (selected == WallBehavior::neutralize) { out_charge = neutral_charge; }
+                    else if (selected == WallBehavior::secondary_electron_1) {
+                        out_charge = secondary_charge;
+                    } else if (selected == WallBehavior::secondary_electron_2) {
+                        out_charge = 2.0_prt * secondary_charge;
+                    }
+                    amrex::ParticleReal const w = updated_weight[i];
+                    if (charge < 0.0_prt) {
+                        amrex::HostDevice::Atomic::Add(&anode_stats[base],
+                            static_cast<amrex::Real>(w));
+                    } else if (charge > 0.0_prt) {
+                        amrex::HostDevice::Atomic::Add(&anode_stats[base + 1],
+                            static_cast<amrex::Real>(w));
+                    }
+                    amrex::HostDevice::Atomic::Add(&anode_stats[base + 2],
+                        static_cast<amrex::Real>((charge - out_charge) * w));
+                });
+            }
+
             // Count the events selected for this tile. choice[i] still holds the
             // behavior even for particles that were invalidated above.
             amrex::Long tile_counts[max_wall_behaviors];
@@ -600,7 +675,7 @@ AnalyticBoundaryInteraction ()
 #if defined(WARPX_DIM_3D)
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& mpc = warpx_instance.GetPartContainer();
-    static AnalyticWallConfiguration const config = ReadAnalyticWallConfiguration(mpc);
+    AnalyticWallConfiguration const& config = GetAnalyticWallConfiguration(mpc);
     if (config.walls.empty()) {
         return;
     }
@@ -610,6 +685,11 @@ AnalyticBoundaryInteraction ()
         persistent_wall_charge.isDefined(),
         "Analytic absorbing walls require the material Poisson path to initialize wall_charge.");
     WallChargeGrid const grid = MakeWallChargeGrid(warpx_instance.Geom(0));
+
+    AnodeCurrentDiagState& anode_diag =
+        GetAnodeCurrentDiagState(config.walls.size());
+    amrex::Real* const anode_stats =
+        anode_diag.enabled ? anode_diag.stats.dataPtr() : nullptr;
 
     std::array<amrex::Long, max_wall_behaviors> wall_event_counts{};
 
@@ -629,7 +709,8 @@ AnalyticBoundaryInteraction ()
                 warpx_instance.getdt(0) * ParticleSubcyclingNdt(species_name);
             ApplyWallPolicy(pc, policy, config.walls[wall_id].geometry->GetDeviceView(),
                 warpx_instance.gett_new(0), dt_effective, grid,
-                persistent_wall_charge.get(0), mpc, wall_event_counts);
+                persistent_wall_charge.get(0), mpc, wall_event_counts,
+                anode_stats, wall_id);
         }
     }
 
@@ -655,6 +736,68 @@ AnalyticBoundaryInteraction ()
         << "  emitted secondaries: " << n_emitted
         << " (secondary_electron_1 " << n_secondary_1
         << ", secondary_electron_2 " << n_secondary_2 << ")\n";
+#endif
+}
+
+void
+AnodeCurrentDiagOutput ()
+{
+#if defined(WARPX_DIM_3D)
+    WarpX& warpx_instance = WarpX::GetInstance();
+    AnalyticWallConfiguration const& config =
+        GetAnalyticWallConfiguration(warpx_instance.GetPartContainer());
+    AnodeCurrentDiagState& state =
+        GetAnodeCurrentDiagState(config.walls.size());
+    if (!state.enabled || config.walls.empty()) { return; }
+    if (!DoBoundaryParticleDiag(warpx_instance.getistep(0))) { return; }
+
+    static bool ifinit = false;
+    static std::string anode_current_prefix = "anode_current";
+    if (!ifinit) {
+        amrex::ParmParse const pp_mc("my_constants");
+        pp_mc.query("anode_current_prefix", anode_current_prefix);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!pp_mc.contains("anode_current_path"),
+            "my_constants.anode_current_path was removed together with the old "
+            "zlo-buffer anode diagnostic. The wall current is now written to "
+            "one file per analytic wall, <prefix>_<wall>.dat; set the prefix "
+            "with my_constants.anode_current_prefix.");
+        if (amrex::ParallelDescriptor::IOProcessor()) {
+            for (auto const& wall : config.walls) {
+                std::fstream wall_file(
+                    WallCurrentPath(anode_current_prefix, wall.name),
+                    std::ios::out);
+                wall_file << "time\telectron\tion\tnet_charge\n";
+            }
+        }
+        ifinit = true;
+    }
+
+    int const stats_size = static_cast<int>(state.stats.size());
+    amrex::Vector<amrex::Real> host_stats(state.stats.size(), 0.0);
+    amrex::Gpu::copy(amrex::Gpu::deviceToHost, state.stats.begin(),
+                     state.stats.end(), host_stats.begin());
+    amrex::ParallelDescriptor::ReduceRealSum(
+        host_stats.data(), stats_size,
+        amrex::ParallelDescriptor::IOProcessorNumber());
+
+    if (amrex::ParallelDescriptor::IOProcessor()) {
+        for (std::size_t w = 0; w < config.walls.size(); ++w) {
+            std::fstream wall_file(
+                WallCurrentPath(anode_current_prefix, config.walls[w].name),
+                std::ios::app);
+            wall_file << warpx_instance.gett_new(0);
+            for (int k = 0; k < anode_current_class_size; ++k) {
+                wall_file << "\t"
+                          << host_stats[w * anode_current_class_size + k];
+            }
+            wall_file << "\n";
+        }
+    }
+
+    // Restart the accumulation window on every rank.
+    amrex::Real* const stats_ptr = state.stats.dataPtr();
+    amrex::ParallelFor(stats_size,
+        [=] AMREX_GPU_DEVICE (int const i) noexcept { stats_ptr[i] = 0.0; });
 #endif
 }
 

@@ -16,7 +16,6 @@ namespace Insert {
 
 void ParticleNumber ();
 void ShowAndWriteIonzationNum (amrex::Vector<int> num);
-void AnodeCurrentCalc ();
 extern std::unique_ptr<amrex::MultiFab> g_accumulated_wall_charge_density;
 void InitializeAccumulatedZMinWallChargeDensity (ZMinWallChargeGrid const& grid);
 void ZMinWallChargeDeposit ();

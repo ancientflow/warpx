@@ -1,6 +1,7 @@
 #include "WarpXInsert.h"
 
 #include "Insert/Background/InsertBackgroundDensity.h"
+#include "Insert/Boundary/AnalyticBoundaryInteraction.h"
 #include "Insert/Boundary/InsertBoundaryParticles.h"
 #include "Insert/Boundary/InsertBoundaryPhi.h"
 #include "Insert/Collisions/IonizationSourceTable.h"
@@ -128,11 +129,13 @@ AfterDiagnostics () {
     // (e.g. ClearHallBoundaryParticleCache), otherwise the zmax exit
     // statistics see an already-cleared buffer and record nothing.
     ZmaxRadialExitStatsCalc();
+    // Written outside the HALL3D block: the diagnostic accumulates inside the
+    // analytic wall interaction, which is guarded by WARPX_DIM_3D only.
+    AnodeCurrentDiagOutput();
 #ifdef HALL3D
     // NeutralAtomEBInteraction();
     // SecondaryEmission();
     // AnodeIonNeutralization();
-    AnodeCurrentCalc();
     // ZMinWallChargeDeposit();
     ThrustCalc();
     BeamDivergenceCalc();

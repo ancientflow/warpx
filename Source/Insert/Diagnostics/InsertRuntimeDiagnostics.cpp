@@ -35,12 +35,8 @@ using namespace amrex::literals;
 
 namespace {
 
-using Insert::BacktraceParticleToZPlane;
 using Insert::DepositZMinWallCharge;
-using Insert::HallAnodeRingConfig;
-using Insert::IsHallAnodeRingHit;
 using Insert::MakeZMinWallChargeGrid;
-using Insert::ReadHallAnodeRingConfig;
 using Insert::ZMinWallChargeGrid;
 using Insert::ZMinWallChargeSize;
 
@@ -48,7 +44,6 @@ constexpr int xlo_boundary = 0;
 constexpr int xhi_boundary = 1;
 constexpr int ylo_boundary = 2;
 constexpr int yhi_boundary = 3;
-constexpr int zlo_boundary = 4;
 constexpr int zhi_boundary = 5;
 constexpr int outlet_boundaries[] = {xlo_boundary, xhi_boundary, ylo_boundary,
                                      yhi_boundary, zhi_boundary};
@@ -110,73 +105,6 @@ WriteZMinWallChargeDensity (
     }
     wall_file << "\n";
 }
-
-constexpr int anode_current_zmin_electron_index = 0;
-constexpr int anode_current_zmin_ion_index = 1;
-constexpr int anode_current_anode_electron_index = 2;
-constexpr int anode_current_anode_electron_cut_index = 3;
-constexpr int anode_current_data_size = 4;
-
-struct AnodeElectronCurrentFunctor
-{
-    amrex::ParticleReal const* AMREX_RESTRICT px;
-    amrex::ParticleReal const* AMREX_RESTRICT py;
-    amrex::ParticleReal const* AMREX_RESTRICT pw;
-    amrex::ParticleReal const* AMREX_RESTRICT pz;
-    amrex::ParticleReal const* AMREX_RESTRICT pvx;
-    amrex::ParticleReal const* AMREX_RESTRICT pvy;
-    amrex::ParticleReal const* AMREX_RESTRICT pvz;
-    amrex::ParticleReal zmin;
-    HallAnodeRingConfig anode_ring;
-    amrex::ParticleReal* AMREX_RESTRICT data;
-
-    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
-    void operator() (long const ip) const noexcept
-    {
-        amrex::ParticleReal const w = pw[ip];
-        if (IsHallAnodeRingHit(px[ip], py[ip], anode_ring)) {
-            amrex::Gpu::Atomic::Add(
-                &data[anode_current_anode_electron_index], w);
-        }
-
-        amrex::ParticleReal x_hit, y_hit;
-        if (BacktraceParticleToZPlane(px[ip], py[ip], pz[ip], pvx[ip],
-                                      pvy[ip], pvz[ip], zmin, x_hit, y_hit) &&
-            IsHallAnodeRingHit(x_hit, y_hit, anode_ring))
-        {
-            amrex::Gpu::Atomic::Add(
-                &data[anode_current_anode_electron_cut_index], w);
-        }
-        amrex::Gpu::Atomic::Add(&data[anode_current_zmin_electron_index], w);
-    }
-};
-
-struct AnodeIonCurrentFunctor
-{
-    amrex::ParticleReal const* AMREX_RESTRICT px;
-    amrex::ParticleReal const* AMREX_RESTRICT py;
-    amrex::ParticleReal const* AMREX_RESTRICT pw;
-    amrex::ParticleReal const* AMREX_RESTRICT pz;
-    amrex::ParticleReal const* AMREX_RESTRICT pvx;
-    amrex::ParticleReal const* AMREX_RESTRICT pvy;
-    amrex::ParticleReal const* AMREX_RESTRICT pvz;
-    amrex::ParticleReal zmin;
-    HallAnodeRingConfig anode_ring;
-    amrex::ParticleReal* AMREX_RESTRICT data;
-
-    AMREX_GPU_DEVICE AMREX_FORCE_INLINE
-    void operator() (long const ip) const noexcept
-    {
-        amrex::ParticleReal x_hit, y_hit;
-        if (BacktraceParticleToZPlane(px[ip], py[ip], pz[ip], pvx[ip],
-                                      pvy[ip], pvz[ip], zmin, x_hit, y_hit) &&
-            IsHallAnodeRingHit(x_hit, y_hit, anode_ring))
-        {
-            amrex::Gpu::Atomic::Add(&data[anode_current_zmin_ion_index],
-                                    pw[ip]);
-        }
-    }
-};
 
 struct OutletIonParticleData
 {
@@ -343,110 +271,6 @@ ShowAndWriteIonzationNum (amrex::Vector<int> num) {
     fileout.close();
 #else
     amrex::ignore_unused(num);
-#endif
-}
-
-void
-AnodeCurrentCalc () {
-#ifdef HALL3D
-    static bool const diag_enabled = DiagEnabled("anode_current_diag");
-    if (!diag_enabled) { return; }
-
-    static bool ifinit = false;
-    static std::string anode_current_path = "anode_current.dat";
-
-    if (!ifinit) {
-        amrex::ParmParse pp_mc("my_constants");
-        pp_mc.query("anode_current_path", anode_current_path);
-
-        if (amrex::ParallelDescriptor::IOProcessor()) {
-            std::fstream anode_file(anode_current_path, std::ios::out);
-            anode_file << "time\t"
-                          "zmin_electron\tzmin_ion\tanode_electron\t"
-                          "anode_electron_cut\n";
-        }
-
-        ifinit = true;
-    }
-
-    WarpX& warpx_instance = WarpX::GetInstance();
-    if (DoBoundaryParticleDiag(warpx_instance.getistep(0))) {
-        auto& mybpc = warpx_instance.GetParticleBoundaryBuffer();
-
-        auto* elec_zmin =
-            mybpc.getParticleBufferPointer("electrons", zlo_boundary);
-        auto* xe_ion_zmin =
-            mybpc.getParticleBufferPointer("xe_ions", zlo_boundary);
-
-        amrex::Gpu::DeviceVector<amrex::ParticleReal> device_charge(
-            anode_current_data_size, 0.0_prt);
-        amrex::Vector<amrex::Real> host_charge(
-            anode_current_data_size, 0.0_rt);
-        amrex::ParticleReal* device_ptr = device_charge.dataPtr();
-        HallAnodeRingConfig const anode_ring =
-            ReadHallAnodeRingConfig(warpx_instance.Geom(0));
-        amrex::ParticleReal const zmin =
-            static_cast<amrex::ParticleReal>(warpx_instance.Geom(0).ProbLo(2));
-
-        if (elec_zmin != nullptr && elec_zmin->isDefined()) {
-            for (auto pti = WarpXParIter(*elec_zmin, 0); pti.isValid(); ++pti) {
-                auto& arr = pti.GetStructOfArrays().GetRealData();
-                auto px = arr[PIdx::x].dataPtr();
-                auto py = arr[PIdx::y].dataPtr();
-                auto pw = arr[PIdx::w].dataPtr();
-                auto pz = arr[PIdx::z].dataPtr();
-                auto pvx = arr[PIdx::ux].dataPtr();
-                auto pvy = arr[PIdx::uy].dataPtr();
-                auto pvz = arr[PIdx::uz].dataPtr();
-                int np = pti.numParticles();
-
-                AnodeElectronCurrentFunctor const current{
-                    px, py, pw, pz, pvx, pvy, pvz, zmin, anode_ring,
-                    device_ptr};
-                amrex::ParallelFor(np, current);
-            }
-        }
-
-        if (xe_ion_zmin != nullptr && xe_ion_zmin->isDefined()) {
-            for (auto pti = WarpXParIter(*xe_ion_zmin, 0); pti.isValid();
-                 ++pti) {
-                auto& arr = pti.GetStructOfArrays().GetRealData();
-                auto px = arr[PIdx::x].dataPtr();
-                auto py = arr[PIdx::y].dataPtr();
-                auto pw = arr[PIdx::w].dataPtr();
-                auto pz = arr[PIdx::z].dataPtr();
-                auto pvx = arr[PIdx::ux].dataPtr();
-                auto pvy = arr[PIdx::uy].dataPtr();
-                auto pvz = arr[PIdx::uz].dataPtr();
-                int np = pti.numParticles();
-
-                AnodeIonCurrentFunctor const current{
-                    px, py, pw, pz, pvx, pvy, pvz, zmin, anode_ring,
-                    device_ptr};
-                amrex::ParallelFor(np, current);
-            }
-        }
-
-        amrex::Vector<amrex::ParticleReal> host_buffer(
-            device_charge.size());
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_charge.begin(),
-                         device_charge.end(), host_buffer.begin());
-        for (std::size_t i = 0; i < host_buffer.size(); ++i) {
-            host_charge[i] = static_cast<amrex::Real>(host_buffer[i]);
-        }
-        amrex::ParallelDescriptor::ReduceRealSum(
-            host_charge.data(), static_cast<int>(host_charge.size()),
-            amrex::ParallelDescriptor::IOProcessorNumber());
-
-        if (amrex::ParallelDescriptor::IOProcessor()) {
-            std::fstream anode_file(anode_current_path, std::ios::app);
-            anode_file << warpx_instance.gett_new(0);
-            for (auto const value : host_charge) {
-                anode_file << "\t" << value;
-            }
-            anode_file << "\n";
-        }
-    }
 #endif
 }
 
