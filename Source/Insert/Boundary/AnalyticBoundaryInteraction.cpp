@@ -81,6 +81,9 @@ struct WallPolicy
     amrex::ParticleReal secondary_temperature_eV = 0.0_prt;
     std::string neutral_species;
     std::string secondary_species;
+    bool deposit_wall_charge = true;
+    bool has_neutral_product_charge = false;
+    amrex::ParticleReal neutral_product_charge = 0.0_prt;
 };
 
 /** Trivially copyable subset captured by particle kernels.  The parsers in
@@ -165,6 +168,8 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
                     policy.probabilities[i] = policy.parsers[i]->compile<7>();
                 }
             }
+            pp_species.query(
+                (prefix + "deposit_wall_charge").c_str(), policy.deposit_wall_charge);
             bool need_temperature = false;
             bool need_neutral = false;
             bool need_secondary = false;
@@ -183,6 +188,10 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
             if (need_neutral) {
                 pp_species.get((prefix + "neutral_species").c_str(), policy.neutral_species);
                 amrex::ignore_unused(mpc.GetParticleContainerFromName(policy.neutral_species));
+                policy.has_neutral_product_charge =
+                    utils::parser::queryWithParser(pp_species,
+                        (prefix + "neutral_product_charge").c_str(),
+                        policy.neutral_product_charge) != 0;
             }
             if (need_secondary) {
                 pp_species.get(
@@ -278,7 +287,13 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
     amrex::ParticleReal neutral_charge = 0.0_prt;
     amrex::ParticleReal secondary_charge = 0.0_prt;
     if (!policy.neutral_species.empty()) {
-        neutral_charge = mpc.GetParticleContainerFromName(policy.neutral_species).getCharge();
+        // The product charge defaults to the neutral species' charge, but can
+        // be overridden: a species may carry a nonzero bookkeeping charge
+        // (e.g. 1 C so that charge deposition yields a neutral density field)
+        // while the physical neutralization product is uncharged.
+        neutral_charge = policy.has_neutral_product_charge
+            ? policy.neutral_product_charge
+            : mpc.GetParticleContainerFromName(policy.neutral_species).getCharge();
     }
     if (!policy.secondary_species.empty()) {
         secondary_charge = mpc.GetParticleContainerFromName(policy.secondary_species).getCharge();
@@ -487,9 +502,6 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                     boundary, dt, thermal, lev);
             }
 
-            // Deposition scatters several particles onto shared nodes. amrex::For
-            // is required here; HostDevice atomics alone do not make ParallelFor safe on CPU.
-            auto const charge_grid = wall_charge.array(pti);
             // Product creation can resize this source tile when a product is emitted
             // into the same species. Reacquire all source pointers after that resize.
             auto& updated_soa = pc.ParticlesAt(lev, pti).GetStructOfArrays();
@@ -501,25 +513,32 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
             auto* const AMREX_RESTRICT updated_uy = updated_soa.GetRealData(PIdx::uy).data();
             auto* const AMREX_RESTRICT updated_uz = updated_soa.GetRealData(PIdx::uz).data();
             auto* const AMREX_RESTRICT updated_weight = updated_soa.GetRealData(PIdx::w).data();
-            // Charge deposition is a scatter operation.  Keep it in amrex::For:
-            // ParallelFor promises independent iterations even when atomics are used.
-            amrex::For(np, [=] AMREX_GPU_DEVICE (long const i) noexcept {
-                WallBehavior const selected = static_cast<WallBehavior>(choice[i]);
-                if (selected == WallBehavior::none || selected == WallBehavior::specular ||
-                    selected == WallBehavior::diffuse) { return; }
-                // Reuse the hit point computed by the selection kernel.
-                AnalyticBoundaryPosition const hit{hx[i], hy[i], hz[i]};
-                amrex::ParticleReal out_charge = 0.0_prt;
-                if (selected == WallBehavior::neutralize) { out_charge = neutral_charge; }
-                else if (selected == WallBehavior::secondary_electron_1) {
-                    out_charge = secondary_charge;
-                } else if (selected == WallBehavior::secondary_electron_2) {
-                    out_charge = 2.0_prt * secondary_charge;
-                }
-                DepositWallChargeToNodes(
-                    charge_grid, grid, hit.x, hit.y, hit.z,
-                    (charge - out_charge) * updated_weight[i]);
-            });
+            if (policy.deposit_wall_charge) {
+                // Deposition scatters several particles onto shared nodes.
+                // amrex::For is required here; HostDevice atomics alone do not
+                // make ParallelFor safe on CPU.
+                auto const charge_grid = wall_charge.array(pti);
+                // Charge deposition is a scatter operation.  Keep it in
+                // amrex::For: ParallelFor promises independent iterations even
+                // when atomics are used.
+                amrex::For(np, [=] AMREX_GPU_DEVICE (long const i) noexcept {
+                    WallBehavior const selected = static_cast<WallBehavior>(choice[i]);
+                    if (selected == WallBehavior::none || selected == WallBehavior::specular ||
+                        selected == WallBehavior::diffuse) { return; }
+                    // Reuse the hit point computed by the selection kernel.
+                    AnalyticBoundaryPosition const hit{hx[i], hy[i], hz[i]};
+                    amrex::ParticleReal out_charge = 0.0_prt;
+                    if (selected == WallBehavior::neutralize) { out_charge = neutral_charge; }
+                    else if (selected == WallBehavior::secondary_electron_1) {
+                        out_charge = secondary_charge;
+                    } else if (selected == WallBehavior::secondary_electron_2) {
+                        out_charge = 2.0_prt * secondary_charge;
+                    }
+                    DepositWallChargeToNodes(
+                        charge_grid, grid, hit.x, hit.y, hit.z,
+                        (charge - out_charge) * updated_weight[i]);
+                });
+            }
             amrex::ParallelForRNG(np, [=] AMREX_GPU_DEVICE (
                 long const i, amrex::RandomEngine const& engine) noexcept {
                 WallBehavior const selected = static_cast<WallBehavior>(choice[i]);

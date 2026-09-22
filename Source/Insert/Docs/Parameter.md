@@ -86,6 +86,8 @@ ions.analytic_wall.anode.behaviors = neutralize specular
 ions.analytic_wall.anode.p_neutralize(E_eV,u_n,u_t,x,y,z,t) = "0.5"
 ions.analytic_wall.anode.neutral_species = xe_neutral
 ions.analytic_wall.anode.wall_temperature = 400.0
+ions.analytic_wall.anode.neutral_product_charge = 0.0
+ions.analytic_wall.anode.deposit_wall_charge = 1
 ```
 
 相互作用仅在物种实际推进的步执行。`specular` 与 `diffuse` 保留入射粒子并从交点推进
@@ -95,6 +97,12 @@ ions.analytic_wall.anode.wall_temperature = 400.0
 `(q_in - sum(q_out)) * weight`，以交点形函数沉积到持久 `wall_charge`。交点坐标及
 形函数权重使用 `ParticleReal`；只有写入场 FAB 时转换为 `Real`。该功能要求前述材料
 Poisson 路径已启用，以分配和求解持久壁面电荷。
+
+两个可选参数控制壁面电荷沉积。`deposit_wall_charge`（默认 `1`）为 `0` 时，该物种在此
+壁面的吸收类事件不向 `wall_charge` 沉积电荷（适用于固定电势的导体壁面）。
+`neutral_product_charge` 覆盖中和产物的电荷（默认为中性物种的 `charge`）：当中性物种
+为了经电荷沉积获得数密度场而携带记账用非零电荷（如 `charge = 1`）时，应显式设为
+ `0.0`，使中和事件的壁面沉积保持物理正确的 `(q_in - 0) * weight`。
 
 ## 运行时诊断
 
