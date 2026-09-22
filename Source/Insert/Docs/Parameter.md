@@ -114,10 +114,10 @@ Poisson 路径已启用，以分配和求解持久壁面电荷。
 my_constants.hall_diag_interval = 10
 ```
 
-默认值为 `10`，内部会限制为至少 `1`。以下路径均使用该间隔读取
+默认值为 `10`，内部会限制为至少 `1`。`AnodeCurrentDiagOutput` 使用该间隔
+作为阳极电流的采样窗口（写出并清零累加器）。以下路径均使用该间隔读取
 `ParticleBoundaryBuffer`：
 
-- `AnodeCurrentCalc`
 - `ZMinWallChargeDeposit` 的电荷沉积部分
 - `ThrustCalc`
 - `BeamDivergenceCalc`
@@ -136,7 +136,8 @@ my_constants.hall_diag_interval = 10
 | --- | --- | --- |
 | `my_constants.particle_number_diag` | `0` | 打印每个 species 当前粒子数。需要编译宏 `NUMP`。 |
 | `my_constants.collision_record_diag` | `0` | 写出碰撞产生的电子和离子宏粒子数到 `collision_record.dat`。需要编译宏 `COLLISION_RECORD`。 |
-| `my_constants.anode_current_diag` | `0` | 统计 zmin 和阳极环相关电流计数。需要 `HALL3D`。 |
+| `my_constants.anode_current_diag` | `0` | 统计每面解析壁面吸收的电流，每壁面一个输出文件。需要启用 `insert.analytic_walls`。 |
+| `my_constants.anode_current_prefix` | `anode_current` | 壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
 | `my_constants.zmin_wall_charge_diag` | `0` | 沉积 zmin 非阳极环壁面电荷。需要 `HALL3D`。 |
 | `my_constants.thrust_diag` | `0` | 统计出口离子轴向动量并计算推力。需要 `HALL3D`。 |
 | `my_constants.beam_divergence_diag` | `0` | 统计出口离子束流发散角。需要 `HALL3D`。 |
@@ -183,22 +184,40 @@ my_constants.clear_hall_boundary_particle_cache_diag = 1
 
 ```text
 my_constants.anode_current_diag = 1
-my_constants.anode_current_path = "anode_current.dat"
+my_constants.anode_current_prefix = "anode_current"
 ```
 
-`anode_current_path` 默认值为 `anode_current.dat`。输出列为：
+壁面电流统计基于解析壁面（`insert.analytic_walls`）：每步在
+`AnalyticBoundaryInteraction` 的壁面吸收 kernel 中累加，按
+`hall_diag_interval` 在诊断阶段写出并清零，即每行是一个采样窗口内的
+累计量。**每面解析壁面一个输出文件**，文件名为
+`<anode_current_prefix>_<wall>.dat`（如 `anode_current_anode_ring.dat`、
+`anode_current_ceramic_wall.dat`）；阳极电流即阳极壁面对应的文件。
+`anode_current_prefix` 默认值为 `anode_current`。每个文件的输出列为：
 
 ```text
-time    zmin_electron    zmin_ion    anode_electron    anode_electron_cut
+time    electron    ion    net_charge
 ```
 
-统计对象：
+统计对象（只计入 absorb / neutralize / 二次电子等移除入射粒子的行为，
+specular / diffuse 反射不产生净电流）：
 
-- `electrons` 在 zlo 边界缓存中的权重。
-- `xe_ions` 在 zlo 边界缓存中可回溯命中阳极环的权重。
-- 电子当前位置或回溯到 zmin 后命中阳极环的权重。
+- `electron` / `ion`：窗口内被该壁面移除的电子/离子宏粒子权重之和
+  （按物种电荷正负分类）。
+- `net_charge`：窗口内该壁面接收的净电荷，单位 C，口径与壁面电荷沉积
+  一致，即 `(charge - q_out) * w`；除以窗口时长即为平均电流。
 
-阳极环几何来自 `ReadHallAnodeRingConfig()`：
+对任何物种都没有配置 behaviors 的壁面也会生成文件（内容恒为零），
+便于后处理脚本统一处理。旧参数 `my_constants.anode_current_path`（单文件
+zlo 缓存实现）已移除，设置它会触发报错并提示改用
+`anode_current_prefix`。
+
+注意：旧实现从 zlo 域边界粒子缓存统计，新解析壁面吸收的粒子不再进入该
+缓存，故旧实现已删除。一步内穿越壁面到 domain zmin 之间区域的粒子
+（`v * dt` 大于壁面到 zmin 的距离）会被域边界吸收而不经壁面模型，两种
+实现都统计不到。
+
+阳极环几何相关参数（`ReadHallAnodeRingConfig()`，用于阳极电势边界）：
 
 ```text
 my_constants.L = <physical length>

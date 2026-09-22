@@ -11,4 +11,16 @@ namespace Insert {
  */
 void AnalyticBoundaryInteraction ();
 
+/** \brief Write the wall-current diagnostic and reset its accumulator.
+ *
+ *  The per-step accumulation happens inside AnalyticBoundaryInteraction,
+ *  with one electron/ion/net-charge triplet per analytic wall. This function
+ *  runs in the diagnostics phase (AfterDiagnostics); on steps selected by
+ *  DoBoundaryParticleDiag it MPI-reduces the accumulated wall currents,
+ *  appends one row per wall to <my_constants.anode_current_prefix>_<wall>.dat
+ *  (default prefix "anode_current") and restarts the accumulation window.
+ *  Enabled by my_constants.anode_current_diag.
+ */
+void AnodeCurrentDiagOutput ();
+
 } // namespace Insert
