@@ -12,6 +12,28 @@
 
 namespace Insert {
 
+namespace {
+
+constexpr int default_hall_diag_interval = 10;
+
+} // namespace
+
+int
+BoundaryParticleDiagInterval () {
+    static int const interval = [] () {
+        int gap = default_hall_diag_interval;
+        amrex::ParmParse pp_mc("my_constants");
+        pp_mc.query("hall_diag_interval", gap);
+        return std::max(gap, 1);
+    }();
+    return interval;
+}
+
+bool
+DoBoundaryParticleDiag (int const step) {
+    return step % BoundaryParticleDiagInterval() == 0;
+}
+
 void
 CreateDirectoryTree (std::string const& dir)
 {

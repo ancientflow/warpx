@@ -7,6 +7,7 @@
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
+#include "Insert/Diagnostics/ZmaxRadialExitStats.h"
 #include "Insert/Injection/InsertInjection.h"
 
 #include <AMReX_ParmParse.H>
@@ -82,7 +83,7 @@ PhiAdjustmentEntrance () {
  */
 void
 SetBoundaryPhi () {
-#ifdef HALL3D
+#ifdef PHT
     AnodeVoltage();
 #endif
 }
@@ -125,11 +126,16 @@ CollisionRecord (amrex::Vector<int> vec) {
 
 void
 AfterDiagnostics () {
+    // Must run before any diagnostic that clears the boundary buffer
+    // (e.g. ClearHallBoundaryParticleCache), otherwise the zmax exit
+    // statistics see an already-cleared buffer and record nothing.
+    ZmaxRadialExitStatsCalc();
 #ifdef HALL3D
+    // NeutralAtomEBInteraction();
     // SecondaryEmission();
     // AnodeIonNeutralization();
     AnodeCurrentCalc();
-    ZMinWallChargeDeposit();
+    // ZMinWallChargeDeposit();
     ThrustCalc();
     BeamDivergenceCalc();
     IEDFCalc();
@@ -138,11 +144,13 @@ AfterDiagnostics () {
 }
 
 /**
- * 共置网格下，对于第一类边界条件的guard cell设置
+ * 共置网格下，对于平板霍尔推力器zmin电势边界的guard cell设置
  */
 void
 SetPhiGuards () {
 #ifdef HALL3D
+    HallThrusterPhiGuardSet();
+#elif !defined(WAVE1D)
     DirichletPhiGuardSet();
 #endif
 }

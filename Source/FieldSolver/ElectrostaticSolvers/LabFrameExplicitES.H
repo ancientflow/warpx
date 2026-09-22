@@ -31,7 +31,8 @@ public:
         ablastr::fields::MultiFabRegister& fields,
         MultiParticleContainer& mpc,
         MultiFluidContainer* mfl,
-        int max_level) override;
+        int max_level,
+        bool verbose_step) override;
 
     void computePhiTriDiagonal (
         const ablastr::fields::MultiLevelScalarField& rho,
@@ -57,7 +58,10 @@ private:
         const ablastr::fields::MultiLevelScalarField& phi
     );
 
-    std::array<amrex::Vector<std::unique_ptr<amrex::MultiFab> >, 3> m_phi_extrapolation_cache;
+    int phiExtrapolationCacheDepth () const;
+
+    std::array<amrex::Vector<std::unique_ptr<amrex::MultiFab> >, 3>
+        m_phi_extrapolation_cache;
     int m_phi_extrapolation_history_depth = 0;
 
 };

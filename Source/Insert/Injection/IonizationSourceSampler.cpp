@@ -1,8 +1,11 @@
 #include "IonizationSourceSampler.h"
 
+#include "Insert/Math/BilinearCell.h"
+#include "Insert/Math/Sampling.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/TextMsg.H"
 
+#include <AMReX_Algorithm.H>
 #include <AMReX_Math.H>
 #include <AMReX_Random.H>
 
@@ -15,9 +18,6 @@
 
 namespace Insert {
 namespace {
-
-constexpr amrex::Real Pi =
-    amrex::Real(3.141592653589793238462643383279502884);
 
 struct ArrayData
 {
@@ -58,6 +58,11 @@ RequireEqual (int actual, int expected, std::string const& description)
             std::to_string(actual) + ", expected " + std::to_string(expected));
 }
 
+// Bisection tolerance matching the 12 fixed iterations previously used:
+// the bracket on [0, 1] shrinks to 2^-12 before the midpoint is returned.
+constexpr amrex::Real CdfInversionTolerance =
+    amrex::Real(1.0) / amrex::Real(4096.0);
+
 amrex::Real
 InvertQuadraticCdf (
     amrex::Real target, amrex::Real p0, amrex::Real p1,
@@ -67,18 +72,13 @@ InvertQuadraticCdf (
         return target;
     }
 
-    amrex::Real lo = 0.0;
-    amrex::Real hi = 1.0;
-    for (int iter = 0; iter < 12; ++iter) {
-        const amrex::Real mid = 0.5 * (lo + hi);
-        const amrex::Real cdf = (p0 * mid + 0.5 * p1 * mid * mid) / norm;
-        if (cdf < target) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    return 0.5 * (lo + hi);
+    // The CDF is monotonically non-decreasing on [0, 1], so bisection
+    // locates the point where it crosses the target.
+    auto const cdf_minus_target = [=] (amrex::Real eta) {
+        return (p0 * eta + 0.5 * p1 * eta * eta) / norm - target;
+    };
+    return amrex::bisect(amrex::Real(0.0), amrex::Real(1.0),
+                         cdf_minus_target, CdfInversionTolerance);
 }
 
 amrex::Real
@@ -90,21 +90,14 @@ InvertCubicCdf (
         return target;
     }
 
-    amrex::Real lo = 0.0;
-    amrex::Real hi = 1.0;
-    for (int iter = 0; iter < 12; ++iter) {
-        const amrex::Real mid = 0.5 * (lo + hi);
-        const amrex::Real cdf =
-            (q0 * mid + 0.5 * q1 * mid * mid +
-             (amrex::Real(1.0) / amrex::Real(3.0)) * q2 * mid * mid * mid) /
-            norm;
-        if (cdf < target) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    return 0.5 * (lo + hi);
+    auto const cdf_minus_target = [=] (amrex::Real eta) {
+        return (q0 * eta + 0.5 * q1 * eta * eta +
+                (amrex::Real(1.0) / amrex::Real(3.0)) * q2 * eta * eta * eta) /
+                   norm -
+               target;
+    };
+    return amrex::bisect(amrex::Real(0.0), amrex::Real(1.0),
+                         cdf_minus_target, CdfInversionTolerance);
 }
 
 } // namespace
@@ -195,7 +188,6 @@ IonizationSourceSampler::samplePosition (
     const amrex::Real u0 = amrex::Random(engine);
     const amrex::Real u1 = amrex::Random(engine);
     const amrex::Real u2 = amrex::Random(engine);
-    const amrex::Real u3 = amrex::Random(engine);
 
     const auto cell_iter =
         std::upper_bound(m_cell_cdf.begin(), m_cell_cdf.end(), u0);
@@ -210,32 +202,31 @@ IonizationSourceSampler::samplePosition (
     const amrex::Real s10 = nodeRate(iz + 1, ir);
     const amrex::Real s01 = nodeRate(iz, ir + 1);
     const amrex::Real s11 = nodeRate(iz + 1, ir + 1);
-    const amrex::Real a = s00;
-    const amrex::Real b = s10 - s00;
-    const amrex::Real c = s01 - s00;
-    const amrex::Real d = s11 - s10 - s01 + s00;
 
-    const amrex::Real alpha = a + 0.5 * b;
-    const amrex::Real beta = c + 0.5 * d;
+    // The bilinear cell model is shared with the tabulation side
+    // (IonizationSourceTable::cellRate); keep the two in sync through the
+    // shared Insert::Math helpers.
+    const auto coef = Math::MakeBilinearCoefficients(s00, s10, s01, s11);
     const amrex::Real r0 = m_r_min + static_cast<amrex::Real>(ir) * m_dr;
-    const amrex::Real q0 = alpha * r0;
-    const amrex::Real q1 = alpha * m_dr + beta * r0;
-    const amrex::Real q2 = beta * m_dr;
-    const amrex::Real radial_norm =
-        q0 + 0.5 * q1 + (amrex::Real(1.0) / amrex::Real(3.0)) * q2;
-    const amrex::Real eta = InvertCubicCdf(u1, q0, q1, q2, radial_norm);
+    const auto q = Math::MakeRadialCdfCoefficients(coef, r0, m_dr);
+    const amrex::Real radial_norm = Math::CubicCdfIntegral(q.q0, q.q1, q.q2);
+    const amrex::Real eta = InvertCubicCdf(u1, q.q0, q.q1, q.q2, radial_norm);
 
-    const amrex::Real p0 = a + c * eta;
-    const amrex::Real p1 = b + d * eta;
+    // Axial conditional density at the sampled eta: p0 + p1 * xi.
+    const amrex::Real p0 = coef.a + coef.c * eta;
+    const amrex::Real p1 = coef.b + coef.d * eta;
     const amrex::Real axial_norm = p0 + 0.5 * p1;
     const amrex::Real xi = InvertQuadraticCdf(u2, p0, p1, axial_norm);
 
     const amrex::Real r = r0 + eta * m_dr;
-    const amrex::Real theta = 2.0 * Pi * u3;
+    const amrex::Real theta = Math::SampleUniform(
+        amrex::Real(0.0),
+        amrex::Real(2.0) * amrex::Math::pi<amrex::Real>(), engine);
 
+    const auto planar = Math::PolarToCartesian(r, theta);
     EmissionSample sample;
-    sample.x = static_cast<amrex::ParticleReal>(m_x_center + r * std::cos(theta));
-    sample.y = static_cast<amrex::ParticleReal>(m_y_center + r * std::sin(theta));
+    sample.x = static_cast<amrex::ParticleReal>(m_x_center + planar.x);
+    sample.y = static_cast<amrex::ParticleReal>(m_y_center + planar.y);
     sample.z = static_cast<amrex::ParticleReal>(
         m_z_min + (static_cast<amrex::Real>(iz) + xi) * m_dz);
     return sample;
