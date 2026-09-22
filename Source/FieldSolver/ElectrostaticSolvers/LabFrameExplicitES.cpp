@@ -20,9 +20,6 @@
 #include "Insert/Fields/HallElectrostaticMaterial.H"
 #include "Insert/Fields/HallWallCharge.H"
 #endif
-#ifdef HALL3D
-#include "Insert/Fields/SpectralBoundarySchur.h"
-#endif
 
 #include <algorithm>
 
@@ -261,22 +258,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     }
     // 共置网格guard cell处理
-#ifdef HALL3D
-    if (!Insert::SpectralBoundarySchur::Enabled()) {
-        Insert::SetPhiGuards();
-    }
-#else
     Insert::SetPhiGuards();
-#endif
     // Keep extrapolation history on the uncorrected Poisson potential.
-    // The Schur correction is only added below for field evaluation.
     updatePhiExtrapolationHistory(phi_fp);
-#ifdef HALL3D
-    if (Insert::SpectralBoundarySchur::Enabled()) {
-        Insert::ApplyElectrostaticBoundaryCorrection(phi_fp);
-        Insert::SetPhiGuards();
-    }
-#endif
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }

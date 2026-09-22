@@ -2,7 +2,6 @@
 
 #include "WarpX.H"
 
-#include "Insert/Boundary/ZMinWallCharge.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Utils/InsertUtils.h"
@@ -10,12 +9,9 @@
 #include "Particles/ParticleBoundaryBuffer.H"
 #include "Utils/WarpXConst.H"
 
-#include <AMReX_BoxArray.H>
-#include <AMReX_DistributionMapping.H>
 #include <AMReX_GpuAtomic.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MFIter.H>
-#include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
@@ -25,20 +21,12 @@
 #include <cmath>
 #include <cstddef>
 #include <fstream>
-#include <iomanip>
-#include <limits>
-#include <sstream>
 #include <string>
 #include <vector>
 
 using namespace amrex::literals;
 
 namespace {
-
-using Insert::DepositZMinWallCharge;
-using Insert::MakeZMinWallChargeGrid;
-using Insert::ZMinWallChargeGrid;
-using Insert::ZMinWallChargeSize;
 
 constexpr int xlo_boundary = 0;
 constexpr int xhi_boundary = 1;
@@ -69,42 +57,6 @@ DiagEnabled (const char* const name) {
 }
 
 #ifdef HALL3D
-
-std::string
-ZMinWallChargeOutputPath (std::string const& dir, int const step)
-{
-    std::ostringstream os;
-    os << dir << "/zmin_wall_charge_" << std::setw(8) << std::setfill('0')
-       << step << ".dat";
-    return os.str();
-}
-
-void
-WriteZMinWallChargeDensity (
-    std::string const& path,
-    amrex::Vector<amrex::Real> const& wall_charge_density,
-    ZMinWallChargeGrid const grid,
-    int const step,
-    amrex::Real const time)
-{
-    std::fstream wall_file(path, std::ios::out);
-    wall_file << "# zmin wall charge density [C/m^2]; rows are y nodes, columns are x "
-                 "nodes, x is the fastest-varying storage index\n";
-    wall_file << "step\t" << step << "\ttime\t" << time << "\tnx\t"
-              << grid.nx << "\tny\t" << grid.ny << "\tproblo_x\t"
-              << grid.problo_x << "\tproblo_y\t" << grid.problo_y
-              << "\tdx\t" << grid.dx << "\tdy\t" << grid.dy << "\n";
-    for (int j = 0; j < grid.ny; ++j) {
-        for (int i = 0; i < grid.nx; ++i) {
-            long const offset =
-                static_cast<long>(j) * static_cast<long>(grid.nx) +
-                static_cast<long>(i);
-            wall_file << wall_charge_density[offset];
-            wall_file << (i == grid.nx - 1 ? '\n' : '\t');
-        }
-    }
-    wall_file << "\n";
-}
 
 struct OutletIonParticleData
 {
@@ -229,8 +181,6 @@ struct IEDFAccumulator
 
 namespace Insert {
 
-std::unique_ptr<amrex::MultiFab> g_accumulated_wall_charge_density;
-
 void
 ParticleNumber () {
 #ifdef NUMP
@@ -271,118 +221,6 @@ ShowAndWriteIonzationNum (amrex::Vector<int> num) {
     fileout.close();
 #else
     amrex::ignore_unused(num);
-#endif
-}
-
-void
-InitializeAccumulatedZMinWallChargeDensity (ZMinWallChargeGrid const& grid)
-{
-    amrex::Box const box = MakeZMinWallChargeBox(grid);
-    if (!box.ok()) {
-        amrex::Abort("invalid zmin wall charge density box");
-    }
-
-    if (g_accumulated_wall_charge_density == nullptr) {
-        amrex::BoxArray const ba(box);
-        amrex::DistributionMapping const dm(ba);
-        g_accumulated_wall_charge_density =
-            std::make_unique<amrex::MultiFab>(ba, dm, 1, 0);
-        g_accumulated_wall_charge_density->setVal(0.0_rt);
-    } else if (g_accumulated_wall_charge_density->boxArray().minimalBox() != box) {
-        amrex::Abort("accumulated zmin wall charge density size changed");
-    }
-}
-
-amrex::Vector<amrex::Real>
-CopyZMinWallChargeDensityToHost (amrex::MultiFab const& wall_charge_density,
-                                 ZMinWallChargeGrid const& grid)
-{
-    long const data_size = ZMinWallChargeSize(grid);
-    if (data_size > static_cast<long>(std::numeric_limits<int>::max())) {
-        amrex::Abort("zmin wall charge density array is too large");
-    }
-
-    amrex::Gpu::DeviceVector<amrex::Real> device_flat(
-        static_cast<std::size_t>(data_size), 0.0_rt);
-    amrex::Real* const flat_ptr = device_flat.dataPtr();
-
-    for (amrex::MFIter mfi(wall_charge_density); mfi.isValid(); ++mfi) {
-        amrex::Array4<amrex::Real const> const& arr =
-            wall_charge_density.const_array(mfi);
-        amrex::ParallelFor(
-            mfi.validbox(), [=] AMREX_GPU_DEVICE (int i, int j, int)
-            {
-                flat_ptr[i + grid.nx * j] = arr(i, j, 0);
-            });
-    }
-
-    amrex::Vector<amrex::Real> host_wall_charge_density(
-        static_cast<std::size_t>(data_size), 0.0_rt);
-    amrex::Gpu::copy(amrex::Gpu::deviceToHost, device_flat.begin(),
-                     device_flat.end(), host_wall_charge_density.begin());
-    return host_wall_charge_density;
-}
-
-void
-ZMinWallChargeDeposit () {
-#ifdef HALL3D
-    static bool const diag_enabled = DiagEnabled("zmin_wall_charge_diag");
-
-    static bool ifinit = false;
-    static int write_interval = 100;
-    static std::string zmin_wall_charge_dir = "zmin_wall_charge";
-
-    if (!ifinit) {
-        if (diag_enabled) {
-            amrex::ParmParse pp_mc("my_constants");
-            pp_mc.query("zmin_wall_charge_interval", write_interval);
-            pp_mc.query("zmin_wall_charge_write_interval", write_interval);
-            pp_mc.query("zmin_wall_charge_dir", zmin_wall_charge_dir);
-            write_interval = std::max(write_interval, 1);
-            if (zmin_wall_charge_dir.empty()) {
-                zmin_wall_charge_dir = "zmin_wall_charge";
-            }
-            Insert::CreateDirectoryTree(zmin_wall_charge_dir);
-        }
-
-        ifinit = true;
-    }
-
-    WarpX& warpx_instance = WarpX::GetInstance();
-    int const step = warpx_instance.getistep(0);
-    if (amrex::ParallelDescriptor::NProcs() != 1) {
-        // TODO: support MPI by stitching rank-local zmin wall-charge patches
-        // instead of reducing values across decomposed boxes.
-        amrex::Abort("zmin wall charge accumulation does not support MPI yet");
-    }
-
-    ZMinWallChargeGrid const grid =
-        MakeZMinWallChargeGrid(warpx_instance.Geom(0));
-    long const data_size = ZMinWallChargeSize(grid);
-    if (data_size > static_cast<long>(std::numeric_limits<int>::max())) {
-        amrex::Abort("zmin wall charge density array is too large");
-    }
-    InitializeAccumulatedZMinWallChargeDensity(grid);
-
-    // Always maintain the accumulated wall charge on the Hall diagnostic cadence
-    // so that the Schur boundary correction can use the full wall-charge history.
-    if (DoBoundaryParticleDiag(step)) {
-        auto wall_charge = DepositZMinWallCharge(warpx_instance, grid);
-        amrex::Real const inv_area = amrex::Real(1.0) / (grid.dx * grid.dy);
-        amrex::MultiFab::Saxpy(*g_accumulated_wall_charge_density, inv_area,
-                               *wall_charge, 0, 0, 1, 0);
-    }
-
-    if (diag_enabled && step % write_interval == 0) {
-        if (amrex::ParallelDescriptor::IOProcessor()) {
-            amrex::Vector<amrex::Real> host_wall_charge_density =
-                CopyZMinWallChargeDensityToHost(
-                    *g_accumulated_wall_charge_density, grid);
-            WriteZMinWallChargeDensity(
-                ZMinWallChargeOutputPath(zmin_wall_charge_dir, step),
-                host_wall_charge_density, grid, step, warpx_instance.gett_new(0));
-        }
-    }
 #endif
 }
 

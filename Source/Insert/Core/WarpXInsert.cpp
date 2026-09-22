@@ -2,7 +2,6 @@
 
 #include "Insert/Background/InsertBackgroundDensity.h"
 #include "Insert/Boundary/AnalyticBoundaryInteraction.h"
-#include "Insert/Boundary/InsertBoundaryParticles.h"
 #include "Insert/Boundary/InsertBoundaryPhi.h"
 #include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
@@ -82,9 +81,6 @@ PhiAdjustmentEntrance () {
  */
 void
 SetBoundaryPhi () {
-#ifdef PHT
-    AnodeVoltage();
-#endif
 }
 
 /**
@@ -133,10 +129,6 @@ AfterDiagnostics () {
     // analytic wall interaction, which is guarded by WARPX_DIM_3D only.
     AnodeCurrentDiagOutput();
 #ifdef HALL3D
-    // NeutralAtomEBInteraction();
-    // SecondaryEmission();
-    // AnodeIonNeutralization();
-    // ZMinWallChargeDeposit();
     ThrustCalc();
     BeamDivergenceCalc();
     IEDFCalc();
@@ -149,9 +141,7 @@ AfterDiagnostics () {
  */
 void
 SetPhiGuards () {
-#ifdef HALL3D
-    HallThrusterPhiGuardSet();
-#elif !defined(WAVE1D)
+#if !defined(WAVE1D)
     DirichletPhiGuardSet();
 #endif
 }
