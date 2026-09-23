@@ -10,7 +10,7 @@
 // #define FIELDSIZE
 #define NUMP
 // #define COLLISION_RECORD
-// #define BENCHMARK_2D
+#define BENCHMARK_2D
 
 /* Background MCC density coupling. */
 #define MCC_DENSITY

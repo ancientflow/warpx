@@ -151,7 +151,7 @@ SetPhiGuards () {
 #ifdef HALL3D
     HallThrusterPhiGuardSet();
 #elif !defined(WAVE1D)
-    DirichletPhiGuardSet();
+    //DirichletPhiGuardSet();
 #endif
 }
 
