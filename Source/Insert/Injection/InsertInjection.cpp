@@ -1,9 +1,13 @@
 #include "InsertInjection.h"
 
-#include "WarpX.H"
-
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Injection/DistributionSampler1D.H"
 #include "Insert/Injection/HallInjector.h"
+#include "Insert/Utils/InsertUtils.h"
+#include "Particles/MultiParticleContainer.H"
+#include "Particles/ParticleBoundaryBuffer.H"
+#include "WarpX.H"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
@@ -14,7 +18,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
-#include <Insert/Config/WarpXFunctionConfig.h>
 
 namespace Insert {
 

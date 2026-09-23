@@ -249,7 +249,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #else
                    verbosity, is_igf_2d_slices, Efield_fp);
 #endif
-
+#endif
     }
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     Insert::VoltageAdjustment();
