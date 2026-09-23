@@ -7,15 +7,13 @@ foreach(D IN LISTS WarpX_DIMS)
         Background/InsertBackgroundDensity.cpp
         Boundary/AnalyticBoundaryGeometry.cpp
         Boundary/AnalyticBoundaryInteraction.cpp
-        Boundary/InsertBoundaryParticles.cpp
-        Boundary/InsertBoundaryPhi.cpp
-        Boundary/ZMinWallCharge.cpp
         Collisions/CoupledBackgroundMCCCollision.cpp
         Collisions/IonizationSourceTable.cpp
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Diagnostics/ZmaxRadialExitStats.cpp
         Fields/ECDIChargeFilter.cpp
-        Fields/SpectralBoundarySchur.cpp
+        Fields/HallElectrostaticMaterial.cpp
+        Fields/HallWallCharge.cpp
         Geometry/TruncatedConeSurfaceSampler.cpp
         Injection/DistributionSampler1D.cpp
         Injection/HallCoordinateDistribution.cpp

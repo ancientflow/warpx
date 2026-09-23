@@ -3,28 +3,145 @@
 本文档整理 `Source/Insert` 当前运行时诊断和 Hall 注入输入参数。参数名按
 AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 
+## 已移除的旧边界参数
+
+初始化时的 `BackwardCompatibility()` 会检查以下废弃参数，无论诊断是否开启：
+
+- `my_constants.anode_current_path`：改用 `my_constants.anode_current_prefix`。
+- `my_constants.zmin_wall_charge_diag`、`zmin_wall_charge_dir`、
+  `zmin_wall_charge_interval` 和 `zmin_wall_charge_write_interval`：旧 zmin 面壁面
+  电荷实现已移除，持久壁面电荷由静电介质与解析壁面处理。
+- `insert.schur_boundary.*`：旧 zmin 混合边界 Schur 修正已移除，改用体阳极和
+  静电介质求解。
+- `insert.neutral_atom_eb.*`：改用解析壁面几何及物种对应的壁面行为。
+
+这些参数即使设置为 `0` 也会报出迁移提示。旧输入中的 `my_constants.voltage`
+仅是表达式常量，不再自动建立 zmin 环形阳极；必须在体阳极电势表达式中引用。
+
+## 静电介质与体阳极
+
+该功能只用于 3D Cartesian、lab-frame、MLMG、单层网格计算，不支持 EB、IGF、
+relativistic electrostatic solver 或 Python `poissonsolver` callback。
+
+官方 WarpX/ablastr 求解路径由唯一的编译宏
+`WARPX_USE_HALL_ELECTROSTATIC_MATERIALS` 控制。宏在
+`Source/Insert/Config/HallElectrostaticConfig.H` 中只为 3D target 定义。注释对应的
+`#define` 行并重新编译，即可使官方目录编译原有求解路径；
+Insert 下的材料实现仍可保留在源文件列表中。
+
+启用后，`LabFrameExplicitES` 会缓存材料 Poisson 算子及其 `MLMG` 实例。静态网格、
+介电常数和阳极 mask 在首次调用时初始化，后续求解始终复用同一多重网格层级。
+该路径不支持运行期间 regrid 或重新分配网格。
+
+同一路径还会分配持久的、与 `rho` 同布局的 `wall_charge` 网格源。它初始为零，并在
+每次等离子体电荷同步和滤波后加入 Poisson 右端项；后续解析壁面交互会向该网格源
+沉积吸收的净电荷。
+
+宏启用后，使用以下输入打开材料功能：
+
+```text
+insert.use_electrostatic_materials = 1
+
+my_constants.ceramic_top = 2.0e-3
+my_constants.ceramic_epsilon_r = 4.0
+my_constants.anode_xmin = -5.0e-3
+my_constants.anode_xmax =  5.0e-3
+my_constants.anode_ymin = -5.0e-3
+my_constants.anode_ymax =  5.0e-3
+my_constants.anode_zmin =  1.8e-3
+my_constants.anode_zmax =  2.0e-3
+my_constants.anode_voltage = 300.0
+
+# Cell-centered、无量纲的相对介电常数。这里 z < ceramic_top 为陶瓷。
+insert.relative_permittivity_function(x,y,z) = "if(z < ceramic_top, ceramic_epsilon_r, 1.0)"
+
+# Nodal 隐式函数；小于或等于零的节点属于体阳极。
+insert.anode_implicit_function(x,y,z) = "if((x >= anode_xmin) * (x <= anode_xmax) * (y >= anode_ymin) * (y <= anode_ymax) * (z >= anode_zmin) * (z <= anode_zmax), -1.0, 1.0)"
+
+# Nodal 阳极固定电势，单位 V；第一版为静态空间表达式。
+insert.anode_potential_function(x,y,z) = "anode_voltage"
+```
+
+`relative_permittivity_function` 必须在整个 cell-centered 网格上返回有限且严格大于
+零的值。等离子体和真空通常取 `1`，陶瓷可取 `4`。输入值是
+`epsilon_r`，不能乘入 `epsilon_0`；Poisson 方程右端仍由 WarpX 除以
+`epsilon_0`。
+
+阳极表达式在节点上只解析一次，`anode_implicit_function <= 0` 的节点写入 overset
+mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z 向 nodal 层。
+每次 Poisson 求解前，mask 为零的节点恢复到阳极电势，并清除这些节点上的 `rho`。
+陶瓷和阳极均处于统一场计算域中；粒子吸收、壁面自由电荷和阳极电流仍由独立的
+Insert 模块处理。
+
+计算域外边界的电势和 ghost nodes 沿用求解器自身的边界处理；共置网格的 MLMG
+路径启用 `setFinalFillBC(true)`。旧 `DirichletPhiGuardSet()` 及 `SetPhiGuards()`
+入口已删除，不再在求解后用外边界电荷密度额外覆盖 ghost 电势。内部体阳极的
+固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
+
+## 解析壁面粒子相互作用
+
+解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。
+每个物种可独立选择与每个壁面是否交互。`behaviors` 的顺序定义累积概率抽样；除
+最后一项外，每项以 `p_<behavior>(E_eV,u_n,u_t,x,y,z,t)` 给出概率，最后一项采用余量。
+支持 `absorb`、`specular`、`diffuse`、`neutralize`、`secondary_electron_1` 和
+`secondary_electron_2`，最多六项。
+
+```text
+insert.analytic_walls = ceramic anode
+
+# F > 0 是有效的等离子体区域，F < 0 是该壁面的无效区域。
+analytic_wall.ceramic.signed_value(x,y,z) = "z - ceramic_top"
+analytic_wall.ceramic.normal_x(x,y,z) = "0.0"
+analytic_wall.ceramic.normal_y(x,y,z) = "0.0"
+analytic_wall.ceramic.normal_z(x,y,z) = "1.0"
+
+electrons.analytic_wall.ceramic.behaviors = absorb secondary_electron_1 diffuse
+electrons.analytic_wall.ceramic.p_absorb(E_eV,u_n,u_t,x,y,z,t) = "0.8"
+electrons.analytic_wall.ceramic.p_secondary_electron_1(E_eV,u_n,u_t,x,y,z,t) = "0.1"
+electrons.analytic_wall.ceramic.secondary_electron_species = electrons
+electrons.analytic_wall.ceramic.secondary_electron_temperature_eV = 3.0
+electrons.analytic_wall.ceramic.wall_temperature = 400.0
+
+ions.analytic_wall.anode.behaviors = neutralize specular
+ions.analytic_wall.anode.p_neutralize(E_eV,u_n,u_t,x,y,z,t) = "0.5"
+ions.analytic_wall.anode.neutral_species = xe_neutral
+ions.analytic_wall.anode.wall_temperature = 400.0
+ions.analytic_wall.anode.neutral_product_charge = 0.0
+ions.analytic_wall.anode.deposit_wall_charge = 1
+```
+
+相互作用仅在物种实际推进的步执行。`specular` 与 `diffuse` 保留入射粒子并从交点推进
+剩余子步；`neutralize` 和二次电子发射使入射粒子失效，并以相同宏粒子权重创建目标
+物种。中和产物的温度为 `wall_temperature`（K），二次电子产物的温度为
+`secondary_electron_temperature_eV`。壁面获得的电荷为
+`(q_in - sum(q_out)) * weight`，以交点形函数沉积到持久 `wall_charge`。交点坐标及
+形函数权重使用 `ParticleReal`；只有写入场 FAB 时转换为 `Real`。该功能要求前述材料
+Poisson 路径已启用，以分配和求解持久壁面电荷。
+
+两个可选参数控制壁面电荷沉积。`deposit_wall_charge`（默认 `1`）为 `0` 时，该物种在此
+壁面的吸收类事件不向 `wall_charge` 沉积电荷（适用于固定电势的导体壁面）。
+`neutral_product_charge` 覆盖中和产物的电荷（默认为中性物种的 `charge`）：当中性物种
+为了经电荷沉积获得数密度场而携带记账用非零电荷（如 `charge = 1`）时，应显式设为
+ `0.0`，使中和事件的壁面沉积保持物理正确的 `(q_in - 0) * weight`。
+
 ## 运行时诊断
 
 ### 总体节奏
 
-边界吸收粒子相关诊断共享同一个间隔：
+壁面电流和边界粒子缓存相关诊断共享同一个间隔：
 
 ```text
 my_constants.hall_diag_interval = 10
 ```
 
-默认值为 `10`，内部会限制为至少 `1`。以下路径均使用该间隔读取
+默认值为 `10`，内部会限制为至少 `1`。`AnodeCurrentDiagOutput` 使用该间隔
+作为阳极电流的采样窗口（写出并清零累加器）。以下路径均使用该间隔读取
 `ParticleBoundaryBuffer`：
 
-- `AnodeCurrentCalc`
-- `ZMinWallChargeDeposit` 的电荷沉积部分
 - `ThrustCalc`
 - `BeamDivergenceCalc`
 - `IEDFCalc`
 - `ClearHallBoundaryParticleCache`
-- `SecondaryEmission`
-- `AnodeIonNeutralization`
-- `NeutralAtomEBInteraction`
 
 这意味着边界粒子缓存的读取和清理使用同一时步判断，避免诊断间隔不一致导致
 粒子在被统计前被清掉。
@@ -34,9 +151,10 @@ my_constants.hall_diag_interval = 10
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | `my_constants.particle_number_diag` | `0` | 打印每个 species 当前粒子数。需要编译宏 `NUMP`。 |
+| `my_constants.wall_interaction_diag` | `0` | 每步按入射 species 打印解析壁面交互的宏粒子计数，同一物种的所有解析壁面合并统计。需要启用 `insert.analytic_walls`。 |
 | `my_constants.collision_record_diag` | `0` | 写出碰撞产生的电子和离子宏粒子数到 `collision_record.dat`。需要编译宏 `COLLISION_RECORD`。 |
-| `my_constants.anode_current_diag` | `0` | 统计 zmin 和阳极环相关电流计数。需要 `HALL3D`。 |
-| `my_constants.zmin_wall_charge_diag` | `0` | 沉积 zmin 非阳极环壁面电荷。需要 `HALL3D`。 |
+| `my_constants.anode_current_diag` | `0` | 统计每面解析壁面吸收的电流，每壁面一个输出文件。需要启用 `insert.analytic_walls`。 |
+| `my_constants.anode_current_prefix` | `anode_current` | 壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
 | `my_constants.thrust_diag` | `0` | 统计出口离子轴向动量并计算推力。需要 `HALL3D`。 |
 | `my_constants.beam_divergence_diag` | `0` | 统计出口离子束流发散角。需要 `HALL3D`。 |
 | `my_constants.iedf_diag` | `0` | 统计出口离子能量分布函数。需要 `HALL3D`。 |
@@ -45,100 +163,67 @@ my_constants.hall_diag_interval = 10
 `clear_hall_boundary_particle_cache_diag` 应在所有读取边界缓存的诊断之后执行。
 当前 `Insert::AfterDiagnostics()` 中的调用顺序已满足这一点。
 
-### 中性原子 EB 壁面作用
+### 解析壁面交互计数
 
 ```text
-insert.neutral_atom_eb.enabled = 1
-insert.neutral_atom_eb.species = xe_netural
-insert.neutral_atom_eb.model = diffuse
-# Optional; overrides model. Diffuse fraction is 1-specular_fraction.
-insert.neutral_atom_eb.specular_fraction = 0.25
-insert.neutral_atom_eb.k = 1.0
-insert.neutral_atom_eb.a1 = 0.001
-insert.neutral_atom_eb.b1 = 0.004
-insert.neutral_atom_eb.wall_temperature = 400.0
-# Optional reflected-path displacement; defaults to 0.1 times the minimum cell size
-# insert.neutral_atom_eb.position_epsilon = 1.0e-6
-xe_netural.save_particles_at_eb = 1
+my_constants.wall_interaction_diag = 1
 ```
 
-该功能默认关闭，触发间隔复用 `my_constants.hall_diag_interval`。当前解析处理
-三维旋转圆锥段 `z = k*(sqrt(x*x+y*y)-a1)` 且要求 `a1 < r < b1`；
-`r > b1` 的平面段不参与反射。代码直接使用 WarpX EB 二分后保存在粒子缓存中的
-撞击位置，并根据解析圆锥方程计算指向 `z` 增大侧计算域的法向量。速度反射后，
-粒子沿反射速度方向移动 `position_epsilon`，以避免下一次 EB 检测时被立即重新
-吸收；不再反算解析撞击点或对齐撞击后的剩余时间。`model` 可取 `diffuse` 或
-`specular`，默认值为 `diffuse`。可选参数 `specular_fraction` 的范围为
-`[0, 1]`，指定后覆盖 `model`：每个圆锥撞击粒子以该概率执行镜面反射，其余粒子
-执行漫反射。只要漫反射比例非零，就必须给出以 K 为单位的
-`wall_temperature`。处理后不会单独清理中性原子 buffer；如需与电子、离子统一
-清理，应同时设置：
+启用后，每步在标准输出中按入射 species 分别列出：
 
-```text
-my_constants.clear_hall_boundary_particle_cache_diag = 1
-```
+- `removed incident`：被移除的入射宏粒子数，括号内分别为 `absorb`、
+  `neutralize`、`secondary_electron_1` 和 `secondary_electron_2` 的事件数。
+- `specular` / `diffuse`：镜面反射 / 漫反射事件数。
+- `emitted neutrals`：中性化产生的中性宏粒子数，等于 `neutralize`。
+- `emitted secondaries`：产生的二次电子宏粒子数，等于
+  `secondary_electron_1 + 2 * secondary_electron_2`。
+
+计数跨 MPI ranks 和所有解析壁面求和，只由 IO rank 输出；仅统计配置了解析
+壁面策略的物种。没有事件（包括该物种本步未推进）时输出零。每步重新计数，
+不受 `hall_diag_interval` 控制，不包括计算域外边界和 EB 的交互。
+所有数值均为宏粒子事件计数，不是权重之和，也不是 species 净增减量。
+产物数归属于入射物种：例如 `xe_ions` 的 `emitted neutrals` 表示由离子撞壁
+产生的原子，不会记入 `xe_netural` 的入射事件。
+
+默认关闭，替代此前无条件输出的整体壁面计数。关闭时跳过事件计数的归约，
+不影响壁面交互、壁面电荷沉积或独立的 `anode_current_diag` 诊断。
 
 ### 阳极电流
 
 ```text
 my_constants.anode_current_diag = 1
-my_constants.anode_current_path = "anode_current.dat"
+my_constants.anode_current_prefix = "anode_current"
 ```
 
-`anode_current_path` 默认值为 `anode_current.dat`。输出列为：
+壁面电流统计基于解析壁面（`insert.analytic_walls`）：每步在
+`AnalyticBoundaryInteraction` 的壁面吸收 kernel 中累加，按
+`hall_diag_interval` 在诊断阶段写出并清零，即每行是一个采样窗口内的
+累计量。**每面解析壁面一个输出文件**，文件名为
+`<anode_current_prefix>_<wall>.dat`（如 `anode_current_anode_ring.dat`、
+`anode_current_ceramic_wall.dat`）；阳极电流即阳极壁面对应的文件。
+`anode_current_prefix` 默认值为 `anode_current`。每个文件的输出列为：
 
 ```text
-time    zmin_electron    zmin_ion    anode_electron    anode_electron_cut
+time    electron    ion    net_charge
 ```
 
-统计对象：
+统计对象（只计入 absorb / neutralize / 二次电子等移除入射粒子的行为，
+specular / diffuse 反射不产生净电流）：
 
-- `electrons` 在 zlo 边界缓存中的权重。
-- `xe_ions` 在 zlo 边界缓存中可回溯命中阳极环的权重。
-- 电子当前位置或回溯到 zmin 后命中阳极环的权重。
+- `electron` / `ion`：窗口内被该壁面移除的电子/离子宏粒子权重之和
+  （按物种电荷正负分类）。
+- `net_charge`：窗口内该壁面接收的净电荷，单位 C，口径与壁面电荷沉积
+  一致，即 `(charge - q_out) * w`；除以窗口时长即为平均电流。
 
-阳极环几何来自 `ReadHallAnodeRingConfig()`：
+对任何物种都没有配置 behaviors 的壁面也会生成文件（内容恒为零），
+便于后处理脚本统一处理。旧参数 `my_constants.anode_current_path`（单文件
+zlo 缓存实现）已移除，设置它会触发报错并提示改用
+`anode_current_prefix`。
 
-```text
-my_constants.L = <physical length>
-my_constants.l_factor = <scale factor>
-my_constants.voltage = <stored in config>
-```
-
-其中阳极环中心为 `(ProbLo(0) + L/l_factor/2, ProbLo(1) + L/l_factor/2)`，
-半径范围固定为 `0.021/2/l_factor` 到 `0.031/2/l_factor`。
-
-### zmin 壁面电荷
-
-```text
-my_constants.zmin_wall_charge_diag = 1
-my_constants.zmin_wall_charge_dir = "zmin_wall_charge"
-my_constants.zmin_wall_charge_write_interval = 100
-```
-
-参数：
-
-| 参数 | 默认值 | 作用 |
-| --- | --- | --- |
-| `my_constants.zmin_wall_charge_dir` | `"zmin_wall_charge"` | 写出目录。空字符串会回退到默认目录。 |
-| `my_constants.zmin_wall_charge_write_interval` | `100` | 文件写出步号间隔。 |
-| `my_constants.zmin_wall_charge_interval` | `100` | 兼容旧参数名；现在仅作为写出间隔读取。 |
-
-壁面电荷沉积不使用写出间隔，而是使用 `my_constants.hall_diag_interval`。
-写出文件名格式：
-
-```text
-<zmin_wall_charge_dir>/zmin_wall_charge_00000100.dat
-```
-
-文件内容是从运行开始累计到当前写出步的 zmin 壁面电荷密度
-`sigma_s(x,y)`，单位为 `C/m^2`。沉积使用粒子的物理电荷符号：电子贡献为负，
-离子贡献为正。数组按 y 节点为行、x 节点为列写出，x 是最快变化索引。
-
-当该累计量用于 zmin 非齐次 Neumann 边界时，约定 zmin 面外法向
-`n = -z`，并施加 `dphi/dn = sigma_s/epsilon0`，等价于
-`dphi/dz = -sigma_s/epsilon0`。因此 `InsertBoundaryPhi` 的 guard cell 更新为
-`phi(k0-1) = phi(k0+1) + 2*dz*sigma_s/epsilon0`。
+注意：旧实现从 zlo 域边界粒子缓存统计，新解析壁面吸收的粒子不再进入该
+缓存，故旧实现已删除。一步内穿越壁面到 domain zmin 之间区域的粒子
+（`v * dt` 大于壁面到 zmin 的距离）会被域边界吸收而不经壁面模型，两种
+实现都统计不到。
 
 ### 推力
 
