@@ -55,7 +55,9 @@ BackwardCompatibility ()
  */
 void
 ParticleInjection () {
-#if defined(HALL3D) || defined(HALL3D_INIT)
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
+    Benchmark2DParticleInjection();
+#elif defined(HALL3D) || defined(HALL3D_INIT)
     InjectHallParticles();
 #endif
 }
@@ -89,6 +91,26 @@ ApplyParticleSubcycling (std::string const& species_name, int step,
     } else {
         do_not_push = true;
     }
+}
+
+/**
+ * 电势修正入口
+ */
+void
+PhiAdjustmentEntrance () {
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
+    VoltageAdjustment();
+#endif
+}
+
+/**
+ * 边界电势设置入口
+ */
+void
+SetBoundaryPhi () {
+#ifdef PHT
+    AnodeVoltage();
+#endif
 }
 
 /**

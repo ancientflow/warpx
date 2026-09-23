@@ -7,10 +7,11 @@
  * License: BSD-3-Clause-LBNL
  */
 #include "LabFrameExplicitES.H"
-#include "Fluids/MultiFluidContainer_fwd.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
-#include "Particles/MultiParticleContainer_fwd.H"
+#include "Insert/Config/WarpXSimulationConfig.h"
+#include "Insert/Core/WarpXInsert.h"
+#include "Insert/Fields/ECDIChargeFilter.h"
 #include "Python/callbacks.H"
 #include "WarpX.H"
 #include "Insert/Fields/ECDIChargeFilter.h"
@@ -248,9 +249,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #else
                    verbosity, is_igf_2d_slices, Efield_fp);
 #endif
-#endif
 
     }
+#if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
+    Insert::VoltageAdjustment();
+#endif
+
     // Keep extrapolation history on the uncorrected Poisson potential.
     updatePhiExtrapolationHistory(phi_fp);
     // Compute the electric field. Note that if an EB is used the electric
