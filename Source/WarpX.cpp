@@ -2006,6 +2006,8 @@ int WarpX::GetPECInsulator_IsESet ( const int  bdry_dir,
 void
 WarpX::BackwardCompatibility ()
 {
+    Insert::BackwardCompatibility();
+
     // Auxiliary variables
     int backward_int;
     bool backward_bool;

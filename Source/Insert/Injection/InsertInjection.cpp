@@ -3,11 +3,7 @@
 #include "WarpX.H"
 
 #include "Insert/Config/WarpXSimulationConfig.h"
-#include "Insert/Injection/DistributionSampler1D.H"
 #include "Insert/Injection/HallInjector.h"
-#include "Insert/Utils/InsertUtils.h"
-#include "Particles/MultiParticleContainer.H"
-#include "Particles/ParticleBoundaryBuffer.H"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>

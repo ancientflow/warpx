@@ -9,17 +9,15 @@
 #include "LabFrameExplicitES.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
-#include "Fluids/MultiFluidContainer_fwd.H"
-#include "Insert/Boundary/InsertBoundaryPhi.h"
-#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
-#include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#ifdef HALL3D
-#include "Insert/Fields/SpectralBoundarySchur.h"
+#include "Insert/Fields/ECDIChargeFilter.h"
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/HallElectrostaticMaterial.H"
+#include "Insert/Fields/HallWallCharge.H"
 #endif
 
 #include <algorithm>
@@ -213,7 +211,18 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
-    Insert::SetBoundaryPhi();//修正电势
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    auto& electrostatic_material = Insert::HallElectrostaticMaterial::GetInstance();
+    std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
+    ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr;
+    if (electrostatic_material.enabled()) {
+        auto& wall_charge = Insert::HallWallCharge::GetInstance();
+        wall_charge.addTo(rho_fp, max_level);
+        electrostatic_material.prepare(rho_fp, phi_fp, max_level);
+        anode_masks = *electrostatic_material.anodeMasks();
+        relative_permittivity = electrostatic_material.relativePermittivity();
+    }
+#endif
 
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
@@ -232,6 +241,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         int const verbosity = verbose_step ? self_fields_verbosity : 0;
         computePhi(rho_fp, phi_fp, beta, self_fields_required_precision,
                    self_fields_absolute_tolerance, self_fields_max_iters,
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+                   verbosity, is_igf_2d_slices, Efield_fp,
+                   anode_masks, relative_permittivity,
+                   relative_permittivity ? &m_material_linop : nullptr,
+                   relative_permittivity ? &m_material_mlmg : nullptr);
+#else
                    verbosity, is_igf_2d_slices, Efield_fp);
 #endif
 
@@ -239,23 +254,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     Insert::VoltageAdjustment();
 #endif
-    // 共置网格guard cell处理
-#ifdef HALL3D
-    if (!Insert::SpectralBoundarySchur::Enabled()) {
-        Insert::SetPhiGuards();
-    }
-#else
-    Insert::SetPhiGuards();
-#endif
+
     // Keep extrapolation history on the uncorrected Poisson potential.
-    // The Schur correction is only added below for field evaluation.
     updatePhiExtrapolationHistory(phi_fp);
-#ifdef HALL3D
-    if (Insert::SpectralBoundarySchur::Enabled()) {
-        Insert::ApplyElectrostaticBoundaryCorrection(phi_fp);
-        Insert::SetPhiGuards();
-    }
-#endif
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }

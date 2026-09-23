@@ -6,7 +6,7 @@
  * Uncomment a disabled #define to enable the corresponding optional path.
  */
 
-/* Diagnostics and benchmark hooks. */
+/* Diagnostics. */
 // #define FIELDSIZE
 #define NUMP
 // #define COLLISION_RECORD
@@ -29,9 +29,6 @@
  */
 // #define IONIZATION_SOURCE_RECORD
 // #define IONIZATION_SOURCE_INJECT
-
-/* Particle push / injection helpers. */
-#define PUSH_GAP
 
 #include "Insert/Config/WarpXOptimizationConfig.h"
 
