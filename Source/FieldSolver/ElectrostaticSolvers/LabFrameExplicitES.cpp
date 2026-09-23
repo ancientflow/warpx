@@ -7,15 +7,17 @@
  * License: BSD-3-Clause-LBNL
  */
 #include "LabFrameExplicitES.H"
-#include "Fluids/MultiFluidContainer_fwd.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
-#include "Particles/MultiParticleContainer_fwd.H"
-#include "Python/callbacks.H"
-#include "WarpX.H"
+#include "Fluids/MultiFluidContainer_fwd.H"
+#include "Insert/Boundary/InsertBoundaryPhi.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
+#include "Particles/MultiParticleContainer_fwd.H"
+#include "Python/callbacks.H"
+#include "WarpX.H"
 #ifdef HALL3D
 #include "Insert/Fields/SpectralBoundarySchur.h"
 #endif

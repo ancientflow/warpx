@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <Insert/Config/WarpXFunctionConfig.h>
 
 namespace Insert {
 
@@ -34,31 +35,77 @@ ElectronsCollection (WarpX& warpx_instance) {
     return std::max(e_xlo - xe_xlo, 0);
 }
 
-void
-ParticleInjection (WarpX& warpx_instance) {
-    static constexpr int nx = 512;
-    static constexpr int ny = 256;
-    static constexpr int nppc = 75;
-    static constexpr double lx = 0.025;
-    static constexpr double ly = 0.0128;
-    static constexpr double NPlasma = 5e16;
-    static constexpr double s0 = 5.23e23;
-    static constexpr double const_dt = 5e-12;
+struct Injection2DConfig
+{
+    int nx = 0;
+    int nz = 0;
+    int nppc = 0;
+    amrex::Real lx = 0.0;
+    amrex::Real lz = 0.0;
+    amrex::Real zlo = 0.0;
+    amrex::Real dt = 0.0;
+    amrex::Real density = 0.0;
+    amrex::Real injection_flux = 5.23e23;
+    amrex::Real injection_x_center = 0.00625;
+    amrex::Real injection_x_width = 0.0075;
+    amrex::Real cathode_x = 0.0;
+    amrex::Real electron_velocity_std = 1326232.0;
+    amrex::Real ion_velocity_std = 606.34;
+    int once_injection = 1000;
+};
 
-    static constexpr int once_injection = 1000;
-    static double rest_macro_particles = 0;
-    static constexpr double one_step_real_particles =
-        s0 * const_dt * 0.0128 * 2 / 3.1415926 * 0.0075;
-    static constexpr amrex::Real global_weight = NPlasma / nx / ny * lx * ly / nppc;
-    static constexpr double one_step_macro_particles =
+Injection2DConfig const&
+GetInjection2DConfig (WarpX& warpx_instance) {
+    static Injection2DConfig const config = [&] () {
+        Injection2DConfig cfg;
+        amrex::Geometry const& geom = warpx_instance.Geom(0);
+        amrex::Box const& domain = geom.Domain();
+        cfg.nx = domain.length(0);
+        cfg.nz = domain.length(1);
+        cfg.lx = geom.ProbHi(0) - geom.ProbLo(0);
+        cfg.lz = geom.ProbHi(1) - geom.ProbLo(1);
+        cfg.zlo = geom.ProbLo(1);
+        cfg.dt = warpx_instance.getdt(0);
+
+        amrex::ParmParse const pp_electrons("electrons");
+        pp_electrons.get("num_particles_per_cell", cfg.nppc);
+        cfg.density = GetWithParser<amrex::Real>(pp_electrons, "electrons",
+                                                 "density");
+
+        amrex::ParmParse const pp_b2d("insert.benchmark2d");
+        pp_b2d.query("injection_flux", cfg.injection_flux);
+        pp_b2d.query("injection_x_center", cfg.injection_x_center);
+        pp_b2d.query("injection_x_width", cfg.injection_x_width);
+        cfg.cathode_x = geom.ProbHi(0) - 0.001;
+        pp_b2d.query("cathode_x", cfg.cathode_x);
+        pp_b2d.query("electron_velocity_std", cfg.electron_velocity_std);
+        pp_b2d.query("ion_velocity_std", cfg.ion_velocity_std);
+        pp_b2d.query("once_injection", cfg.once_injection);
+        return cfg;
+    }();
+    return config;
+}
+
+void
+ParticleInjection2D (WarpX& warpx_instance) {
+    Injection2DConfig const& cfg = GetInjection2DConfig(warpx_instance);
+
+    const amrex::Real global_weight =
+        cfg.density / cfg.nx / cfg.nz * cfg.lx * cfg.lz / cfg.nppc;
+    const double one_step_real_particles =
+        cfg.injection_flux * cfg.dt * cfg.lz * 2 / 3.1415926 *
+        cfg.injection_x_width;
+    const double one_step_macro_particles =
         one_step_real_particles / global_weight;
+
+    static double rest_macro_particles = 0;
 
     int this_step_pair = 0;
     int const this_step_cathode_electron = ElectronsCollection(warpx_instance);
     rest_macro_particles += one_step_macro_particles;
-    if (rest_macro_particles > once_injection) {
-        rest_macro_particles -= once_injection;
-        this_step_pair = once_injection;
+    if (rest_macro_particles > cfg.once_injection) {
+        rest_macro_particles -= cfg.once_injection;
+        this_step_pair = cfg.once_injection;
     }
 
     auto& mypc = warpx_instance.GetPartContainer();
@@ -71,8 +118,9 @@ ParticleInjection (WarpX& warpx_instance) {
     amrex::RandomEngine normal_engine(MakeRandomEngine());
 
     int const electron_size = this_step_pair + this_step_cathode_electron;
-    std::cout << electron_size << " " << this_step_pair << " " << std::endl;
-    amrex::Vector<amrex::Real> pxe(electron_size), pye(electron_size, 0),
+    amrex::Print() << electron_size << " " << this_step_pair << " "
+                   << std::endl;
+    amrex::Vector<amrex::ParticleReal> pxe(electron_size), pye(electron_size, 0),
         pze(electron_size), vxe(electron_size), vye(electron_size),
         vze(electron_size), we(electron_size, global_weight),
         pxxe(this_step_pair), pyxe(this_step_pair, 0), pzxe(this_step_pair),
@@ -83,31 +131,41 @@ ParticleInjection (WarpX& warpx_instance) {
         for (int i = 0; i < this_step_pair; i++) {
             double const r1 = amrex::Random(uniform_engine);
             double const r2 = amrex::Random(uniform_engine);
-            pxe[i] = 0.00625 + std::asin(2 * r1 - 1) / 3.14159 * 0.0075;
-            pze[i] = 0.0128 * r2;
+            pxe[i] = cfg.injection_x_center +
+                     std::asin(2 * r1 - 1) / 3.14159 * cfg.injection_x_width;
+            pze[i] = cfg.zlo + cfg.lz * r2;
             pxxe[i] = pxe[i];
             pzxe[i] = pze[i];
 
-            vxe[i] = amrex::RandomNormal(0, 1326232, normal_engine);
-            vye[i] = amrex::RandomNormal(0, 1326232, normal_engine);
-            vze[i] = amrex::RandomNormal(0, 1326232, normal_engine);
-            vxxe[i] = amrex::RandomNormal(0, 606.34, normal_engine);
-            vyxe[i] = amrex::RandomNormal(0, 606.34, normal_engine);
-            vzxe[i] = amrex::RandomNormal(0, 606.34, normal_engine);
+            vxe[i] = amrex::RandomNormal(0, cfg.electron_velocity_std,
+                                         normal_engine);
+            vye[i] = amrex::RandomNormal(0, cfg.electron_velocity_std,
+                                         normal_engine);
+            vze[i] = amrex::RandomNormal(0, cfg.electron_velocity_std,
+                                         normal_engine);
+            vxxe[i] = amrex::RandomNormal(0, cfg.ion_velocity_std,
+                                        normal_engine);
+            vyxe[i] = amrex::RandomNormal(0, cfg.ion_velocity_std,
+                                        normal_engine);
+            vzxe[i] = amrex::RandomNormal(0, cfg.ion_velocity_std,
+                                        normal_engine);
         }
     }
 
     if (this_step_cathode_electron > 0) {
         for (int i = this_step_pair; i < electron_size; i++) {
-            pxe[i] = 0.024;
-            pze[i] = 0.0128 * amrex::Random(uniform_engine);
-            vxe[i] = amrex::RandomNormal(0, 1326232, normal_engine);
-            vye[i] = amrex::RandomNormal(0, 1326232, normal_engine);
-            vze[i] = amrex::RandomNormal(0, 1326232, normal_engine);
+            pxe[i] = cfg.cathode_x;
+            pze[i] = cfg.zlo + cfg.lz * amrex::Random(uniform_engine);
+            vxe[i] = amrex::RandomNormal(0, cfg.electron_velocity_std,
+                                         normal_engine);
+            vye[i] = amrex::RandomNormal(0, cfg.electron_velocity_std,
+                                         normal_engine);
+            vze[i] = amrex::RandomNormal(0, cfg.electron_velocity_std,
+                                         normal_engine);
         }
     }
     if (this_step_pair > 0) {
-        std::cout << "add pairs number: " << this_step_pair << std::endl;
+        amrex::Print() << "add pairs number: " << this_step_pair << std::endl;
         xe_pc.AddNParticles(0, this_step_pair, pxxe, pyxe, pzxe, vxxe, vyxe,
                             vzxe, 1, {wxe}, 0, nattr, false);
     }
@@ -529,7 +587,7 @@ void
 Benchmark2DParticleInjection ()
 {
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
-    ParticleInjection(WarpX::GetInstance());
+    ParticleInjection2D(WarpX::GetInstance());
 #endif
 }
 

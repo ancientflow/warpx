@@ -977,7 +977,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                 for (int ix = 0; ix <= depos_order; ix++) {
                                     amrex::Gpu::Atomic::AddNoRet(
                                         &consumption_arr(lo.x + px + ix, 0, 0),
-                                        sx[ix] * consumed_density);
+                                        static_cast<amrex::Real>(sx[ix] * consumed_density));
                                 }
 #elif defined(WARPX_DIM_XZ)
                         for (int iy = 0; iy <= depos_order; iy++) {
@@ -985,7 +985,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                 amrex::Gpu::Atomic::AddNoRet(
                                     &consumption_arr(lo.x + px + ix,
                                                      lo.y + py + iy, 0),
-                                    sx[ix] * sy[iy] * consumed_density);
+                                    static_cast<amrex::Real>(sx[ix] * sy[iy] * consumed_density));
                             }
                         }
 #elif defined(WARPX_DIM_3D)
@@ -1046,7 +1046,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                     for (int ix = 0; ix <= depos_order; ix++) {
                         amrex::Gpu::Atomic::AddNoRet(
                             &ion_rho_arr(lo.x + px + ix, 0, 0),
-                            sx[ix] * ion_charge_density);
+                            static_cast<amrex::Real>(sx[ix] * ion_charge_density));
                     }
 #elif defined(WARPX_DIM_XZ)
                         for (int iy = 0; iy <= depos_order; iy++) {
@@ -1054,7 +1054,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                 amrex::Gpu::Atomic::AddNoRet(
                                     &ion_rho_arr(lo.x + px + ix,
                                                  lo.y + py + iy, 0),
-                                    sx[ix] * sy[iy] * ion_charge_density);
+                                    static_cast<amrex::Real>(sx[ix] * sy[iy] * ion_charge_density));
                             }
                         }
 #elif defined(WARPX_DIM_3D)
@@ -1065,8 +1065,8 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
                                         &ion_rho_arr(
                                             lo.x + px + ix, lo.y + py + iy,
                                             lo.z + pz + iz),
-                                        sx[ix] * sy[iy] * sz[iz] *
-                                            ion_charge_density);
+                                        static_cast<amrex::Real>(sx[ix] * sy[iy] * sz[iz] *
+                                            ion_charge_density));
                                 }
                             }
                         }
