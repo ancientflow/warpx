@@ -1,7 +1,5 @@
 #pragma once
 
-#include <ablastr/fields/MultiFabRegister.H>
-
 #include <AMReX_REAL.H>
 
 #include <string>
@@ -14,6 +12,7 @@ class ParmParse;
 namespace Insert
 {
 
+void BackwardCompatibility ();
 void Initialize ();
 void BeforeStep ();
 void ParticleInjection ();
@@ -22,8 +21,6 @@ void ReadParticleSubcycling (
 int ParticleSubcyclingNdt (std::string const& species_name);
 void ApplyParticleSubcycling (
     std::string const& species_name, int step, amrex::Real& dt, bool& do_not_push);
-void SetBoundaryPhi ();
-void SetPhiGuards ();
 void BeforeCollision (int step);
 void AfterCollision (int step);
 void AfterDiagnostics ();

@@ -13,8 +13,6 @@
 #include "Particles/MultiParticleContainer_fwd.H"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#include "Insert/Config/WarpXSimulationConfig.h"
-#include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 #include "Insert/Fields/HallElectrostaticMaterial.H"
@@ -222,11 +220,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         electrostatic_material.prepare(rho_fp, phi_fp, max_level);
         anode_masks = *electrostatic_material.anodeMasks();
         relative_permittivity = electrostatic_material.relativePermittivity();
-    } else {
-        Insert::SetBoundaryPhi();//修正电势
     }
-#else
-    Insert::SetBoundaryPhi();//修正电势
 #endif
 
     // Compute the potential phi, by solving the Poisson equation
@@ -257,8 +251,6 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 
     }
-    // 共置网格guard cell处理
-    Insert::SetPhiGuards();
     // Keep extrapolation history on the uncorrected Poisson potential.
     updatePhiExtrapolationHistory(phi_fp);
     // Compute the electric field. Note that if an EB is used the electric
