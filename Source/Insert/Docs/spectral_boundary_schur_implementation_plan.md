@@ -1,5 +1,8 @@
 # zmin 混合边界谱 Schur 修正实现方案
 
+> 历史方案：zmin 平面阳极及 Schur 修正已由内部体阳极、介质 Poisson 求解和
+> 解析壁面取代；下文的 `SetPhiGuards()` 入口也已删除，不代表当前实现。
+
 ## 1. 目标
 
 在不修改 WarpX/AMReX nodal Poisson 求解器的前提下，在 `Source/Insert`

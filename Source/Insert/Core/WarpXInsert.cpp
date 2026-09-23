@@ -2,17 +2,18 @@
 
 #include "Insert/Background/InsertBackgroundDensity.h"
 #include "Insert/Boundary/AnalyticBoundaryInteraction.h"
-#include "Insert/Boundary/InsertBoundaryPhi.h"
 #include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Insert/Diagnostics/ZmaxRadialExitStats.h"
 #include "Insert/Injection/InsertInjection.h"
+#include "Utils/TextMsg.H"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 
+#include <initializer_list>
 #include <map>
 #include <string>
 
@@ -20,11 +21,38 @@ namespace {
 std::map<std::string, int> particle_subcycling_ndt;
 }
 
+namespace Insert {
+
+void
+BackwardCompatibility ()
+{
+    amrex::ParmParse const pp_mc("my_constants");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!pp_mc.contains("anode_current_path"),
+        "my_constants.anode_current_path has been removed. Use "
+        "my_constants.anode_current_prefix with insert.analytic_walls; "
+        "the diagnostic writes one file per wall.");
+
+    for (char const* name : {"zmin_wall_charge_diag", "zmin_wall_charge_dir",
+                            "zmin_wall_charge_interval", "zmin_wall_charge_write_interval"}) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!pp_mc.contains(name),
+            std::string("my_constants.") + name + " has been removed. Use "
+            "insert.use_electrostatic_materials and insert.analytic_walls "
+            "for persistent wall charge.");
+    }
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        amrex::ParmParse::getEntries("insert.schur_boundary").empty(),
+        "insert.schur_boundary.* has been removed. Use insert.use_electrostatic_materials "
+        "with insert.anode_implicit_function and insert.anode_potential_function.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        amrex::ParmParse::getEntries("insert.neutral_atom_eb").empty(),
+        "insert.neutral_atom_eb.* has been removed. Configure insert.analytic_walls "
+        "and <species>.analytic_wall.<wall>.behaviors instead.");
+}
+
 /**
  * 粒子注入入口
  */
-namespace Insert {
-
 void
 ParticleInjection () {
 #if defined(HALL3D) || defined(HALL3D_INIT)
@@ -64,26 +92,6 @@ ApplyParticleSubcycling (std::string const& species_name, int step,
 }
 
 /**
- * 电势修正入口
- */
-void
-PhiAdjustmentEntrance () {
-#ifdef BENCHMARK_2D
-    VoltageAdjustment();
-#endif
-#ifdef HALL3D
-    // GetPhiFromFile();
-#endif
-}
-
-/**
- * 边界电势设置入口
- */
-void
-SetBoundaryPhi () {
-}
-
-/**
  * 自定义诊断入口
  */
 void
@@ -98,9 +106,6 @@ BeforeStep () {
  */
 void
 Initialize () {
-#ifdef PUSH_GAP
-    // PushGapInit();
-#endif
 #ifdef MCC_DENSITY
     GlobalBackgroundDensityInit();
 #endif
@@ -133,16 +138,6 @@ AfterDiagnostics () {
     BeamDivergenceCalc();
     IEDFCalc();
     ClearHallBoundaryParticleCache();
-#endif
-}
-
-/**
- * 共置网格下，对于平板霍尔推力器zmin电势边界的guard cell设置
- */
-void
-SetPhiGuards () {
-#if !defined(WAVE1D)
-    DirichletPhiGuardSet();
 #endif
 }
 

@@ -324,7 +324,7 @@ void
 ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary const& boundary,
                  amrex::Real const time, amrex::Real const dt, WallChargeGrid const& grid,
                  amrex::MultiFab& wall_charge, MultiParticleContainer& mpc,
-                 std::array<amrex::Long, max_wall_behaviors>& counts,
+                 amrex::Long* const counts,
                  amrex::Real* const anode_stats, int const wall_id)
 {
     amrex::ParticleReal const mass = pc.getMass();
@@ -644,6 +644,8 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 });
             }
 
+            if (counts == nullptr) { continue; }
+
             // Count the events selected for this tile. choice[i] still holds the
             // behavior even for particles that were invalidated above.
             amrex::Long tile_counts[max_wall_behaviors];
@@ -691,7 +693,20 @@ AnalyticBoundaryInteraction ()
     amrex::Real* const anode_stats =
         anode_diag.enabled ? anode_diag.stats.dataPtr() : nullptr;
 
-    std::array<amrex::Long, max_wall_behaviors> wall_event_counts{};
+    static bool const wall_interaction_diag = [] {
+        bool enabled = false;
+        amrex::ParmParse const pp_mc("my_constants");
+        pp_mc.query("wall_interaction_diag", enabled);
+        return enabled;
+    }();
+    // Attribute events to the incident species and accumulate across all walls.
+    // Keep the same species order on every rank, including ranks with no hits.
+    std::map<std::string, std::array<amrex::Long, max_wall_behaviors>> species_counts;
+    if (wall_interaction_diag) {
+        for (auto const& [species_name, policies] : config.policies) {
+            species_counts[species_name] = {};
+        }
+    }
 
     // Process walls in declaration order. Inputs must keep invalid regions
     // disjoint; this order is also the deterministic fallback at a shared edge.
@@ -709,33 +724,39 @@ AnalyticBoundaryInteraction ()
                 warpx_instance.getdt(0) * ParticleSubcyclingNdt(species_name);
             ApplyWallPolicy(pc, policy, config.walls[wall_id].geometry->GetDeviceView(),
                 warpx_instance.gett_new(0), dt_effective, grid,
-                persistent_wall_charge.get(0), mpc, wall_event_counts,
+                persistent_wall_charge.get(0), mpc,
+                wall_interaction_diag ? species_counts.at(species_name).data() : nullptr,
                 anode_stats, wall_id);
         }
     }
 
-    amrex::Long counts[max_wall_behaviors];
-    for (int b = 0; b < max_wall_behaviors; ++b) { counts[b] = wall_event_counts[b]; }
-    amrex::ParallelDescriptor::ReduceLongSum(counts, max_wall_behaviors);
+    if (!wall_interaction_diag) { return; }
 
-    amrex::Long const n_absorb = counts[static_cast<int>(WallBehavior::absorb)];
-    amrex::Long const n_specular = counts[static_cast<int>(WallBehavior::specular)];
-    amrex::Long const n_diffuse = counts[static_cast<int>(WallBehavior::diffuse)];
-    amrex::Long const n_neutralize = counts[static_cast<int>(WallBehavior::neutralize)];
-    amrex::Long const n_secondary_1 = counts[static_cast<int>(WallBehavior::secondary_electron_1)];
-    amrex::Long const n_secondary_2 = counts[static_cast<int>(WallBehavior::secondary_electron_2)];
-    amrex::Long const n_absorbed = n_absorb + n_neutralize + n_secondary_1 + n_secondary_2;
-    amrex::Long const n_emitted = n_secondary_1 + 2*n_secondary_2;
     amrex::Print() << "AnalyticBoundaryInteraction: step " << warpx_instance.getistep(0)
-        << '\n'
-        << "  absorbed particles:  " << n_absorbed
-        << " (absorb " << n_absorb << ", neutralize " << n_neutralize
-        << ", secondary " << n_secondary_1 + n_secondary_2 << ")\n"
-        << "  specular:            " << n_specular << '\n'
-        << "  diffuse:             " << n_diffuse << '\n'
-        << "  emitted secondaries: " << n_emitted
-        << " (secondary_electron_1 " << n_secondary_1
-        << ", secondary_electron_2 " << n_secondary_2 << ")\n";
+        << " (all analytic walls, macroparticle counts)\n";
+    for (auto& [species_name, counts] : species_counts) {
+        amrex::ParallelDescriptor::ReduceLongSum(counts.data(), max_wall_behaviors);
+
+        amrex::Long const n_absorb = counts[static_cast<int>(WallBehavior::absorb)];
+        amrex::Long const n_specular = counts[static_cast<int>(WallBehavior::specular)];
+        amrex::Long const n_diffuse = counts[static_cast<int>(WallBehavior::diffuse)];
+        amrex::Long const n_neutralize = counts[static_cast<int>(WallBehavior::neutralize)];
+        amrex::Long const n_secondary_1 =
+            counts[static_cast<int>(WallBehavior::secondary_electron_1)];
+        amrex::Long const n_secondary_2 =
+            counts[static_cast<int>(WallBehavior::secondary_electron_2)];
+        amrex::Long const n_removed = n_absorb + n_neutralize + n_secondary_1 + n_secondary_2;
+        amrex::Long const n_emitted = n_secondary_1 + 2*n_secondary_2;
+        amrex::Print() << "  species: " << species_name << '\n'
+            << "    removed incident:    " << n_removed
+            << " (absorb " << n_absorb << ", neutralize " << n_neutralize
+            << ", secondary_electron_1 " << n_secondary_1
+            << ", secondary_electron_2 " << n_secondary_2 << ")\n"
+            << "    specular:            " << n_specular << '\n'
+            << "    diffuse:             " << n_diffuse << '\n'
+            << "    emitted neutrals:    " << n_neutralize << '\n'
+            << "    emitted secondaries: " << n_emitted << '\n';
+    }
 #endif
 }
 
@@ -756,11 +777,6 @@ AnodeCurrentDiagOutput ()
     if (!ifinit) {
         amrex::ParmParse const pp_mc("my_constants");
         pp_mc.query("anode_current_prefix", anode_current_prefix);
-        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!pp_mc.contains("anode_current_path"),
-            "my_constants.anode_current_path was removed together with the old "
-            "zlo-buffer anode diagnostic. The wall current is now written to "
-            "one file per analytic wall, <prefix>_<wall>.dat; set the prefix "
-            "with my_constants.anode_current_prefix.");
         if (amrex::ParallelDescriptor::IOProcessor()) {
             for (auto const& wall : config.walls) {
                 std::fstream wall_file(

@@ -3,6 +3,21 @@
 本文档整理 `Source/Insert` 当前运行时诊断和 Hall 注入输入参数。参数名按
 AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 
+## 已移除的旧边界参数
+
+初始化时的 `BackwardCompatibility()` 会检查以下废弃参数，无论诊断是否开启：
+
+- `my_constants.anode_current_path`：改用 `my_constants.anode_current_prefix`。
+- `my_constants.zmin_wall_charge_diag`、`zmin_wall_charge_dir`、
+  `zmin_wall_charge_interval` 和 `zmin_wall_charge_write_interval`：旧 zmin 面壁面
+  电荷实现已移除，持久壁面电荷由静电介质与解析壁面处理。
+- `insert.schur_boundary.*`：旧 zmin 混合边界 Schur 修正已移除，改用体阳极和
+  静电介质求解。
+- `insert.neutral_atom_eb.*`：改用解析壁面几何及物种对应的壁面行为。
+
+这些参数即使设置为 `0` 也会报出迁移提示。旧输入中的 `my_constants.voltage`
+仅是表达式常量，不再自动建立 zmin 环形阳极；必须在体阳极电势表达式中引用。
+
 ## 静电介质与体阳极
 
 该功能只用于 3D Cartesian、lab-frame、MLMG、单层网格计算，不支持 EB、IGF、
@@ -58,6 +73,11 @@ mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z
 陶瓷和阳极均处于统一场计算域中；粒子吸收、壁面自由电荷和阳极电流仍由独立的
 Insert 模块处理。
 
+计算域外边界的电势和 ghost nodes 沿用求解器自身的边界处理；共置网格的 MLMG
+路径启用 `setFinalFillBC(true)`。旧 `DirichletPhiGuardSet()` 及 `SetPhiGuards()`
+入口已删除，不再在求解后用外边界电荷密度额外覆盖 ghost 电势。内部体阳极的
+固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
+
 ## 解析壁面粒子相互作用
 
 解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。
@@ -108,7 +128,7 @@ Poisson 路径已启用，以分配和求解持久壁面电荷。
 
 ### 总体节奏
 
-边界吸收粒子相关诊断共享同一个间隔：
+壁面电流和边界粒子缓存相关诊断共享同一个间隔：
 
 ```text
 my_constants.hall_diag_interval = 10
@@ -131,6 +151,7 @@ my_constants.hall_diag_interval = 10
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | `my_constants.particle_number_diag` | `0` | 打印每个 species 当前粒子数。需要编译宏 `NUMP`。 |
+| `my_constants.wall_interaction_diag` | `0` | 每步按入射 species 打印解析壁面交互的宏粒子计数，同一物种的所有解析壁面合并统计。需要启用 `insert.analytic_walls`。 |
 | `my_constants.collision_record_diag` | `0` | 写出碰撞产生的电子和离子宏粒子数到 `collision_record.dat`。需要编译宏 `COLLISION_RECORD`。 |
 | `my_constants.anode_current_diag` | `0` | 统计每面解析壁面吸收的电流，每壁面一个输出文件。需要启用 `insert.analytic_walls`。 |
 | `my_constants.anode_current_prefix` | `anode_current` | 壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
@@ -141,6 +162,31 @@ my_constants.hall_diag_interval = 10
 
 `clear_hall_boundary_particle_cache_diag` 应在所有读取边界缓存的诊断之后执行。
 当前 `Insert::AfterDiagnostics()` 中的调用顺序已满足这一点。
+
+### 解析壁面交互计数
+
+```text
+my_constants.wall_interaction_diag = 1
+```
+
+启用后，每步在标准输出中按入射 species 分别列出：
+
+- `removed incident`：被移除的入射宏粒子数，括号内分别为 `absorb`、
+  `neutralize`、`secondary_electron_1` 和 `secondary_electron_2` 的事件数。
+- `specular` / `diffuse`：镜面反射 / 漫反射事件数。
+- `emitted neutrals`：中性化产生的中性宏粒子数，等于 `neutralize`。
+- `emitted secondaries`：产生的二次电子宏粒子数，等于
+  `secondary_electron_1 + 2 * secondary_electron_2`。
+
+计数跨 MPI ranks 和所有解析壁面求和，只由 IO rank 输出；仅统计配置了解析
+壁面策略的物种。没有事件（包括该物种本步未推进）时输出零。每步重新计数，
+不受 `hall_diag_interval` 控制，不包括计算域外边界和 EB 的交互。
+所有数值均为宏粒子事件计数，不是权重之和，也不是 species 净增减量。
+产物数归属于入射物种：例如 `xe_ions` 的 `emitted neutrals` 表示由离子撞壁
+产生的原子，不会记入 `xe_netural` 的入射事件。
+
+默认关闭，替代此前无条件输出的整体壁面计数。关闭时跳过事件计数的归约，
+不影响壁面交互、壁面电荷沉积或独立的 `anode_current_diag` 诊断。
 
 ### 阳极电流
 

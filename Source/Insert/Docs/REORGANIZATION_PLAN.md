@@ -1,5 +1,10 @@
 # Insert Reorganization Plan
 
+> 历史重构记录：下文涉及的旧 zmin 阳极实现已移除，包括 `AnodeVoltage`、
+> `DirichletPhiGuardSet` 和 `SetPhiGuards`。`InsertBoundaryPhi.*`、
+> `WarpXInsertFunction.h` 及未使用的 Legacy 注入实现也已删除。
+> 当前实现以 `Parameter.md` 为准。
+
 ## 背景和目标
 
 `Source/Insert` 当前承载的是长期私有功能。由于这些功能预计不会向 WarpX
