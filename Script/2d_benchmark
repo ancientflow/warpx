@@ -1,0 +1,114 @@
+#全局定义
+max_step = 4000000
+my_constants.diag_num = 120
+my_constants.reduced_diag_num = 12000
+my_constants.dt = 5e-12
+
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-5
+#warpx.self_fields_absolute_tolerance = 1e-3
+warpx.sort_intervals = 25
+warpx.use_filter = 0
+warpx.grid_type = collocated
+
+##几何参数定义
+my_constants.particle_number_diag = 1
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+warpx.poisson_solver = multigrid
+
+#几何
+
+amr.n_cell = 512 256
+amr.blocking_factor = 256
+amr.max_grid_size = 512
+amr.max_level = 0
+
+#内存使用
+amrex.the_arena_init_size = 1024*1024*1024*15 # 75GB内存
+
+geometry.dims = 2
+geometry.prob_lo = 0.0 0.0
+geometry.prob_hi = 0.025 0.0128
+
+#边界条件
+boundary.field_lo = pec periodic
+boundary.field_hi = pec periodic
+boundary.particle_lo = absorbing periodic
+boundary.particle_hi = absorbing periodic
+boundary.potential_lo_x = 200
+boundary.potential_hi_x = 0
+
+#外推设置
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 0.3
+warpx.self_fields_phi_extrapolation_beta = 0.15
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = electrons xe_ions
+
+electrons.species_type = electron
+#electrons.do_not_deposit = 1
+
+xe_ions.species_type = xenon
+xe_ions.charge = q_e
+
+###重采样
+electrons.save_particles_at_xlo = 1
+electrons.save_particles_at_xhi = 1
+electrons.ndt = 1
+
+xe_ions.save_particles_at_xlo = 1
+xe_ions.save_particles_at_xhi = 1
+xe_ions.ndt = 10
+
+#初始注入
+electrons.injection_style = NRandomPerCell
+electrons.num_particles_per_cell = 75
+electrons.profile = constant
+electrons.density = 5e16
+electrons.momentum_distribution_type = maxwellian
+electrons.ux_std = sqrt(kb*10*11605/m_e/clight^2)
+
+xe_ions.injection_style = NRandomPerCell
+xe_ions.num_particles_per_cell = 75
+xe_ions.profile = constant
+xe_ions.density = 5e16
+xe_ions.momentum_distribution_type = maxwellian
+xe_ions.ux_std = sqrt(kb*2*11605/m_xe/clight^2)
+
+
+#电场 磁场定义
+my_constants.b0 = 0.006
+my_constants.blx = 0.001
+my_constants.bm = 0.01
+my_constants.xbm = 0.0075
+my_constants.sigma = 0.00625
+my_constants.a1 = (bm-b0)/(1-exp(-0.5*(xbm/sigma)^2))
+my_constants.a2 = (bm-blx)/(1-exp(-0.5*((0.025-xbm)/sigma)^2))
+my_constants.b1 = bm-a1
+my_constants.b2 = bm-a2
+
+warpx.B_ext_grid_init_style = parse_B_ext_grid_function
+warpx.Bx_external_grid_function(x,y,z) = 0
+warpx.Bz_external_grid_function(x,y,z) = 0
+warpx.By_external_grid_function(x,y,z) = if(x<xbm,a1*exp(-(x-xbm)^2/2/sigma^2)+b1,a2*exp(-(x-xbm)^2/2/sigma^2)+b2)
+
+#输出定义
+diagnostics.diags_names = intensive_diag set_diag
+intensive_diag.diag_type = Full
+intensive_diag.intervals = 1000
+intensive_diag.fields_to_plot = rho_xe_ions Ex T_electrons phi rho_electrons
+intensive_diag.format = openpmd
+intensive_diag.write_species = 0
+intensive_diag.file_prefix = /media/ps/disk1/WarpXData/diag_2d
+
+set_diag.diag_type = Full
+set_diag.intervals = 4000000
+set_diag.fields_to_plot = Bx By Bz
+set_diag.format = openpmd
+set_diag.write_species = 0
