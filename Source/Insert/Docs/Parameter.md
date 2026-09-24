@@ -185,7 +185,7 @@ my_constants.wall_interaction_diag = 1
 不受 `hall_diag_interval` 控制，不包括计算域外边界和 EB 的交互。
 所有数值均为宏粒子事件计数，不是权重之和，也不是 species 净增减量。
 产物数归属于入射物种：例如 `xe_ions` 的 `emitted products` 表示由离子撞壁
-产生的原子，不会记入 `xe_netural` 的入射事件。
+产生的原子，不会记入 `xe_neutral` 的入射事件。
 
 默认关闭，替代此前无条件输出的整体壁面计数。关闭时跳过事件计数的归约，
 不影响壁面交互、壁面电荷沉积或独立的 `anode_current_diag` 诊断。
@@ -514,7 +514,7 @@ cathode_electron.velocity.vz.sigma = 592982
 ```text
 insert.continuous_sources = xe_neutral_inlet
 
-xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.species = xe_neutral
 xe_neutral_inlet.rate = mass_flow
 xe_neutral_inlet.mass_flow = m_dot
 xe_neutral_inlet.mass = m_xe

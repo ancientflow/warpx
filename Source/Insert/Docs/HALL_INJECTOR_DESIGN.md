@@ -567,7 +567,7 @@ Xe 原子孔阵列注入示例：
 ```text
 insert.continuous_sources = xe_neutral_inlet
 
-xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.species = xe_neutral
 xe_neutral_inlet.rate = mass_flow
 xe_neutral_inlet.mass_flow = m_dot
 xe_neutral_inlet.macro_weight = xe_weight
@@ -695,7 +695,7 @@ WarpX 官方 `PlasmaInjector` 仍负责官方通用注入路径。`Insert` 的 H
 
 - 当前 `MakePlasmaThetaSampler()` 虽然有 spoke 函数，但默认使用均匀分布；迁移时
   必须保持默认行为不变。
-- 当前 Xe species 名称为 `xe_netural`，疑似拼写历史遗留。迁移时不要擅自改名，
+- 当前 Xe species 名称为 `xe_neutral`，疑似拼写历史遗留。迁移时不要擅自改名，
   除非同步修改输入文件和下游逻辑。
 - 当前使用 `std::rand()` 选择孔阵列起点，应迁移为 AMReX 随机数，避免并行可重复性
   问题。

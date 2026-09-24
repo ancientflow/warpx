@@ -608,7 +608,7 @@ cathode_electron.velocity.vz.sigma = 592982
 ```text
 insert.initial_sources = initial_xe_neutral
 
-initial_xe_neutral.species = xe_netural
+initial_xe_neutral.species = xe_neutral
 initial_xe_neutral.rate = density_volume
 initial_xe_neutral.density = n_xe0
 initial_xe_neutral.volume = volume_xe

@@ -470,7 +470,7 @@ LegacyXeInjection () {
 
         auto& mypc = warpx_instance.GetPartContainer();
         auto& xe_pc =
-            mypc.GetParticleContainer(mypc.getSpeciesID("xe_netural"));
+            mypc.GetParticleContainer(mypc.getSpeciesID("xe_neutral"));
         xe_pc.AddNParticles(0, one_times_inject_particle, px, py, pz, vx, vy,
                             vz, 1, {pw}, 0, nattr, 0);
         amrex::Print() << "Injection Xe Atom\n";
@@ -574,7 +574,7 @@ LegacyXeFastInjection () {
 
         auto& mypc = warpx_instance.GetPartContainer();
         auto& xe_pc =
-            mypc.GetParticleContainer(mypc.getSpeciesID("xe_netural"));
+            mypc.GetParticleContainer(mypc.getSpeciesID("xe_neutral"));
         xe_pc.AddNParticles(0, one_times_inject_particle, px, py, pz, vx, vy,
                             vz, 1, {pw}, 0, nattr, 0);
         amrex::Print() << "Injection Xe Atom\n";
