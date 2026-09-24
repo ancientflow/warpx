@@ -12,7 +12,7 @@ full_diag.file_prefix = /media/ps/disk2/WarpXData/full_diag
 
 ECDI_diag.diag_type = Full
 ECDI_diag.intervals = 5000
-ECDI_diag.fields_to_plot = rho_electrons rho_xe_netural phi rho_xe_ions
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions
 ECDI_diag.write_species = 0
 ECDI_diag.format = openpmd
 ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/compare_diag

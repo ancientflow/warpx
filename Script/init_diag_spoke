@@ -4,7 +4,7 @@ diagnostics.diags_names = rho_diag particle_diag
 
 rho_diag.diag_type = Full
 rho_diag.intervals = max_step / 5
-rho_diag.fields_to_plot = rho_xe_netural
+rho_diag.fields_to_plot = rho_xe_neutral
 rho_diag.format = openpmd
 rho_diag.write_species = 0
 

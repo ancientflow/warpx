@@ -108,13 +108,13 @@ boundary.particle_hi = absorbing absorbing absorbing
 #粒子设置
 algo.particle_shape = 1
 
-particles.species_names = xe_netural
+particles.species_names = xe_neutral
 
-xe_netural.mass = m_xe
-xe_netural.charge = 1
-xe_netural.do_not_gather = 1
-xe_netural.do_not_deposit = 1
-xe_netural.ndt = 1
+xe_neutral.mass = m_xe
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+xe_neutral.ndt = 1
 
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
@@ -123,7 +123,7 @@ xe_netural.ndt = 1
 #insert.initial_sources =
 insert.continuous_sources = xe_neutral_inlet
 
-xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.species = xe_neutral
 xe_neutral_inlet.rate = mass_flow
 xe_neutral_inlet.mass_flow = m_dot
 xe_neutral_inlet.mass = m_xe

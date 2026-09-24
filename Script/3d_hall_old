@@ -75,7 +75,7 @@ warpx.self_fields_phi_extrapolation_beta = 0.15
 #粒子设置
 algo.particle_shape = 1
 
-particles.species_names = electrons xe_ions xe_netural
+particles.species_names = electrons xe_ions xe_neutral
 
 electrons.species_type = electron
 #electrons.do_not_deposit = 1
@@ -84,10 +84,10 @@ xe_ions.species_type = xenon
 xe_ions.charge = q_e
 #xe_ions.do_not_deposit = 1
 
-xe_netural.mass = m_xe
-xe_netural.charge = 1
-xe_netural.do_not_gather = 1
-xe_netural.do_not_deposit = 1
+xe_neutral.mass = m_xe
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
 
 ###重采样
 electrons.save_particles_at_zlo = 1
@@ -101,7 +101,7 @@ xe_ions.save_particles_at_zlo = 1
 xe_ions.save_particles_at_zhi = 1
 xe_ions.ndt = 10
 
-xe_netural.ndt = 100
+xe_neutral.ndt = 100
 
 my_constants.hall_diag_interval = 10
 my_constants.thrust_diag_path = "thrust.dat"
@@ -193,7 +193,7 @@ cathode_electron.velocity.vz.distribution = gaussian
 cathode_electron.velocity.vz.sigma = 592982
 
 # --- Xe neutral continuous inlet (evolving external_file is kept for initial neutral) ---
-xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.species = xe_neutral
 xe_neutral_inlet.rate = mass_flow
 xe_neutral_inlet.mass_flow = m_dot
 xe_neutral_inlet.mass = m_xe
@@ -222,11 +222,11 @@ xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
 xe_neutral_inlet.velocity.vz.mean = vz0
 xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 
-xe_netural.injection_sources = xeinit
+xe_neutral.injection_sources = xeinit
 
 #初始注入
-xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = ../../data/hall_start_256_single.bp5
+xe_neutral.xeinit.injection_style = external_file
+xe_neutral.xeinit.injection_file = ../../data/hall_start_256_single.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_test

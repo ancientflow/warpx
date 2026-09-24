@@ -69,7 +69,7 @@ boundary.potential_hi_z = 0
 #粒子设置
 algo.particle_shape = 1
 
-particles.species_names = electrons xe_ions xe_netural xe_netural_s
+particles.species_names = electrons xe_ions xe_neutral xe_neutral_s
 
 electrons.species_type = electron
 electrons.charte = -q_e
@@ -79,17 +79,17 @@ xe_ions.species_type = xenon
 xe_ions.charge = q_e
 xe_ions.ndt = 10
 
-xe_netural.mass = m_xe
-xe_netural.charge = 1
-xe_netural.do_not_gather = 1
-xe_netural.do_not_deposit = 1
-xe_netural.ndt = 100
+xe_neutral.mass = m_xe
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+xe_neutral.ndt = 100
 
-xe_netural_s.mass = m_xe
-xe_netural_s.charge = 1
-xe_netural_s.do_not_deposit = 1
-xe_netural_s.do_not_gather = 1
-xe_netural_s.ndt = 100
+xe_neutral_s.mass = m_xe
+xe_neutral_s.charge = 1
+xe_neutral_s.do_not_deposit = 1
+xe_neutral_s.do_not_gather = 1
+xe_neutral_s.ndt = 100
 
 # ==========================================
 # Hall injection sources (explicit, required by new framework)
@@ -204,7 +204,7 @@ my_constants.beam_divergence_diag = 0
 my_constants.iedf_diag = 0
 my_constants.collision_record_diag = 0
 
-xe_netural.injection_sources = xeinit
+xe_neutral.injection_sources = xeinit
 
 #初始注入
 FILE = 3dInitInjection

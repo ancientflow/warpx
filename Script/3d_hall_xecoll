@@ -1,6 +1,6 @@
 collisions.collision_names = xe_coll
 
-xe_coll.species = xe_netural xe_netural
+xe_coll.species = xe_neutral xe_neutral
 xe_coll.type = dsmc
 xe_coll.ndt_supercycle = 1
 xe_coll.scattering_processes = elastic

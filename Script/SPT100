@@ -1,0 +1,158 @@
+# SPT100 三维全粒子算例：几何、静电介质与解析壁面配置。
+# 本阶段仅初始化（max_step=0），尚未设置粒子源、磁场和碰撞工况。
+# 所有给定的 mm 尺寸视为缩尺前尺寸；输入中的长度单位为 m，统一除以 10。
+# 阳极电压、时间步和壁面交互参数暂沿用 3d_hall_dielectric_volume_anode。
+
+max_step = 0
+my_constants.dt = 3e-12
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.poisson_solver = multigrid
+warpx.self_fields_required_precision = 1e-4
+warpx.self_fields_absolute_tolerance = 1
+warpx.sort_intervals = 25
+warpx.use_filter = 0
+warpx.grid_type = collocated
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 0.3
+warpx.self_fields_phi_extrapolation_beta = 0.1
+
+# 几何：原尺寸 128 x 128 x 64 mm；缩尺后 12.8 x 12.8 x 6.4 mm。
+# 横向域为 [0,lx] x [0,ly]，环形通道轴线位于域中心。
+my_constants.l_factor = 10
+my_constants.lx = 0.128 / l_factor
+my_constants.ly = 0.128 / l_factor
+my_constants.lz = 0.064 / l_factor
+my_constants.anode_center_x = lx / 2
+my_constants.anode_center_y = ly / 2
+my_constants.anode_inner_radius = 0.035 / l_factor
+my_constants.anode_outer_radius = 0.050 / l_factor
+my_constants.channel_top = 0.022 / l_factor
+my_constants.anode_thickness = 0.004 / l_factor
+my_constants.ceramic_base_thickness = 0.008 / l_factor
+my_constants.anode_zmax = 0.0
+my_constants.anode_zmin = -anode_thickness
+my_constants.zmin = anode_zmin - ceramic_base_thickness
+my_constants.zmax = zmin + lz
+
+# 网格不随缩尺改变；dx=dy=dz=40 um，共 16,384,000 个单元。
+# blocking_factor=32 同时整除 320 和 160。
+amr.n_cell = 320 320 160
+amr.blocking_factor = 32
+amr.max_grid_size = 160
+amr.max_level = 0
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 zmin
+geometry.prob_hi = lx ly zmax
+
+# 计算域外边界暂沿用参考算例：电势为零，粒子出域吸收。
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+# 陶瓷与体阳极：通道为 Rin<r<Rout、0<z<channel_top。
+# z<channel_top 中，通道以外为陶瓷，但环形体阳极由独立 overset mask 排除。
+# 体阳极占 Rin<=r<=Rout、-4/l_factor mm<=z<=0，其下方仍有 8/l_factor mm 陶瓷。
+# 求解器要求阳极内部的介电常数也为有限正值；此处使用 4，由 mask 固定电势。
+my_constants.ceramic_epsilon_r = 4.0
+my_constants.voltage = 300
+my_constants.anode_voltage = voltage
+insert.use_electrostatic_materials = 1
+insert.relative_permittivity_function(x,y,z) = "if((z < channel_top) * ((z <= anode_zmax) + ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_inner_radius**2) + ((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_outer_radius**2)), ceramic_epsilon_r, 1.0)"
+insert.anode_implicit_function(x,y,z) = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2) * (z >= anode_zmin) * (z <= anode_zmax), -1.0, 1.0)"
+insert.anode_potential_function(x,y,z) = "anode_voltage"
+
+# 粒子物种：电子、氙离子与中性氙原子。
+algo.particle_shape = 1
+particles.species_names = electrons xe_ions xe_neutral
+electrons.species_type = electron
+xe_ions.species_type = xenon
+xe_ions.charge = q_e
+my_constants.m_xe = 2.179e-25
+xe_neutral.mass = m_xe
+# 中性原子的 charge=1 仅作密度诊断记账，不参与场沉积和受力。
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+
+# 三个解析边界：阳极环面、内壁（含内平台）、外壁（含外平台）。
+# F>0 为粒子可达区域，F<0 为固体；交界处阳极优先。
+# 内陶瓷 F=max(r-Rin,z-channel_top)，法向在侧壁指向 +r、在平台指向 +z。
+# 外陶瓷 F=max(Rout-r,z-channel_top)，法向在侧壁指向 -r、在平台指向 +z。
+# 两个 max 的分支均为长度，平台零面严格为 z=channel_top。
+# 阳极粒子边界只表示暴露的 z=0 环面；体阳极的侧面、底面均埋在陶瓷内。
+insert.analytic_walls = anode_ring inner_wall outer_wall
+analytic_wall.anode_ring.signed_value = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2), z-anode_zmax, 1.0)"
+analytic_wall.anode_ring.normal_x = "0.0"
+analytic_wall.anode_ring.normal_y = "0.0"
+analytic_wall.anode_ring.normal_z = "1.0"
+
+analytic_wall.inner_wall.signed_value = "max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius, z-channel_top)"
+analytic_wall.inner_wall.normal_x = "if(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius > z-channel_top, (x-anode_center_x)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.inner_wall.normal_y = "if(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius > z-channel_top, (y-anode_center_y)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.inner_wall.normal_z = "if(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius > z-channel_top, 0.0, 1.0)"
+
+analytic_wall.outer_wall.signed_value = "max(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), z-channel_top)"
+analytic_wall.outer_wall.normal_x = "if(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) > z-channel_top, -(x-anode_center_x)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.outer_wall.normal_y = "if(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) > z-channel_top, -(y-anode_center_y)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.outer_wall.normal_z = "if(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) > z-channel_top, 0.0, 1.0)"
+
+# 阳极：电子全部吸收，离子全部复合为中性原子，原子按参考算例作 400 K 漫反射。
+electrons.analytic_wall.anode_ring.behaviors = absorb
+# 固定电势导体不累积陶瓷壁面自由电荷。
+electrons.analytic_wall.anode_ring.deposit_wall_charge = 0
+xe_ions.analytic_wall.anode_ring.behaviors = convert
+xe_ions.analytic_wall.anode_ring.product_species = xe_neutral
+xe_ions.analytic_wall.anode_ring.product_charge = 0.0
+xe_ions.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_ions.analytic_wall.anode_ring.deposit_wall_charge = 0
+xe_neutral.analytic_wall.anode_ring.behaviors = diffuse
+xe_neutral.analytic_wall.anode_ring.wall_temperature = 400.0
+
+# 两面陶瓷均完整沿用参考文件的行为顺序和概率。
+# 最后一项 secondary_electron_1 使用余量概率。
+# 注意：参考文件电子漫反射的实际参数为 40000 K，此处照录；
+# 离子复合产物和中性原子漫反射为 400 K，二次电子为 3 eV。
+electrons.analytic_wall.inner_wall.behaviors = absorb diffuse secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.inner_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
+electrons.analytic_wall.inner_wall.p_diffuse = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.inner_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
+electrons.analytic_wall.inner_wall.wall_temperature = 40000
+electrons.analytic_wall.inner_wall.secondary_electron_species = electrons
+electrons.analytic_wall.inner_wall.secondary_electron_temperature_eV = 3.0
+electrons.analytic_wall.inner_wall.deposit_wall_charge = 1
+electrons.analytic_wall.outer_wall.behaviors = absorb diffuse secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.outer_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
+electrons.analytic_wall.outer_wall.p_diffuse = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.outer_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
+electrons.analytic_wall.outer_wall.wall_temperature = 40000
+electrons.analytic_wall.outer_wall.secondary_electron_species = electrons
+electrons.analytic_wall.outer_wall.secondary_electron_temperature_eV = 3.0
+electrons.analytic_wall.outer_wall.deposit_wall_charge = 1
+
+# product_charge=0 保证复合后产物的物理电荷为零，陶瓷壁面获得离子的电荷。
+xe_ions.analytic_wall.inner_wall.behaviors = convert
+xe_ions.analytic_wall.inner_wall.product_species = xe_neutral
+xe_ions.analytic_wall.inner_wall.product_charge = 0.0
+xe_ions.analytic_wall.inner_wall.wall_temperature = 400.0
+xe_ions.analytic_wall.inner_wall.deposit_wall_charge = 1
+xe_ions.analytic_wall.outer_wall.behaviors = convert
+xe_ions.analytic_wall.outer_wall.product_species = xe_neutral
+xe_ions.analytic_wall.outer_wall.product_charge = 0.0
+xe_ions.analytic_wall.outer_wall.wall_temperature = 400.0
+xe_ions.analytic_wall.outer_wall.deposit_wall_charge = 1
+xe_neutral.analytic_wall.inner_wall.behaviors = diffuse
+xe_neutral.analytic_wall.inner_wall.wall_temperature = 400.0
+xe_neutral.analytic_wall.outer_wall.behaviors = diffuse
+xe_neutral.analytic_wall.outer_wall.wall_temperature = 400.0
+
+# 待补充 SPT100 工况：阳极电压确认、粒子权重与初始等离子体、阴极电子源、
+# 中性气体入口及流量、外加磁场、碰撞、时间步/子循环和诊断输出。
+# 此阶段不声明 insert.initial_sources / insert.continuous_sources。
