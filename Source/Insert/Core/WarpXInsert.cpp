@@ -2,6 +2,7 @@
 
 #include "Insert/Background/InsertBackgroundDensity.h"
 #include "Insert/Boundary/AnalyticBoundaryInteraction.h"
+#include "Insert/Boundary/InsertBoundaryPhi.h"
 #include "Insert/Collisions/IonizationSourceTable.h"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"

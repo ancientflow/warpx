@@ -9,6 +9,8 @@
 #include "LabFrameExplicitES.H"
 #include "EmbeddedBoundary/Enabled.H"
 #include "Fields.H"
+#include "Insert/Boundary/InsertBoundaryPhi.h"
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/ECDIChargeFilter.h"
