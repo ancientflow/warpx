@@ -83,7 +83,7 @@ Insert 模块处理。
 解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。
 每个物种可独立选择与每个壁面是否交互。`behaviors` 的顺序定义累积概率抽样；除
 最后一项外，每项以 `p_<behavior>(E_eV,u_n,u_t,x,y,z,t)` 给出概率，最后一项采用余量。
-支持 `absorb`、`specular`、`diffuse`、`neutralize`、`secondary_electron_1` 和
+支持 `absorb`、`specular`、`diffuse`、`convert`、`secondary_electron_1` 和
 `secondary_electron_2`，最多六项。
 
 ```text
@@ -102,17 +102,17 @@ electrons.analytic_wall.ceramic.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic.secondary_electron_temperature_eV = 3.0
 electrons.analytic_wall.ceramic.wall_temperature = 400.0
 
-ions.analytic_wall.anode.behaviors = neutralize specular
-ions.analytic_wall.anode.p_neutralize(E_eV,u_n,u_t,x,y,z,t) = "0.5"
-ions.analytic_wall.anode.neutral_species = xe_neutral
+ions.analytic_wall.anode.behaviors = convert specular
+ions.analytic_wall.anode.p_convert(E_eV,u_n,u_t,x,y,z,t) = "0.5"
+ions.analytic_wall.anode.product_species = xe_neutral
 ions.analytic_wall.anode.wall_temperature = 400.0
-ions.analytic_wall.anode.neutral_product_charge = 0.0
+ions.analytic_wall.anode.product_charge = 0.0
 ions.analytic_wall.anode.deposit_wall_charge = 1
 ```
 
 相互作用仅在物种实际推进的步执行。`specular` 与 `diffuse` 保留入射粒子并从交点推进
-剩余子步；`neutralize` 和二次电子发射使入射粒子失效，并以相同宏粒子权重创建目标
-物种。中和产物的温度为 `wall_temperature`（K），二次电子产物的温度为
+剩余子步；`convert` 和二次电子发射使入射粒子失效，并以相同宏粒子权重创建目标
+物种。转换产物的温度为 `wall_temperature`（K），二次电子产物的温度为
 `secondary_electron_temperature_eV`。壁面获得的电荷为
 `(q_in - sum(q_out)) * weight`，以交点形函数沉积到持久 `wall_charge`。交点坐标及
 形函数权重使用 `ParticleReal`；只有写入场 FAB 时转换为 `Real`。该功能要求前述材料
@@ -120,9 +120,9 @@ Poisson 路径已启用，以分配和求解持久壁面电荷。
 
 两个可选参数控制壁面电荷沉积。`deposit_wall_charge`（默认 `1`）为 `0` 时，该物种在此
 壁面的吸收类事件不向 `wall_charge` 沉积电荷（适用于固定电势的导体壁面）。
-`neutral_product_charge` 覆盖中和产物的电荷（默认为中性物种的 `charge`）：当中性物种
+`product_charge` 覆盖转换产物的电荷（默认为产物物种的 `charge`）：当产物物种
 为了经电荷沉积获得数密度场而携带记账用非零电荷（如 `charge = 1`）时，应显式设为
- `0.0`，使中和事件的壁面沉积保持物理正确的 `(q_in - 0) * weight`。
+ `0.0`，使转换事件的壁面沉积保持物理正确的 `(q_in - 0) * weight`。
 
 ## 运行时诊断
 
@@ -169,20 +169,22 @@ my_constants.hall_diag_interval = 10
 my_constants.wall_interaction_diag = 1
 ```
 
-启用后，每步在标准输出中按入射 species 分别列出：
+启用后，每步在标准输出中按入射 species 分别列出，每个物种两行：第一行为
+物种名，第二行依次为：
 
-- `removed incident`：被移除的入射宏粒子数，括号内分别为 `absorb`、
-  `neutralize`、`secondary_electron_1` 和 `secondary_electron_2` 的事件数。
+- `removed`：被移除的入射宏粒子总数（只给总和，即 `absorb`、`convert`
+  与二次电子发射事件之和）。
 - `specular` / `diffuse`：镜面反射 / 漫反射事件数。
-- `emitted neutrals`：中性化产生的中性宏粒子数，等于 `neutralize`。
-- `emitted secondaries`：产生的二次电子宏粒子数，等于
-  `secondary_electron_1 + 2 * secondary_electron_2`。
+- `emitted products`：转换产生的产物宏粒子数，等于 `convert`。
+- `emitted secondaries`：产生的二次电子宏粒子数，等于 `SEE1 + 2 * SEE2`；
+  括号内 `SEE1`、`SEE2` 分别为 `secondary_electron_1` 和
+  `secondary_electron_2` 的事件数。
 
 计数跨 MPI ranks 和所有解析壁面求和，只由 IO rank 输出；仅统计配置了解析
 壁面策略的物种。没有事件（包括该物种本步未推进）时输出零。每步重新计数，
 不受 `hall_diag_interval` 控制，不包括计算域外边界和 EB 的交互。
 所有数值均为宏粒子事件计数，不是权重之和，也不是 species 净增减量。
-产物数归属于入射物种：例如 `xe_ions` 的 `emitted neutrals` 表示由离子撞壁
+产物数归属于入射物种：例如 `xe_ions` 的 `emitted products` 表示由离子撞壁
 产生的原子，不会记入 `xe_netural` 的入射事件。
 
 默认关闭，替代此前无条件输出的整体壁面计数。关闭时跳过事件计数的归约，
@@ -207,7 +209,7 @@ my_constants.anode_current_prefix = "anode_current"
 time    electron    ion    net_charge
 ```
 
-统计对象（只计入 absorb / neutralize / 二次电子等移除入射粒子的行为，
+统计对象（只计入 absorb / convert / 二次电子等移除入射粒子的行为，
 specular / diffuse 反射不产生净电流）：
 
 - `electron` / `ion`：窗口内被该壁面移除的电子/离子宏粒子权重之和

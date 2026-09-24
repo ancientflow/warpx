@@ -1,4 +1,5 @@
-#3d_hall 的陶瓷介质/体阳极版本：z 向下扩域 2 mm，体阳极厚 1 mm。
+#3d_hall_dielectric_volume_anode 的小孔进气版本：中性气体进气改为 48 个
+#直径 0.5mm 周向小孔，孔内按壁面 600K 工况出口径向剖面回灌采样，其余不变。
 #全局定义
 max_step = 9000000
 my_constants.dt = 3e-12
@@ -30,36 +31,36 @@ my_constants.Ty = 200
 my_constants.Tz = 140
 my_constants.vz0 = 240
 
-# 小孔几何: 孔中心所在环半径与孔半径 (孔半径取缝半宽, 与单孔 DSMC 通道一致)
+# 小孔几何: 48 个直径 0.5mm 小孔均布在 r_ring 环上 (环心由 x_offset/y_offset 给定)
 my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
-my_constants.w_slit = 0.001 / l_factor
-my_constants.hole_radius = w_slit
+my_constants.hole_radius = (0.0005 / 2) / l_factor
 my_constants.hole_count = 48
 
 # 出口剖面 poly3 拟合系数 (u = r / hole_radius ∈ [0,1], r 为孔内局部半径),
-# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 壁面 400K 工况)
+# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 壁面 600K 工况),
+# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 1
 # flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
-my_constants.jf_c0 = 1.1065e24
-my_constants.jf_c1 = -2.5115e23
-my_constants.jf_c2 = 1.4286e23
-my_constants.jf_c3 = -4.7771e23
+my_constants.jf_c0 = 8.2652e23
+my_constants.jf_c1 = -2.2830e23
+my_constants.jf_c2 = 2.9381e23
+my_constants.jf_c3 = -4.5040e23
 # T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
-my_constants.tx_c0 = 3.0396e2
-my_constants.tx_c1 = 2.3711e1
-my_constants.tx_c2 = -4.6530e1
-my_constants.tx_c3 = 8.1279e1
-my_constants.ty_c0 = 3.0243e2
-my_constants.ty_c1 = 3.4419e1
-my_constants.ty_c2 = -6.5369e1
-my_constants.ty_c3 = 9.0793e1
-my_constants.tz_c0 = 1.9873e2
-my_constants.tz_c1 = -1.5765e1
-my_constants.tz_c2 = 3.2015e1
-my_constants.tz_c3 = -2.8509e1
-my_constants.mvz_c0 = 2.6902e2
-my_constants.mvz_c1 = -3.6125e0
-my_constants.mvz_c2 = -1.0281e1
-my_constants.mvz_c3 = -1.6341e1
+my_constants.tx_c0 = 4.6232e2
+my_constants.tx_c1 = 8.8315e0
+my_constants.tx_c2 = -2.1431e0
+my_constants.tx_c3 = 6.5293e1
+my_constants.ty_c0 = 4.6121e2
+my_constants.ty_c1 = 1.6222e1
+my_constants.ty_c2 = -1.7777e1
+my_constants.ty_c3 = 7.4966e1
+my_constants.tz_c0 = 2.9017e2
+my_constants.tz_c1 = -2.6955e1
+my_constants.tz_c2 = 6.2493e1
+my_constants.tz_c3 = -5.0484e1
+my_constants.mvz_c0 = 3.1477e2
+my_constants.mvz_c1 = 2.5567e0
+my_constants.mvz_c2 = -2.3046e1
+my_constants.mvz_c3 = -4.8893e0
 
 
 #粒子参数定义
@@ -153,9 +154,9 @@ analytic_wall.ceramic_wall.normal_z = "1.0"
 # 电子：阳极环完全吸收；陶瓷的三个前置概率由用户填写，最后的
 # secondary_electron_2 自动使用剩余概率。漫反射温度暂设为 400 K。
 electrons.analytic_wall.anode_ring.behaviors = absorb
-electrons.analytic_wall.ceramic_wall.behaviors = absorb diffuse secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.ceramic_wall.behaviors = absorb specular secondary_electron_2 secondary_electron_1
 electrons.analytic_wall.ceramic_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
-electrons.analytic_wall.ceramic_wall.p_diffuse = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.ceramic_wall.p_specular = "0.5*exp(-(E_eV/30)**2)"
 electrons.analytic_wall.ceramic_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
 electrons.analytic_wall.ceramic_wall.wall_temperature = 40000
 electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
@@ -281,7 +282,9 @@ cathode_electron.velocity.vy.sigma = 592982
 cathode_electron.velocity.vz.distribution = gaussian
 cathode_electron.velocity.vz.sigma = 592982
 
-# --- Xe neutral continuous inlet (evolving external_file is kept for initial neutral) ---
+# --- Xe neutral continuous inlet: 小孔阵列 (孔分派 + 坐标偏移, 本身不实现分布);
+# 底层柱坐标分布定义孔内圆斑, r 按 P(r) ∝ r * flux(u) 采样, u = r/hole_radius
+# (parser 任意一维 CDF, 几何权重 r 显式写在表达式中); theta 均匀, z 固定在 zmin 面
 xe_neutral_inlet.species = xe_netural
 xe_neutral_inlet.rate = mass_flow
 xe_neutral_inlet.mass_flow = m_dot
@@ -292,31 +295,40 @@ xe_neutral_inlet.batch_multiplier = 100.0
 xe_neutral_inlet.x_offset = 0.025 / l_factor
 xe_neutral_inlet.y_offset = 0.025 / l_factor
 
+xe_neutral_inlet.position.coupled_distribution = hole_array_plane
+xe_neutral_inlet.hole_count = hole_count
+xe_neutral_inlet.hole_ring_radius = r_ring
 xe_neutral_inlet.position.coordinate_system = cylindrical
-xe_neutral_inlet.position.r.distribution = area_uniform
-xe_neutral_inlet.position.r.min = ((0.021 + 0.031) / 4 - 0.001) / l_factor
-xe_neutral_inlet.position.r.max = ((0.021 + 0.031) / 4 + 0.001) / l_factor
+xe_neutral_inlet.position.r.distribution = parser
+xe_neutral_inlet.position.r.min = 0.0
+xe_neutral_inlet.position.r.max = hole_radius
+xe_neutral_inlet.position.r.num_bins = 1024
+xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*(r/hole_radius) + jf_c2*(r/hole_radius)**2 + jf_c3*(r/hole_radius)**3)
 xe_neutral_inlet.position.theta.distribution = uniform
 xe_neutral_inlet.position.theta.min = 0.0
 xe_neutral_inlet.position.theta.max = 2*pi
 xe_neutral_inlet.position.z.distribution = constant
 xe_neutral_inlet.position.z.value = 0.0
 
+# 速度: 各分量参数为孔内局部半径 r 的函数 (sigma(r)/mean(r), 逐粒子求值,
+# 局部坐标原点随孔分派偏移到孔中心, 即 r 相对于孔中心);
+# 剖面坐标归一化为 u = r/hole_radius;
+# vx/vy 全高斯, vz 截断 vz > 0 的漂移高斯 (截断尾部约 1%)
 xe_neutral_inlet.velocity.coordinate_system = cartesian
 xe_neutral_inlet.velocity.vx.distribution = gaussian
-xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tx / m_xe)
+xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*(r/hole_radius) + tx_c2*(r/hole_radius)**2 + tx_c3*(r/hole_radius)**3) / m_xe)
 xe_neutral_inlet.velocity.vy.distribution = gaussian
-xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Ty / m_xe)
+xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*(r/hole_radius) + ty_c2*(r/hole_radius)**2 + ty_c3*(r/hole_radius)**3) / m_xe)
 xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
-xe_neutral_inlet.velocity.vz.mean = vz0
-xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
+xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*(r/hole_radius) + mvz_c2*(r/hole_radius)**2 + mvz_c3*(r/hole_radius)**3
+xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*(r/hole_radius) + tz_c2*(r/hole_radius)**2 + tz_c3*(r/hole_radius)**3) / m_xe)
 
 
 xe_netural.injection_sources = xeinit
 
 #初始注入
 xe_netural.xeinit.injection_style = external_file
-xe_netural.xeinit.injection_file = ../../data/hall_start_256_400K_hole.bp5
+xe_netural.xeinit.injection_file = ../../data/hall_start_256_600K_hole.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_test

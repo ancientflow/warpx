@@ -57,7 +57,7 @@ struct AnalyticWall
 
 constexpr int max_wall_behaviors = 6;
 enum class WallBehavior : int {
-    none = -1, absorb, specular, diffuse, neutralize, secondary_electron_1,
+    none = -1, absorb, specular, diffuse, convert, secondary_electron_1,
     secondary_electron_2
 };
 
@@ -67,7 +67,7 @@ ParseBehavior (std::string const& name)
     if (name == "absorb") { return WallBehavior::absorb; }
     if (name == "specular") { return WallBehavior::specular; }
     if (name == "diffuse") { return WallBehavior::diffuse; }
-    if (name == "neutralize") { return WallBehavior::neutralize; }
+    if (name == "convert") { return WallBehavior::convert; }
     if (name == "secondary_electron_1") { return WallBehavior::secondary_electron_1; }
     if (name == "secondary_electron_2") { return WallBehavior::secondary_electron_2; }
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(false, "Unknown analytic-wall behavior: " + name);
@@ -83,11 +83,11 @@ struct WallPolicy
     std::array<std::unique_ptr<amrex::Parser>, max_wall_behaviors - 1> parsers{};
     amrex::ParticleReal wall_temperature = 0.0_prt;
     amrex::ParticleReal secondary_temperature_eV = 0.0_prt;
-    std::string neutral_species;
+    std::string product_species;
     std::string secondary_species;
     bool deposit_wall_charge = true;
-    bool has_neutral_product_charge = false;
-    amrex::ParticleReal neutral_product_charge = 0.0_prt;
+    bool has_product_charge = false;
+    amrex::ParticleReal product_charge = 0.0_prt;
 };
 
 /** Trivially copyable subset captured by particle kernels.  The parsers in
@@ -209,13 +209,13 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
             pp_species.query(
                 (prefix + "deposit_wall_charge").c_str(), policy.deposit_wall_charge);
             bool need_temperature = false;
-            bool need_neutral = false;
+            bool need_product = false;
             bool need_secondary = false;
             for (int i = 0; i < policy.count; ++i) {
                 need_temperature = need_temperature ||
                     policy.behaviors[i] == WallBehavior::diffuse ||
-                    policy.behaviors[i] == WallBehavior::neutralize;
-                need_neutral = need_neutral || policy.behaviors[i] == WallBehavior::neutralize;
+                    policy.behaviors[i] == WallBehavior::convert;
+                need_product = need_product || policy.behaviors[i] == WallBehavior::convert;
                 need_secondary = need_secondary ||
                     policy.behaviors[i] == WallBehavior::secondary_electron_1 ||
                     policy.behaviors[i] == WallBehavior::secondary_electron_2;
@@ -223,13 +223,13 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
             if (need_temperature) {
                 pp_species.get((prefix + "wall_temperature").c_str(), policy.wall_temperature);
             }
-            if (need_neutral) {
-                pp_species.get((prefix + "neutral_species").c_str(), policy.neutral_species);
-                amrex::ignore_unused(mpc.GetParticleContainerFromName(policy.neutral_species));
-                policy.has_neutral_product_charge =
+            if (need_product) {
+                pp_species.get((prefix + "product_species").c_str(), policy.product_species);
+                amrex::ignore_unused(mpc.GetParticleContainerFromName(policy.product_species));
+                policy.has_product_charge =
                     utils::parser::queryWithParser(pp_species,
-                        (prefix + "neutral_product_charge").c_str(),
-                        policy.neutral_product_charge) != 0;
+                        (prefix + "product_charge").c_str(),
+                        policy.product_charge) != 0;
             }
             if (need_secondary) {
                 pp_species.get(
@@ -330,16 +330,16 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
     amrex::ParticleReal const mass = pc.getMass();
     amrex::ParticleReal const charge = pc.getCharge();
     WallPolicyView const device_policy(policy);
-    amrex::ParticleReal neutral_charge = 0.0_prt;
+    amrex::ParticleReal product_charge = 0.0_prt;
     amrex::ParticleReal secondary_charge = 0.0_prt;
-    if (!policy.neutral_species.empty()) {
-        // The product charge defaults to the neutral species' charge, but can
+    if (!policy.product_species.empty()) {
+        // The product charge defaults to the product species' charge, but can
         // be overridden: a species may carry a nonzero bookkeeping charge
-        // (e.g. 1 C so that charge deposition yields a neutral density field)
-        // while the physical neutralization product is uncharged.
-        neutral_charge = policy.has_neutral_product_charge
-            ? policy.neutral_product_charge
-            : mpc.GetParticleContainerFromName(policy.neutral_species).getCharge();
+        // (e.g. 1 C so that charge deposition yields a density field)
+        // while the physical conversion product is uncharged.
+        product_charge = policy.has_product_charge
+            ? policy.product_charge
+            : mpc.GetParticleContainerFromName(policy.product_species).getCharge();
     }
     if (!policy.secondary_species.empty()) {
         secondary_charge = mpc.GetParticleContainerFromName(policy.secondary_species).getCharge();
@@ -528,11 +528,11 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 choice[i] = static_cast<int>(device_policy.behaviors[device_policy.count-1]);
             });
 
-            if (!policy.neutral_species.empty()) {
-                auto& target = mpc.GetParticleContainerFromName(policy.neutral_species);
+            if (!policy.product_species.empty()) {
+                auto& target = mpc.GetParticleContainerFromName(policy.product_species);
                 CreateWallProducts(
                     pc, target, pti, choices, hit_x, hit_y, hit_z, hit_fraction,
-                    WallBehavior::neutralize, 1, boundary, dt,
+                    WallBehavior::convert, 1, boundary, dt,
                     Math::ThermalVelocityFromTemperature(
                         policy.wall_temperature, target.getMass()), lev);
             }
@@ -574,7 +574,7 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                     // Reuse the hit point computed by the selection kernel.
                     AnalyticBoundaryPosition const hit{hx[i], hy[i], hz[i]};
                     amrex::ParticleReal out_charge = 0.0_prt;
-                    if (selected == WallBehavior::neutralize) { out_charge = neutral_charge; }
+                    if (selected == WallBehavior::convert) { out_charge = product_charge; }
                     else if (selected == WallBehavior::secondary_electron_1) {
                         out_charge = secondary_charge;
                     } else if (selected == WallBehavior::secondary_electron_2) {
@@ -625,7 +625,7 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                     if (selected == WallBehavior::none || selected == WallBehavior::specular ||
                         selected == WallBehavior::diffuse) { return; }
                     amrex::ParticleReal out_charge = 0.0_prt;
-                    if (selected == WallBehavior::neutralize) { out_charge = neutral_charge; }
+                    if (selected == WallBehavior::convert) { out_charge = product_charge; }
                     else if (selected == WallBehavior::secondary_electron_1) {
                         out_charge = secondary_charge;
                     } else if (selected == WallBehavior::secondary_electron_2) {
@@ -740,22 +740,18 @@ AnalyticBoundaryInteraction ()
         amrex::Long const n_absorb = counts[static_cast<int>(WallBehavior::absorb)];
         amrex::Long const n_specular = counts[static_cast<int>(WallBehavior::specular)];
         amrex::Long const n_diffuse = counts[static_cast<int>(WallBehavior::diffuse)];
-        amrex::Long const n_neutralize = counts[static_cast<int>(WallBehavior::neutralize)];
-        amrex::Long const n_secondary_1 =
-            counts[static_cast<int>(WallBehavior::secondary_electron_1)];
-        amrex::Long const n_secondary_2 =
-            counts[static_cast<int>(WallBehavior::secondary_electron_2)];
-        amrex::Long const n_removed = n_absorb + n_neutralize + n_secondary_1 + n_secondary_2;
-        amrex::Long const n_emitted = n_secondary_1 + 2*n_secondary_2;
+        amrex::Long const n_convert = counts[static_cast<int>(WallBehavior::convert)];
+        amrex::Long const n_see1 = counts[static_cast<int>(WallBehavior::secondary_electron_1)];
+        amrex::Long const n_see2 = counts[static_cast<int>(WallBehavior::secondary_electron_2)];
+        amrex::Long const n_removed = n_absorb + n_convert + n_see1 + n_see2;
+        amrex::Long const n_emitted = n_see1 + 2*n_see2;
         amrex::Print() << "  species: " << species_name << '\n'
-            << "    removed incident:    " << n_removed
-            << " (absorb " << n_absorb << ", neutralize " << n_neutralize
-            << ", secondary_electron_1 " << n_secondary_1
-            << ", secondary_electron_2 " << n_secondary_2 << ")\n"
-            << "    specular:            " << n_specular << '\n'
-            << "    diffuse:             " << n_diffuse << '\n'
-            << "    emitted neutrals:    " << n_neutralize << '\n'
-            << "    emitted secondaries: " << n_emitted << '\n';
+            << "    removed: " << n_removed
+            << ", specular: " << n_specular
+            << ", diffuse: " << n_diffuse
+            << ", emitted products: " << n_convert
+            << ", emitted secondaries: " << n_emitted
+            << " (SEE1 " << n_see1 << ", SEE2 " << n_see2 << ")\n";
     }
 #endif
 }
