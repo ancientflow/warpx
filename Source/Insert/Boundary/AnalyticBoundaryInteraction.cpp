@@ -323,7 +323,7 @@ template <typename Boundary>
 void
 ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary const& boundary,
                  amrex::Real const time, amrex::Real const dt, WallChargeGrid const& grid,
-                 amrex::MultiFab& wall_charge, MultiParticleContainer& mpc,
+                 amrex::MultiFab* wall_charge, MultiParticleContainer& mpc,
                  amrex::Long* const counts,
                  amrex::Real* const anode_stats, int const wall_id)
 {
@@ -560,10 +560,15 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
             auto* const AMREX_RESTRICT updated_uz = updated_soa.GetRealData(PIdx::uz).data();
             auto* const AMREX_RESTRICT updated_weight = updated_soa.GetRealData(PIdx::w).data();
             if (policy.deposit_wall_charge) {
+                // wall_charge is only fetched from HallWallCharge when at
+                // least one active policy deposits; it must be valid here.
+                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(wall_charge != nullptr,
+                    "deposit_wall_charge requires the material Poisson path to "
+                    "initialize wall_charge.");
                 // Deposition scatters several particles onto shared nodes.
                 // amrex::For is required here; HostDevice atomics alone do not
                 // make ParallelFor safe on CPU.
-                auto const charge_grid = wall_charge.array(pti);
+                auto const charge_grid = wall_charge->array(pti);
                 // Charge deposition is a scatter operation.  Keep it in
                 // amrex::For: ParallelFor promises independent iterations even
                 // when atomics are used.
@@ -682,10 +687,26 @@ AnalyticBoundaryInteraction ()
         return;
     }
 
-    HallWallCharge& persistent_wall_charge = HallWallCharge::GetInstance();
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        persistent_wall_charge.isDefined(),
-        "Analytic absorbing walls require the material Poisson path to initialize wall_charge.");
+    // The persistent wall-charge field is only needed when at least one
+    // active policy deposits charge on a wall. Pure neutral-gas cases with
+    // deposit_wall_charge = 0 never touch it, so they do not require the
+    // material Poisson path that initializes it.
+    bool need_wall_charge = false;
+    for (auto const& [species_name, policies] : config.policies) {
+        for (WallPolicy const& policy : policies) {
+            need_wall_charge =
+                need_wall_charge || (policy.active && policy.deposit_wall_charge);
+        }
+    }
+    amrex::MultiFab* wall_charge = nullptr;
+    if (need_wall_charge) {
+        HallWallCharge& persistent_wall_charge = HallWallCharge::GetInstance();
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            persistent_wall_charge.isDefined(),
+            "Analytic walls with deposit_wall_charge require the material "
+            "Poisson path to initialize wall_charge.");
+        wall_charge = &persistent_wall_charge.get(0);
+    }
     WallChargeGrid const grid = MakeWallChargeGrid(warpx_instance.Geom(0));
 
     AnodeCurrentDiagState& anode_diag =
@@ -724,7 +745,7 @@ AnalyticBoundaryInteraction ()
                 warpx_instance.getdt(0) * ParticleSubcyclingNdt(species_name);
             ApplyWallPolicy(pc, policy, config.walls[wall_id].geometry->GetDeviceView(),
                 warpx_instance.gett_new(0), dt_effective, grid,
-                persistent_wall_charge.get(0), mpc,
+                wall_charge, mpc,
                 wall_interaction_diag ? species_counts.at(species_name).data() : nullptr,
                 anode_stats, wall_id);
         }

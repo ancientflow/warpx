@@ -1,0 +1,173 @@
+# 3d_hall_init 的副本: 入口改为小孔阵列注入, 孔内按"出口径向剖面回灌"采样
+#
+# hole_count 个小孔均布在 r_ring 环上 (环心由 x_offset/y_offset 给定),
+# 孔阵列层只做孔分派与坐标偏移 (position.coupled_distribution = hole_array_plane),
+# 孔内分布由底层 position.* 给出: 将单孔通道出口拟合剖面 (poly3, 来自
+# 3d_xe_dsmc 正式运行 zmax_radial 统计,
+# 由 Source/Insert/tool/ZmaxRadialExitAnalyzer 生成) 按归一化坐标
+#   u = r / hole_radius ∈ [0,1]   (r 为孔内局部半径)
+# 铺到孔内圆斑上:
+#   位置: P(r) ∝ r * flux(u)   (几何权重 r 显式写在表达式中,
+#         parser 采样器内部自行归一化, 表达式无需显式归一化)
+#   速度: T_x/T_y/T_z(u), mean_vz(u) 代入各轴 sigma(r)/mean(r), r 为孔内半径
+# 换用其他剖面时替换下方拟合系数即可; 孔径变化不影响归一化映射。
+
+#全局定义
+max_step = 10000
+my_constants.dt = 5.6e-10
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-06
+warpx.sort_intervals = 50
+amrex.the_arena_init_size = 1024*1024*1024*8
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+
+#工况定义
+my_constants.m_dot = 0.6e-6
+my_constants.ifhole = 0
+
+# 小孔几何: 48 个直径 0.5mm 小孔均布在 r_ring 环上 (环心由 x_offset/y_offset 给定)
+my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
+my_constants.hole_radius = (0.0005 / 2) / l_factor
+my_constants.hole_count = 48
+
+# 出口剖面 poly3 拟合系数 (u = r / hole_radius ∈ [0,1], r 为孔内局部半径),
+# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 壁面 600K 工况),
+# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 1
+# flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
+my_constants.jf_c0 = 8.2652e23
+my_constants.jf_c1 = -2.2830e23
+my_constants.jf_c2 = 2.9381e23
+my_constants.jf_c3 = -4.5040e23
+# T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
+my_constants.tx_c0 = 4.6232e2
+my_constants.tx_c1 = 8.8315e0
+my_constants.tx_c2 = -2.1431e0
+my_constants.tx_c3 = 6.5293e1
+my_constants.ty_c0 = 4.6121e2
+my_constants.ty_c1 = 1.6222e1
+my_constants.ty_c2 = -1.7777e1
+my_constants.ty_c3 = 7.4966e1
+my_constants.tz_c0 = 2.9017e2
+my_constants.tz_c1 = -2.6955e1
+my_constants.tz_c2 = 6.2493e1
+my_constants.tz_c3 = -5.0484e1
+my_constants.mvz_c0 = 3.1477e2
+my_constants.mvz_c1 = 2.5567e0
+my_constants.mvz_c2 = -2.3046e1
+my_constants.mvz_c3 = -4.8893e0
+
+#粒子参数定义
+my_constants.rho_init = 2.5e18
+my_constants.w_factor = 2
+my_constants.weight_ratio = 1
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 0
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+warpx.poisson_solver = multigrid
+
+#几何
+
+my_constants.n_cell = 256
+
+amr.n_cell = n_cell n_cell n_cell
+amr.blocking_factor = n_cell
+amr.max_grid_size = n_cell
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo =  pec pec pec
+boundary.field_hi =  pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = xe_netural
+
+xe_netural.mass = m_xe
+xe_netural.charge = 1
+xe_netural.do_not_gather = 1
+xe_netural.do_not_deposit = 1
+xe_netural.ndt = 1
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# This file generates an initial neutral distribution via continuous injection.
+# ==========================================
+#insert.initial_sources =
+insert.continuous_sources = xe_neutral_inlet
+
+xe_neutral_inlet.species = xe_netural
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1.0
+xe_neutral_inlet.x_offset = 0.025 / l_factor
+xe_neutral_inlet.y_offset = 0.025 / l_factor
+
+# 位置: 小孔阵列 (孔分派 + 坐标偏移, 本身不实现分布); 底层柱坐标分布
+# 定义孔内圆斑, r 按 P(r) ∝ r * flux(u) 采样, u = r/hole_radius
+# (parser 任意一维 CDF, 几何权重 r 显式写在表达式中);
+# theta 均匀, z 固定在 zmin 面
+xe_neutral_inlet.position.coupled_distribution = hole_array_plane
+xe_neutral_inlet.hole_count = hole_count
+xe_neutral_inlet.hole_ring_radius = r_ring
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = parser
+xe_neutral_inlet.position.r.min = 0.0
+xe_neutral_inlet.position.r.max = hole_radius
+xe_neutral_inlet.position.r.num_bins = 1024
+xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*(r/hole_radius) + jf_c2*(r/hole_radius)**2 + jf_c3*(r/hole_radius)**3)
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = 0.0
+
+# 速度: 各分量参数为孔内局部半径 r 的函数 (sigma(r)/mean(r), 逐粒子求值,
+# 局部坐标原点随孔分派偏移到孔中心, 即 r 相对于孔中心);
+# 剖面坐标归一化为 u = r/hole_radius;
+# vx/vy 全高斯, vz 截断 vz > 0 的漂移高斯 (截断尾部约 1%)
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*(r/hole_radius) + tx_c2*(r/hole_radius)**2 + tx_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*(r/hole_radius) + ty_c2*(r/hole_radius)**2 + ty_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*(r/hole_radius) + mvz_c2*(r/hole_radius)**2 + mvz_c3*(r/hole_radius)**3
+xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*(r/hole_radius) + tz_c2*(r/hole_radius)**2 + tz_c3*(r/hole_radius)**3) / m_xe)
+
+
+#碰撞定义
+FILE = ../../Script/3d_hall_xecoll
+
+#输出定义
+FILE = ../../Script/init_diag

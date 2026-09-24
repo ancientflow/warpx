@@ -1,24 +1,18 @@
 #include "InsertBoundaryPhi.h"
 
+#include "Fields.H"
+#include "Insert/Config/WarpXFunctionConfig.h"
 #include "WarpX.H"
 
-#include "Fields.H"
-#include "Insert/Boundary/ZMinWallCharge.h"
-#include "Insert/Config/WarpXFunctionConfig.h"
-#include "Insert/Config/WarpXSimulationConfig.h"
-#include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
-#include "Insert/Fields/SpectralBoundarySchur.h"
-#include "Insert/Utils/InsertUtils.h"
-#include "Utils/WarpXConst.H"
-
 #include <AMReX_Array4.H>
-#include <AMReX_BLassert.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
+#include <AMReX_Reduce.H>
+#include <AMReX_Tuple.H>
 
 #include <cmath>
 #include <iostream>
