@@ -253,12 +253,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 #endif
     }
+    // Keep extrapolation history on the uncorrected Poisson potential.
+    updatePhiExtrapolationHistory(phi_fp);
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     Insert::VoltageAdjustment();
 #endif
 
-    // Keep extrapolation history on the uncorrected Poisson potential.
-    updatePhiExtrapolationHistory(phi_fp);
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
     if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }
