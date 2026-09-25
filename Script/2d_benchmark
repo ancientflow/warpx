@@ -73,13 +73,17 @@ electrons.profile = constant
 electrons.density = 5e16
 electrons.momentum_distribution_type = maxwellian
 electrons.ux_std = sqrt(kb*10*11605/m_e/clight^2)
+electrons.uy_std = sqrt(kb*10*11605/m_e/clight^2)
+electrons.uz_std = sqrt(kb*10*11605/m_e/clight^2)
 
 xe_ions.injection_style = NRandomPerCell
 xe_ions.num_particles_per_cell = 75
 xe_ions.profile = constant
 xe_ions.density = 5e16
 xe_ions.momentum_distribution_type = maxwellian
-xe_ions.ux_std = sqrt(kb*2*11605/m_xe/clight^2)
+xe_ions.ux_std = sqrt(kb*0.5*11605/m_xe/clight^2)
+xe_ions.uy_std = sqrt(kb*0.5*11605/m_xe/clight^2)
+xe_ions.uz_std = sqrt(kb*0.5*11605/m_xe/clight^2)
 
 
 #电场 磁场定义
