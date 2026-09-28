@@ -1,11 +1,12 @@
 #ifndef WARPX_INSERT_ANALYTICBOUNDARYGEOMETRY_H_
 #define WARPX_INSERT_ANALYTICBOUNDARYGEOMETRY_H_
 
+#include "Insert/Math/ParticleVector.h"
+
 #include <AMReX_Extension.H>
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_Parser.H>
 #include <AMReX_REAL.H>
-#include <AMReX_Dim3.H>
 
 #include <memory>
 #include <string>
@@ -13,12 +14,7 @@
 namespace Insert {
 
 /** Particle position kept in particle precision, independently of field precision. */
-struct AnalyticBoundaryPosition
-{
-    amrex::ParticleReal x;
-    amrex::ParticleReal y;
-    amrex::ParticleReal z;
-};
+using AnalyticBoundaryPosition = ParticleVector;
 
 /** \brief Geometry operator for an analytic particle boundary.
  *

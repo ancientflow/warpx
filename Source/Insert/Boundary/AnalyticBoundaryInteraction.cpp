@@ -3,6 +3,8 @@
 #include "Fields.H"
 #include "Insert/Boundary/AnalyticBoundaryGeometry.h"
 #include "Insert/Boundary/BoundaryMathUtils.h"
+#include "Insert/Boundary/MaterialInteraction.h"
+#include "Insert/Boundary/WallBehavior.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/HallWallCharge.H"
 #include "Insert/Math/ThermalVelocity.h"
@@ -35,8 +37,10 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -55,12 +59,6 @@ struct AnalyticWall
     std::unique_ptr<AnalyticBoundaryGeometry> geometry;
 };
 
-constexpr int max_wall_behaviors = 6;
-enum class WallBehavior : int {
-    none = -1, absorb, specular, diffuse, convert, secondary_electron_1,
-    secondary_electron_2
-};
-
 [[nodiscard]] WallBehavior
 ParseBehavior (std::string const& name)
 {
@@ -77,6 +75,7 @@ ParseBehavior (std::string const& name)
 struct WallPolicy
 {
     bool active = false;
+    std::optional<MaterialInteraction> material;
     int count = 0;
     std::array<WallBehavior, max_wall_behaviors> behaviors{};
     std::array<amrex::ParserExecutor<7>, max_wall_behaviors - 1> probabilities{};
@@ -94,6 +93,7 @@ struct WallPolicy
  * WallPolicy own the expression storage for these executors. */
 struct WallPolicyView
 {
+    MaterialInteractionDevice material;
     int count = 0;
     std::array<WallBehavior, max_wall_behaviors> behaviors{};
     std::array<amrex::ParserExecutor<7>, max_wall_behaviors - 1> probabilities{};
@@ -101,8 +101,46 @@ struct WallPolicyView
 
     explicit WallPolicyView (WallPolicy const& policy)
         : count(policy.count), behaviors(policy.behaviors), probabilities(policy.probabilities),
-          wall_temperature(policy.wall_temperature) {}
+          wall_temperature(policy.wall_temperature)
+    {
+        if (policy.material) {
+            material = std::visit([](auto const& model) {
+                return MaterialInteractionDevice(model);
+            }, *policy.material);
+        }
+    }
 };
+
+/** Generic policy selection is independent of geometry intersection and materials. */
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+WallBehavior
+SelectGenericWallBehavior (
+    WallPolicyView const& device_policy, AnalyticBoundaryPosition const& x_hit,
+    AnalyticBoundaryPosition const& normal, amrex::ParticleReal const ux_hit,
+    amrex::ParticleReal const uy_hit, amrex::ParticleReal const uz_hit,
+    amrex::ParticleReal const mass, amrex::Real const time,
+    amrex::RandomEngine const& engine) noexcept
+{
+    amrex::ParticleReal const n2 =
+        normal.x*normal.x + normal.y*normal.y + normal.z*normal.z;
+    amrex::ParticleReal const inv_n =
+        n2 > 0.0_prt ? 1.0_prt/std::sqrt(n2) : 0.0_prt;
+    amrex::ParticleReal const un =
+        (ux_hit*normal.x + uy_hit*normal.y + uz_hit*normal.z)*inv_n;
+    amrex::ParticleReal const u2 = ux_hit*ux_hit + uy_hit*uy_hit + uz_hit*uz_hit;
+    amrex::ParticleReal const ut = std::sqrt(amrex::max(u2-un*un, 0.0_prt));
+    amrex::ParticleReal const e_ev = mass*u2/(2.0_prt*PhysConst::q_e);
+    amrex::ParticleReal p = 0.0_prt;
+    amrex::ParticleReal const random = amrex::Random(engine);
+    for (int j = 0; j + 1 < device_policy.count; ++j) {
+        p += static_cast<amrex::ParticleReal>(device_policy.probabilities[j](
+            e_ev, un, ut, x_hit.x, x_hit.y, x_hit.z, time));
+        if (random < p) {
+            return device_policy.behaviors[j];
+        }
+    }
+    return device_policy.behaviors[device_policy.count-1];
+}
 
 struct AnalyticWallConfiguration
 {
@@ -181,19 +219,54 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
         bool has_policy = false;
         amrex::ParmParse const pp_species(species_name);
         for (int wall_id = 0; wall_id < static_cast<int>(result.walls.size()); ++wall_id) {
+            WallPolicy& policy = policies[wall_id];
+            std::string const prefix = "analytic_wall." + result.walls[wall_id].name + ".";
+            std::string material_name;
+            if (pp_species.query((prefix + "material").c_str(), material_name)) {
+                // An explicit material owns this species/wall interaction.
+                // Do not parse behaviors or their probabilities on this path.
+                if (material_name != "ceramic") {
+                    amrex::Abort("Unknown analytic-wall material: " + material_name);
+                }
+                policy.secondary_species = species_name;
+                pp_species.query((prefix + "secondary_electron_species").c_str(),
+                    policy.secondary_species);
+                policy.secondary_temperature_eV = 3.0_prt;
+                utils::parser::queryWithParser(pp_species,
+                    (prefix + "secondary_electron_temperature_eV").c_str(),
+                    policy.secondary_temperature_eV);
+                pp_species.query((prefix + "deposit_wall_charge").c_str(),
+                    policy.deposit_wall_charge);
+                auto const& source = mpc.GetParticleContainerFromName(species_name);
+                auto const& target = mpc.GetParticleContainerFromName(policy.secondary_species);
+                auto const electron_mass = static_cast<amrex::ParticleReal>(PhysConst::m_e);
+                auto const electron_charge = static_cast<amrex::ParticleReal>(-PhysConst::q_e);
+                if (source.getMass() != electron_mass || target.getMass() != electron_mass ||
+                    source.getCharge() != electron_charge ||
+                    target.getCharge() != electron_charge) {
+                    amrex::Abort("The ceramic material requires physical-electron source "
+                                 "and secondary species: " + species_name + "." + prefix);
+                }
+                if (!std::isfinite(policy.secondary_temperature_eV) ||
+                    policy.secondary_temperature_eV <= 0.0_prt) {
+                    amrex::Abort("The ceramic secondary temperature must be finite and positive.");
+                }
+                policy.material.emplace(CeramicInteraction(policy.secondary_temperature_eV));
+                policy.active = true;
+                has_policy = true;
+                continue;
+            }
+
             std::vector<std::string> behaviors;
-            std::string const parameter =
-                "analytic_wall." + result.walls[wall_id].name + ".behaviors";
+            std::string const parameter = prefix + "behaviors";
             if (!pp_species.queryarr(parameter.c_str(), behaviors)) {
                 continue;
             }
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
                 !behaviors.empty() && behaviors.size() <= max_wall_behaviors,
                 species_name + "." + parameter + " must contain one to six behaviors.");
-            WallPolicy& policy = policies[wall_id];
             policy.active = true;
             policy.count = static_cast<int>(behaviors.size());
-            std::string const prefix = "analytic_wall." + result.walls[wall_id].name + ".";
             for (int i = 0; i < policy.count; ++i) {
                 policy.behaviors[i] = ParseBehavior(behaviors[i]);
                 if (i + 1 < policy.count) {
@@ -254,29 +327,284 @@ GetAnalyticWallConfiguration (MultiParticleContainer const& mpc)
     return config;
 }
 
+/** Shared preprocessing data, allocated only for the compact outside list.
+ * Particle indices remain separate so no source pointer survives a tile resize.
+ * Positions/velocities/normals use particle precision; remaining_time is in s.
+ */
+struct WallImpact
+{
+    AnalyticBoundaryPosition position;
+    AnalyticBoundaryPosition velocity;
+    AnalyticBoundaryPosition normal;
+    amrex::Real remaining_time;
+};
+
+/** Only event selection and outgoing velocity sampling depend on the model. */
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+WallBehavior
+SelectWallBehavior (WallPolicyView const& policy, WallImpact const& impact,
+                    amrex::ParticleReal const mass, amrex::Real const time,
+                    amrex::RandomEngine const& engine) noexcept
+{
+    auto const& u = impact.velocity;
+    if (policy.material.IsActive()) {
+        return policy.material.SelectEvent(u, engine);
+    }
+    return SelectGenericWallBehavior(policy, impact.position, impact.normal,
+        u.x, u.y, u.z, mass, time, engine);
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::GpuArray<ParticleVector, max_wall_emissions>
+SampleWallEmission (WallPolicyView const& policy, WallBehavior const event,
+                    WallImpact const& impact, amrex::ParticleReal const thermal_velocity,
+                    amrex::RandomEngine const& engine) noexcept
+{
+    auto const& n = impact.normal;
+    ParticleVector const& normal = n;
+    if (policy.material.IsActive()) {
+        auto const& u = impact.velocity;
+        return policy.material.SampleEmission(event, u,
+            normal, engine);
+    }
+    // Preserve the generic model's existing joint distribution: SEE2 shares one
+    // thermal draw. Material models sample the complete event themselves above.
+    ParticleVector const velocity =
+        BoundaryMath::DiffuseVelocity(normal, thermal_velocity, engine);
+    amrex::GpuArray<ParticleVector, max_wall_emissions> velocities{};
+    for (int j = 0; j < WallEmissionCount(event); ++j) {
+        velocities[j] = velocity;
+    }
+    return velocities;
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+ParticleVector
+SampleWallReflection (WallPolicyView const& policy, WallBehavior const event,
+                      WallImpact const& impact, ParticleVector const& stored_velocity,
+                      amrex::ParticleReal const mass,
+                      amrex::RandomEngine const& engine) noexcept
+{
+    auto const& n = impact.normal;
+    ParticleVector const& normal = n;
+    if (policy.material.IsActive()) {
+        auto const& u = impact.velocity;
+        return policy.material.SampleReflection(u, normal);
+    }
+    // The generic specular model retains its original use of stored velocity;
+    // ceramic reflection uses the corrected impact velocity, as before.
+    if (event == WallBehavior::specular) {
+        return BoundaryMath::ReflectVelocity(normal, stored_velocity, engine);
+    }
+    return BoundaryMath::DiffuseVelocity(normal,
+        Math::ThermalVelocityFromTemperature(policy.wall_temperature, mass), engine);
+}
+
+/** Two lightweight scans without an N-particle flag or prefix-offset array.
+ * Only valid particles outside this particular wall are collected. The atomic
+ * append does not promise index order; each source index occurs exactly once.
+ */
+template <typename ParticleTileData, typename Boundary>
+amrex::Gpu::DeviceVector<int>
+CollectOutsideParticleIndices (ParticleTileData const& particles, int const np,
+                               Boundary const& boundary)
+{
+    auto const is_outside = [=] AMREX_GPU_DEVICE (int const i) noexcept -> int {
+        auto const pid = amrex::ParticleIDWrapper{particles.m_idcpu[i]};
+        if (!pid.is_valid()) { return 0; }
+        AnalyticBoundaryPosition const position{
+            particles.m_rdata[PIdx::x][i], particles.m_rdata[PIdx::y][i],
+            particles.m_rdata[PIdx::z][i]};
+        return BoundaryMath::IsOutsideDomain(boundary, position) ? 1 : 0;
+    };
+    int const count = amrex::Reduce::Sum<int>(np, is_outside);
+    amrex::Gpu::DeviceVector<int> indices(count);
+    if (count == 0) { return indices; }
+    amrex::Gpu::DeviceVector<int> cursor(1, 0);
+    auto* const next = cursor.dataPtr();
+    auto* const output = indices.dataPtr();
+    // Atomic append is a scatter: For avoids a CPU SIMD independence promise.
+    amrex::For(np, [=] AMREX_GPU_DEVICE (int const i) noexcept {
+        if (is_outside(i)) {
+            int const slot = amrex::HostDevice::Atomic::FetchAdd(next, 1);
+            output[slot] = i;
+        }
+    });
+    amrex::Gpu::streamSynchronize(); // cursor must outlive the append kernel
+    return indices;
+}
+
+/** Compute collision state once, before either model mutates particle storage. */
 template <typename Boundary>
+amrex::Gpu::DeviceVector<WallImpact>
+PreprocessWallImpacts (WarpXParticleContainer& pc, WarpXParIter const& pti,
+                      Boundary const& boundary, amrex::Gpu::DeviceVector<int> const& indices,
+                      amrex::Real const dt)
+{
+    int const lev = pti.GetLevel();
+    int const nhits = static_cast<int>(indices.size());
+    auto* const source_index = indices.dataPtr();
+    auto const input = pc.ParticlesAt(lev, pti).getParticleTileData();
+    amrex::ParticleReal const mass = pc.getMass();
+    amrex::ParticleReal const charge = pc.getCharge();
+    using ablastr::fields::Direction;
+    using warpx::fields::FieldType;
+    WarpX& warpx = WarpX::GetInstance();
+    amrex::ParticleReal const q_over_m = mass != 0.0_prt ? charge/mass : 0.0_prt;
+    // Incident-velocity correction: re-gather, at the back-traced
+    // step-start position, the same fields that drove this step's
+    // momentum push.
+    bool const correct_impact_velocity =
+        mass > 0.0_prt &&
+        warpx.m_fields.has(FieldType::Efield_aux, Direction{0}, lev) &&
+        warpx.m_fields.has(FieldType::Bfield_aux, Direction{0}, lev);
+    amrex::XDim3 const dinv = WarpX::InvCellSize(std::max(lev, 0));
+    int const nox = WarpX::nox;
+    int const n_rz_azimuthal_modes = WarpX::n_rz_azimuthal_modes;
+    bool const galerkin_interpolation = WarpX::galerkin_interpolation;
+    amrex::GpuArray<amrex::Real, 3> const prob_lo = warpx.Geom(lev).ProbLoArray();
+    amrex::GpuArray<amrex::Real, 3> const prob_hi = warpx.Geom(lev).ProbHiArray();
+    amrex::Gpu::DeviceVector<WallImpact> impacts(nhits);
+    auto* const hit = impacts.dataPtr();
+    amrex::Array4<amrex::Real const> ex_arr{};
+    amrex::Array4<amrex::Real const> ey_arr{};
+    amrex::Array4<amrex::Real const> ez_arr{};
+    amrex::Array4<amrex::Real const> bx_arr{};
+    amrex::Array4<amrex::Real const> by_arr{};
+    amrex::Array4<amrex::Real const> bz_arr{};
+    amrex::IndexType ex_type, ey_type, ez_type, bx_type, by_type, bz_type;
+    amrex::XDim3 xyzmin{0.0, 0.0, 0.0};
+    amrex::Dim3 lo{0, 0, 0};
+    GetExternalEBField const getExternalEB(pti);
+    if (correct_impact_velocity) {
+        amrex::MultiFab const& Ex =
+            *warpx.m_fields.get(FieldType::Efield_aux, Direction{0}, lev);
+        amrex::MultiFab const& Ey =
+            *warpx.m_fields.get(FieldType::Efield_aux, Direction{1}, lev);
+        amrex::MultiFab const& Ez =
+            *warpx.m_fields.get(FieldType::Efield_aux, Direction{2}, lev);
+        amrex::MultiFab const& Bx =
+            *warpx.m_fields.get(FieldType::Bfield_aux, Direction{0}, lev);
+        amrex::MultiFab const& By =
+            *warpx.m_fields.get(FieldType::Bfield_aux, Direction{1}, lev);
+        amrex::MultiFab const& Bz =
+            *warpx.m_fields.get(FieldType::Bfield_aux, Direction{2}, lev);
+        amrex::Box const box = pti.tilebox();
+        xyzmin = WarpX::LowerCorner(box, lev, 0.0_rt);
+        lo = amrex::lbound(box);
+        amrex::FArrayBox const& exfab = Ex[pti];
+        amrex::FArrayBox const& eyfab = Ey[pti];
+        amrex::FArrayBox const& ezfab = Ez[pti];
+        amrex::FArrayBox const& bxfab = Bx[pti];
+        amrex::FArrayBox const& byfab = By[pti];
+        amrex::FArrayBox const& bzfab = Bz[pti];
+        ex_arr = exfab.array();
+        ey_arr = eyfab.array();
+        ez_arr = ezfab.array();
+        bx_arr = bxfab.array();
+        by_arr = byfab.array();
+        bz_arr = bzfab.array();
+        ex_type = exfab.box().ixType();
+        ey_type = eyfab.box().ixType();
+        ez_type = ezfab.box().ixType();
+        bx_type = bxfab.box().ixType();
+        by_type = byfab.box().ixType();
+        bz_type = bzfab.box().ixType();
+    }
+    auto* const ux = input.m_rdata[PIdx::ux];
+    auto* const uy = input.m_rdata[PIdx::uy];
+    auto* const uz = input.m_rdata[PIdx::uz];
+    // Shared, read-only preprocessing; all writes are to event k.
+    amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
+        int const i = source_index[k];
+        AnalyticBoundaryPosition const x_end{
+            input.m_rdata[PIdx::x][i], input.m_rdata[PIdx::y][i],
+            input.m_rdata[PIdx::z][i]};
+        AnalyticBoundaryPosition x_hit;
+        amrex::Real dt_fraction_hit;
+        BoundaryMath::BisectBoundaryIntersection(
+            boundary, x_end, ux[i], uy[i], uz[i], dt, x_hit, dt_fraction_hit);
+        // Incident velocity at the hit time. The stored velocity is
+        // defined at mid-step (t^n + dt/2); this step's momentum push
+        // was driven by the fields gathered at the step-start
+        // position, so back-trace the straight-line trajectory to x^n
+        // and re-gather the same fields there.
+        amrex::ParticleReal ux_hit = ux[i];
+        amrex::ParticleReal uy_hit = uy[i];
+        amrex::ParticleReal uz_hit = uz[i];
+        if (correct_impact_velocity) {
+            // Time from step start to the hit: dt_fraction_hit spans
+            // hit -> end, so start -> hit is (1 - dt_fraction_hit)*dt.
+            amrex::ParticleReal const dt_hit = static_cast<amrex::ParticleReal>(
+                (1.0 - dt_fraction_hit)*dt);
+            amrex::ParticleReal const xs = x_hit.x - ux[i]*dt_hit;
+            amrex::ParticleReal const ys = x_hit.y - uy[i]*dt_hit;
+            amrex::ParticleReal const zs = x_hit.z - uz[i]*dt_hit;
+            bool const start_inside =
+                xs >= static_cast<amrex::ParticleReal>(prob_lo[0]) &&
+                xs <= static_cast<amrex::ParticleReal>(prob_hi[0]) &&
+                ys >= static_cast<amrex::ParticleReal>(prob_lo[1]) &&
+                ys <= static_cast<amrex::ParticleReal>(prob_hi[1]) &&
+                zs >= static_cast<amrex::ParticleReal>(prob_lo[2]) &&
+                zs <= static_cast<amrex::ParticleReal>(prob_hi[2]);
+            if (start_inside) {
+                amrex::ParticleReal Exp = 0.0_prt;
+                amrex::ParticleReal Eyp = 0.0_prt;
+                amrex::ParticleReal Ezp = 0.0_prt;
+                amrex::ParticleReal Bxp = 0.0_prt;
+                amrex::ParticleReal Byp = 0.0_prt;
+                amrex::ParticleReal Bzp = 0.0_prt;
+                doGatherShapeN(xs, ys, zs, Exp, Eyp, Ezp, Bxp, Byp, Bzp,
+                    ex_arr, ey_arr, ez_arr, bx_arr, by_arr, bz_arr,
+                    ex_type, ey_type, ez_type, bx_type, by_type, bz_type,
+                    dinv, xyzmin, lo, n_rz_azimuthal_modes, nox,
+                    galerkin_interpolation);
+                getExternalEB(i, Exp, Eyp, Ezp, Bxp, Byp, Bzp);
+                // Non-relativistic Lorentz acceleration, matching the
+                // non-relativistic trajectory model of BoundaryMath.
+                amrex::ParticleReal const ax =
+                    q_over_m*(Exp + uy[i]*Bzp - uz[i]*Byp);
+                amrex::ParticleReal const ay =
+                    q_over_m*(Eyp + uz[i]*Bxp - ux[i]*Bzp);
+                amrex::ParticleReal const az =
+                    q_over_m*(Ezp + ux[i]*Byp - uy[i]*Bxp);
+                // t_hit - t_midstep = ((1 - dt_fraction_hit) - 0.5) * dt
+                amrex::ParticleReal const dt_from_mid =
+                    static_cast<amrex::ParticleReal>(
+                        (0.5 - dt_fraction_hit)*dt);
+                ux_hit += ax*dt_from_mid;
+                uy_hit += ay*dt_from_mid;
+                uz_hit += az*dt_from_mid;
+            }
+        }
+        hit[k] = WallImpact{x_hit, {ux_hit, uy_hit, uz_hit},
+            boundary.Normal(x_hit), dt_fraction_hit * dt};
+    });
+    // Preprocessing reads the old source storage. Finish before product allocation
+    // can resize that storage; cached impacts and indices remain valid.
+    amrex::Gpu::streamSynchronize();
+
+    return impacts;
+}
+
 void
 CreateWallProducts (WarpXParticleContainer& source, WarpXParticleContainer& destination,
-                    WarpXParIter const& pti, amrex::Gpu::DeviceVector<int> const& choices,
-                    amrex::Gpu::DeviceVector<amrex::ParticleReal> const& hit_x,
-                    amrex::Gpu::DeviceVector<amrex::ParticleReal> const& hit_y,
-                    amrex::Gpu::DeviceVector<amrex::ParticleReal> const& hit_z,
-                    amrex::Gpu::DeviceVector<amrex::Real> const& hit_fraction,
-                    WallBehavior const requested, int const multiplicity, Boundary const& boundary,
-                    amrex::Real const dt, amrex::ParticleReal const thermal_velocity, int const lev)
+                    WarpXParIter const& pti, amrex::Gpu::DeviceVector<int> const& indices,
+                    amrex::Gpu::DeviceVector<WallImpact> const& impacts,
+                    amrex::Gpu::DeviceVector<int> const& choices,
+                    WallPolicyView const& device_policy, WallBehavior const requested,
+                    amrex::ParticleReal const thermal_velocity, int const lev)
 {
-    int const np = pti.numParticles();
+    int const nhits = static_cast<int>(indices.size());
+    auto* const source_index = indices.dataPtr();
+    auto* const hit = impacts.dataPtr();
     auto* const choice = choices.dataPtr();
-    auto* const hx = hit_x.dataPtr();
-    auto* const hy = hit_y.dataPtr();
-    auto* const hz = hit_z.dataPtr();
-    auto* const hfrac = hit_fraction.dataPtr();
-    amrex::Gpu::DeviceVector<int> counts(np), offsets(np);
+    amrex::Gpu::DeviceVector<amrex::Long> counts(nhits), offsets(nhits);
     auto* const count = counts.dataPtr();
-    amrex::ParallelFor(np, [=] AMREX_GPU_DEVICE (int i) noexcept {
-        count[i] = choice[i] == static_cast<int>(requested) ? multiplicity : 0;
+    amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
+        count[k] = choice[k] == static_cast<int>(requested) ? WallEmissionCount(requested) : 0;
     });
-    amrex::Long const added = amrex::Scan::ExclusiveSum(np, count, offsets.data());
+    amrex::Long const added = amrex::Scan::ExclusiveSum(nhits, count, offsets.data());
     if (added == 0) { return; }
 
     SmartCopyFactory const copy_factory(source, destination);
@@ -284,33 +612,34 @@ CreateWallProducts (WarpXParticleContainer& source, WarpXParticleContainer& dest
     auto& dst_tile = destination.DefineAndReturnParticleTile(
         lev, pti.index(), pti.LocalTileIndex());
     amrex::Long const old_size = dst_tile.numParticles();
+    if (old_size + added > std::numeric_limits<int>::max()) {
+        amrex::Abort("Wall emission exceeds the particle tile index range.");
+    }
     dst_tile.resize(old_size + added);
     // Reacquire source data after resize: source and destination may be identical.
     auto const src_data = source.ParticlesAt(lev, pti).getParticleTileData();
     auto const dst_data = dst_tile.getParticleTileData();
     auto* const offset = offsets.dataPtr();
-    amrex::ParallelForRNG(np, [=] AMREX_GPU_DEVICE (
-        int i, amrex::RandomEngine const& engine) noexcept {
-        if (count[i] == 0) { return; }
-        // Hit point and remaining time fraction were computed once by the
-        // behavior-selection kernel; reuse them here.
-        AnalyticBoundaryPosition const hit{hx[i], hy[i], hz[i]};
-        amrex::Real const fraction = hfrac[i];
-        amrex::XDim3 const u = BoundaryMath::DiffuseVelocity(
-            amrex::XDim3{boundary.Normal(hit).x, boundary.Normal(hit).y, boundary.Normal(hit).z},
-            thermal_velocity, engine);
-        for (int j = 0; j < count[i]; ++j) {
-            int const idst = old_size + offset[i] + j;
+    amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
+        int const k, amrex::RandomEngine const& engine) noexcept {
+        if (count[k] == 0) { return; }
+        int const i = source_index[k];
+        auto const impact = hit[k];
+        auto const velocities = SampleWallEmission(
+            device_policy, requested, impact, thermal_velocity, engine);
+        for (int j = 0; j < count[k]; ++j) {
+            auto const& u = velocities[j];
+            int const idst = static_cast<int>(old_size + offset[k] + j);
             Copy(dst_data, src_data, i, idst, engine);
             dst_data.m_rdata[PIdx::ux][idst] = static_cast<amrex::ParticleReal>(u.x);
             dst_data.m_rdata[PIdx::uy][idst] = static_cast<amrex::ParticleReal>(u.y);
             dst_data.m_rdata[PIdx::uz][idst] = static_cast<amrex::ParticleReal>(u.z);
-            dst_data.m_rdata[PIdx::x][idst] = hit.x +
-                static_cast<amrex::ParticleReal>(u.x) * fraction * dt;
-            dst_data.m_rdata[PIdx::y][idst] = hit.y +
-                static_cast<amrex::ParticleReal>(u.y) * fraction * dt;
-            dst_data.m_rdata[PIdx::z][idst] = hit.z +
-                static_cast<amrex::ParticleReal>(u.z) * fraction * dt;
+            dst_data.m_rdata[PIdx::x][idst] = impact.position.x +
+                static_cast<amrex::ParticleReal>(u.x) * impact.remaining_time;
+            dst_data.m_rdata[PIdx::y][idst] = impact.position.y +
+                static_cast<amrex::ParticleReal>(u.y) * impact.remaining_time;
+            dst_data.m_rdata[PIdx::z][idst] = impact.position.z +
+                static_cast<amrex::ParticleReal>(u.z) * impact.remaining_time;
         }
     });
     ParticleCreation::DefaultInitializeRuntimeAttributes(
@@ -344,195 +673,36 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
     if (!policy.secondary_species.empty()) {
         secondary_charge = mpc.GetParticleContainerFromName(policy.secondary_species).getCharge();
     }
-    using ablastr::fields::Direction;
-    using warpx::fields::FieldType;
-    WarpX& warpx = WarpX::GetInstance();
-    amrex::ParticleReal const q_over_m = mass != 0.0_prt ? charge/mass : 0.0_prt;
     for (int lev = 0; lev <= pc.finestLevel(); ++lev) {
-        // Incident-velocity correction: re-gather, at the back-traced
-        // step-start position, the same fields that drove this step's
-        // momentum push.
-        bool const correct_impact_velocity =
-            mass > 0.0_prt &&
-            warpx.m_fields.has(FieldType::Efield_aux, Direction{0}, lev) &&
-            warpx.m_fields.has(FieldType::Bfield_aux, Direction{0}, lev);
-        amrex::XDim3 const dinv = WarpX::InvCellSize(std::max(lev, 0));
-        int const nox = WarpX::nox;
-        int const n_rz_azimuthal_modes = WarpX::n_rz_azimuthal_modes;
-        bool const galerkin_interpolation = WarpX::galerkin_interpolation;
-        amrex::GpuArray<amrex::Real, 3> const prob_lo = warpx.Geom(lev).ProbLoArray();
-        amrex::GpuArray<amrex::Real, 3> const prob_hi = warpx.Geom(lev).ProbHiArray();
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
 #endif
         for (WarpXParIter pti(pc, lev); pti.isValid(); ++pti) {
-            amrex::Array4<amrex::Real const> ex_arr{};
-            amrex::Array4<amrex::Real const> ey_arr{};
-            amrex::Array4<amrex::Real const> ez_arr{};
-            amrex::Array4<amrex::Real const> bx_arr{};
-            amrex::Array4<amrex::Real const> by_arr{};
-            amrex::Array4<amrex::Real const> bz_arr{};
-            amrex::IndexType ex_type, ey_type, ez_type, bx_type, by_type, bz_type;
-            amrex::XDim3 xyzmin{0.0, 0.0, 0.0};
-            amrex::Dim3 lo{0, 0, 0};
-            GetExternalEBField const getExternalEB(pti);
-            if (correct_impact_velocity) {
-                amrex::MultiFab const& Ex =
-                    *warpx.m_fields.get(FieldType::Efield_aux, Direction{0}, lev);
-                amrex::MultiFab const& Ey =
-                    *warpx.m_fields.get(FieldType::Efield_aux, Direction{1}, lev);
-                amrex::MultiFab const& Ez =
-                    *warpx.m_fields.get(FieldType::Efield_aux, Direction{2}, lev);
-                amrex::MultiFab const& Bx =
-                    *warpx.m_fields.get(FieldType::Bfield_aux, Direction{0}, lev);
-                amrex::MultiFab const& By =
-                    *warpx.m_fields.get(FieldType::Bfield_aux, Direction{1}, lev);
-                amrex::MultiFab const& Bz =
-                    *warpx.m_fields.get(FieldType::Bfield_aux, Direction{2}, lev);
-                amrex::Box const box = pti.tilebox();
-                xyzmin = WarpX::LowerCorner(box, lev, 0.0_rt);
-                lo = amrex::lbound(box);
-                amrex::FArrayBox const& exfab = Ex[pti];
-                amrex::FArrayBox const& eyfab = Ey[pti];
-                amrex::FArrayBox const& ezfab = Ez[pti];
-                amrex::FArrayBox const& bxfab = Bx[pti];
-                amrex::FArrayBox const& byfab = By[pti];
-                amrex::FArrayBox const& bzfab = Bz[pti];
-                ex_arr = exfab.array();
-                ey_arr = eyfab.array();
-                ez_arr = ezfab.array();
-                bx_arr = bxfab.array();
-                by_arr = byfab.array();
-                bz_arr = bzfab.array();
-                ex_type = exfab.box().ixType();
-                ey_type = eyfab.box().ixType();
-                ez_type = ezfab.box().ixType();
-                bx_type = bxfab.box().ixType();
-                by_type = byfab.box().ixType();
-                bz_type = bzfab.box().ixType();
-            }
-            auto& soa = pti.GetParticleTile().GetStructOfArrays();
-            uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
-            auto* const AMREX_RESTRICT ux = soa.GetRealData(PIdx::ux).data();
-            auto* const AMREX_RESTRICT uy = soa.GetRealData(PIdx::uy).data();
-            auto* const AMREX_RESTRICT uz = soa.GetRealData(PIdx::uz).data();
-            auto GetPosition = GetParticlePosition<PIdx>(pti);
+            // Capture the incident count before same-species emission can grow the tile.
             int const np = pti.numParticles();
-            amrex::Gpu::DeviceVector<int> choices(np);
+            if (np == 0) { continue; }
+            auto const input = pti.GetParticleTile().getParticleTileData();
+            auto outside_indices = CollectOutsideParticleIndices(input, np, boundary);
+            int const nhits = static_cast<int>(outside_indices.size());
+            if (nhits == 0) { continue; }
+            auto* const source_index = outside_indices.dataPtr();
+            auto impacts = PreprocessWallImpacts(pc, pti, boundary, outside_indices, dt);
+            auto* const hit = impacts.dataPtr();
+
+            amrex::Gpu::DeviceVector<int> choices(nhits);
             auto* const choice = choices.dataPtr();
-            // Hit point and remaining time fraction for each particle that
-            // crosses the wall, computed once by the selection kernel and
-            // reused by product creation, charge deposition and reflection.
-            amrex::Gpu::DeviceVector<amrex::ParticleReal> hit_x(np), hit_y(np), hit_z(np);
-            amrex::Gpu::DeviceVector<amrex::Real> hit_fraction(np);
-            auto* const hx = hit_x.dataPtr();
-            auto* const hy = hit_y.dataPtr();
-            auto* const hz = hit_z.dataPtr();
-            auto* const hfrac = hit_fraction.dataPtr();
-            amrex::ParallelForRNG(np, [=] AMREX_GPU_DEVICE (
-                int i, amrex::RandomEngine const& engine) noexcept {
-                auto pidw = amrex::ParticleIDWrapper{idcpu[i]};
-                if (!pidw.is_valid()) {
-                    choice[i] = static_cast<int>(WallBehavior::none);
-                    return;
-                }
-                amrex::ParticleReal x;
-                amrex::ParticleReal y;
-                amrex::ParticleReal z;
-                GetPosition.AsStored(i, x, y, z);
-                AnalyticBoundaryPosition const x_end{x, y, z};
-                if (!BoundaryMath::IsOutsideDomain(boundary, x_end)) {
-                    choice[i] = static_cast<int>(WallBehavior::none);
-                    return;
-                }
-                AnalyticBoundaryPosition x_hit;
-                amrex::Real dt_fraction_hit;
-                BoundaryMath::BisectBoundaryIntersection(
-                    boundary, x_end, ux[i], uy[i], uz[i], dt, x_hit, dt_fraction_hit);
-                hx[i] = x_hit.x;
-                hy[i] = x_hit.y;
-                hz[i] = x_hit.z;
-                hfrac[i] = dt_fraction_hit;
-                // Incident velocity at the hit time. The stored velocity is
-                // defined at mid-step (t^n + dt/2); this step's momentum push
-                // was driven by the fields gathered at the step-start
-                // position, so back-trace the straight-line trajectory to x^n
-                // and re-gather the same fields there.
-                amrex::ParticleReal ux_hit = ux[i];
-                amrex::ParticleReal uy_hit = uy[i];
-                amrex::ParticleReal uz_hit = uz[i];
-                if (correct_impact_velocity) {
-                    // Time from step start to the hit: dt_fraction_hit spans
-                    // hit -> end, so start -> hit is (1 - dt_fraction_hit)*dt.
-                    amrex::ParticleReal const dt_hit = static_cast<amrex::ParticleReal>(
-                        (1.0 - dt_fraction_hit)*dt);
-                    amrex::ParticleReal const xs = x_hit.x - ux[i]*dt_hit;
-                    amrex::ParticleReal const ys = x_hit.y - uy[i]*dt_hit;
-                    amrex::ParticleReal const zs = x_hit.z - uz[i]*dt_hit;
-                    bool const start_inside =
-                        xs >= static_cast<amrex::ParticleReal>(prob_lo[0]) &&
-                        xs <= static_cast<amrex::ParticleReal>(prob_hi[0]) &&
-                        ys >= static_cast<amrex::ParticleReal>(prob_lo[1]) &&
-                        ys <= static_cast<amrex::ParticleReal>(prob_hi[1]) &&
-                        zs >= static_cast<amrex::ParticleReal>(prob_lo[2]) &&
-                        zs <= static_cast<amrex::ParticleReal>(prob_hi[2]);
-                    if (start_inside) {
-                        amrex::ParticleReal Exp = 0.0_prt;
-                        amrex::ParticleReal Eyp = 0.0_prt;
-                        amrex::ParticleReal Ezp = 0.0_prt;
-                        amrex::ParticleReal Bxp = 0.0_prt;
-                        amrex::ParticleReal Byp = 0.0_prt;
-                        amrex::ParticleReal Bzp = 0.0_prt;
-                        doGatherShapeN(xs, ys, zs, Exp, Eyp, Ezp, Bxp, Byp, Bzp,
-                            ex_arr, ey_arr, ez_arr, bx_arr, by_arr, bz_arr,
-                            ex_type, ey_type, ez_type, bx_type, by_type, bz_type,
-                            dinv, xyzmin, lo, n_rz_azimuthal_modes, nox,
-                            galerkin_interpolation);
-                        getExternalEB(i, Exp, Eyp, Ezp, Bxp, Byp, Bzp);
-                        // Non-relativistic Lorentz acceleration, matching the
-                        // non-relativistic trajectory model of BoundaryMath.
-                        amrex::ParticleReal const ax =
-                            q_over_m*(Exp + uy[i]*Bzp - uz[i]*Byp);
-                        amrex::ParticleReal const ay =
-                            q_over_m*(Eyp + uz[i]*Bxp - ux[i]*Bzp);
-                        amrex::ParticleReal const az =
-                            q_over_m*(Ezp + ux[i]*Byp - uy[i]*Bxp);
-                        // t_hit - t_midstep = ((1 - dt_fraction_hit) - 0.5) * dt
-                        amrex::ParticleReal const dt_from_mid =
-                            static_cast<amrex::ParticleReal>(
-                                (0.5 - dt_fraction_hit)*dt);
-                        ux_hit += ax*dt_from_mid;
-                        uy_hit += ay*dt_from_mid;
-                        uz_hit += az*dt_from_mid;
-                    }
-                }
-                auto const normal = boundary.Normal(x_hit);
-                amrex::ParticleReal const n2 =
-                    normal.x*normal.x + normal.y*normal.y + normal.z*normal.z;
-                amrex::ParticleReal const inv_n = n2 > 0.0_prt ? 1.0_prt/std::sqrt(n2) : 0.0_prt;
-                amrex::ParticleReal const un =
-                    (ux_hit*normal.x + uy_hit*normal.y + uz_hit*normal.z)*inv_n;
-                amrex::ParticleReal const u2 = ux_hit*ux_hit + uy_hit*uy_hit + uz_hit*uz_hit;
-                amrex::ParticleReal const ut = std::sqrt(amrex::max(u2-un*un, 0.0_prt));
-                amrex::ParticleReal const e_ev = mass*u2/(2.0_prt*PhysConst::q_e);
-                amrex::ParticleReal p = 0.0_prt;
-                amrex::ParticleReal const random = amrex::Random(engine);
-                for (int j = 0; j + 1 < device_policy.count; ++j) {
-                    p += static_cast<amrex::ParticleReal>(device_policy.probabilities[j](
-                        e_ev, un, ut, x_hit.x, x_hit.y, x_hit.z, time));
-                    if (random < p) {
-                        choice[i] = static_cast<int>(device_policy.behaviors[j]);
-                        return;
-                    }
-                }
-                choice[i] = static_cast<int>(device_policy.behaviors[device_policy.count-1]);
+            amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
+                int const k, amrex::RandomEngine const& engine) noexcept {
+                // Persist the event once; later allocation and spectra use it unchanged.
+                choice[k] = static_cast<int>(SelectWallBehavior(
+                    device_policy, hit[k], mass, time, engine));
             });
 
             if (!policy.product_species.empty()) {
                 auto& target = mpc.GetParticleContainerFromName(policy.product_species);
                 CreateWallProducts(
-                    pc, target, pti, choices, hit_x, hit_y, hit_z, hit_fraction,
-                    WallBehavior::convert, 1, boundary, dt,
+                    pc, target, pti, outside_indices, impacts, choices,
+                    device_policy, WallBehavior::convert,
                     Math::ThermalVelocityFromTemperature(
                         policy.wall_temperature, target.getMass()), lev);
             }
@@ -540,12 +710,10 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 auto& target = mpc.GetParticleContainerFromName(policy.secondary_species);
                 auto const thermal = Math::ThermalVelocityFromEV(
                     policy.secondary_temperature_eV, target.getMass());
-                CreateWallProducts(pc, target, pti, choices, hit_x, hit_y, hit_z, hit_fraction,
-                    WallBehavior::secondary_electron_1, 1,
-                    boundary, dt, thermal, lev);
-                CreateWallProducts(pc, target, pti, choices, hit_x, hit_y, hit_z, hit_fraction,
-                    WallBehavior::secondary_electron_2, 2,
-                    boundary, dt, thermal, lev);
+                CreateWallProducts(pc, target, pti, outside_indices, impacts, choices,
+                    device_policy, WallBehavior::secondary_electron_1, thermal, lev);
+                CreateWallProducts(pc, target, pti, outside_indices, impacts, choices,
+                    device_policy, WallBehavior::secondary_electron_2, thermal, lev);
             }
 
             // Product creation can resize this source tile when a product is emitted
@@ -572,12 +740,13 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 // Charge deposition is a scatter operation.  Keep it in
                 // amrex::For: ParallelFor promises independent iterations even
                 // when atomics are used.
-                amrex::For(np, [=] AMREX_GPU_DEVICE (long const i) noexcept {
-                    WallBehavior const selected = static_cast<WallBehavior>(choice[i]);
+                amrex::For(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
+                    int const i = source_index[k];
+                    WallBehavior const selected = static_cast<WallBehavior>(choice[k]);
                     if (selected == WallBehavior::none || selected == WallBehavior::specular ||
                         selected == WallBehavior::diffuse) { return; }
-                    // Reuse the hit point computed by the selection kernel.
-                    AnalyticBoundaryPosition const hit{hx[i], hy[i], hz[i]};
+                    // Reuse the common preprocessing result.
+                    auto const& position = hit[k].position;
                     amrex::ParticleReal out_charge = 0.0_prt;
                     if (selected == WallBehavior::convert) { out_charge = product_charge; }
                     else if (selected == WallBehavior::secondary_electron_1) {
@@ -586,47 +755,42 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                         out_charge = 2.0_prt * secondary_charge;
                     }
                     DepositWallChargeToNodes(
-                        charge_grid, grid, hit.x, hit.y, hit.z,
+                        charge_grid, grid, position.x, position.y, position.z,
                         (charge - out_charge) * updated_weight[i]);
                 });
             }
-            amrex::ParallelForRNG(np, [=] AMREX_GPU_DEVICE (
-                long const i, amrex::RandomEngine const& engine) noexcept {
-                WallBehavior const selected = static_cast<WallBehavior>(choice[i]);
+            amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
+                int const k, amrex::RandomEngine const& engine) noexcept {
+                int const i = source_index[k];
+                WallBehavior const selected = static_cast<WallBehavior>(choice[k]);
                 auto pidw = amrex::ParticleIDWrapper{updated_idcpu[i]};
                 if (!pidw.is_valid() || selected == WallBehavior::none) { return; }
                 if (selected == WallBehavior::specular || selected == WallBehavior::diffuse) {
-                    // Reuse the hit point computed by the selection kernel.
-                    AnalyticBoundaryPosition const hit{hx[i], hy[i], hz[i]};
-                    amrex::Real const fraction = hfrac[i];
-                    amrex::XDim3 const normal{
-                        boundary.Normal(hit).x, boundary.Normal(hit).y, boundary.Normal(hit).z};
-                    amrex::XDim3 u{updated_ux[i], updated_uy[i], updated_uz[i]};
-                    if (selected == WallBehavior::specular) {
-                        u = BoundaryMath::ReflectVelocity(normal, u, engine);
-                    }
-                    else { u = BoundaryMath::DiffuseVelocity(normal,
-                        Math::ThermalVelocityFromTemperature(
-                            device_policy.wall_temperature, mass), engine);
-                    }
+                    // Reuse the common preprocessing result.
+                    auto const& position = hit[k].position;
+                    amrex::Real const remaining_time = hit[k].remaining_time;
+                    ParticleVector const stored_velocity{
+                        updated_ux[i], updated_uy[i], updated_uz[i]};
+                    ParticleVector const u = SampleWallReflection(
+                        device_policy, selected, hit[k], stored_velocity, mass, engine);
                     updated_ux[i] = static_cast<amrex::ParticleReal>(u.x);
                     updated_uy[i] = static_cast<amrex::ParticleReal>(u.y);
                     updated_uz[i] = static_cast<amrex::ParticleReal>(u.z);
-                    updated_x[i] = hit.x + updated_ux[i] * fraction * dt;
-                    updated_y[i] = hit.y + updated_uy[i] * fraction * dt;
-                    updated_z[i] = hit.z + updated_uz[i] * fraction * dt;
+                    updated_x[i] = position.x + updated_ux[i] * remaining_time;
+                    updated_y[i] = position.y + updated_uy[i] * remaining_time;
+                    updated_z[i] = position.z + updated_uz[i] * remaining_time;
                     return;
                 }
                 pidw.make_invalid();
             });
-
             if (anode_stats != nullptr) {
                 // Wall-current bookkeeping: scatter weighted sums into the
                 // per-wall slots. amrex::For plus HostDevice atomics is safe
                 // on both CPU (OpenMP) and GPU.
                 int const base = wall_id * anode_current_class_size;
-                amrex::For(np, [=] AMREX_GPU_DEVICE (long const i) noexcept {
-                    WallBehavior const selected = static_cast<WallBehavior>(choice[i]);
+                amrex::For(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
+                    int const i = source_index[k];
+                    WallBehavior const selected = static_cast<WallBehavior>(choice[k]);
                     if (selected == WallBehavior::none || selected == WallBehavior::specular ||
                         selected == WallBehavior::diffuse) { return; }
                     amrex::ParticleReal out_charge = 0.0_prt;
@@ -651,13 +815,13 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
 
             if (counts == nullptr) { continue; }
 
-            // Count the events selected for this tile. choice[i] still holds the
+            // Count the events selected for this tile. choice[k] still holds the
             // behavior even for particles that were invalidated above.
             amrex::Long tile_counts[max_wall_behaviors];
             for (int b = 0; b < max_wall_behaviors; ++b) {
                 tile_counts[b] = amrex::Reduce::Sum<amrex::Long>(
-                    np, [=] AMREX_GPU_DEVICE (long i) noexcept -> amrex::Long {
-                        return choice[i] == b ? 1 : 0;
+                    nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept -> amrex::Long {
+                        return choice[k] == b ? 1 : 0;
                     });
             }
 #ifdef AMREX_USE_OMP

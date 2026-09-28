@@ -169,11 +169,8 @@ electrons.analytic_wall.anode_ring.wall_temperature = 40000.0
 electrons.analytic_wall.anode_ring.secondary_electron_species = electrons
 electrons.analytic_wall.anode_ring.secondary_electron_temperature_eV = 3.0
 
-electrons.analytic_wall.ceramic_wall.behaviors = absorb specular secondary_electron_2 secondary_electron_1
-electrons.analytic_wall.ceramic_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
-electrons.analytic_wall.ceramic_wall.p_specular = "0.5*exp(-(E_eV/30)**2)"
-electrons.analytic_wall.ceramic_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
-electrons.analytic_wall.ceramic_wall.wall_temperature = 40000
+# 陶瓷材料特化；阳极、离子和中性原子仍使用通用 behaviors 路径。
+electrons.analytic_wall.ceramic_wall.material = ceramic
 electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
 
