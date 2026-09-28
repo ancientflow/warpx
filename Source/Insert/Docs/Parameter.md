@@ -81,7 +81,24 @@ Insert 模块处理。
 ## 解析壁面粒子相互作用
 
 解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。
-每个物种可独立选择与每个壁面是否交互。`behaviors` 的顺序定义累积概率抽样；除
+每个物种可独立选择与每个壁面是否交互。配置了
+`<species>.analytic_wall.<wall>.material` 时优先使用对应材料模型，忽略同一物种、
+同一壁面上的 `behaviors` 和 `p_*` 参数；未配置材料时保持通用解析边界处理。
+两者都未配置时，该物种不与此解析壁面交互。未知材料名称会报错，不会退回通用路径。
+
+目前支持 `material = ceramic`，要求入射和二次电子物种均使用物理电子质量和电荷。
+`secondary_electron_species` 默认与入射物种相同，
+`secondary_electron_temperature_eV` 默认 `3.0`，`deposit_wall_charge` 默认 `1`。
+材料路径仍使用同一解析几何、壁面电荷场和电流诊断，不重复执行通用碰撞处理。例如：
+
+```text
+electrons.analytic_wall.ceramic.material = ceramic
+electrons.analytic_wall.ceramic.secondary_electron_species = electrons
+electrons.analytic_wall.ceramic.secondary_electron_temperature_eV = 3.0
+electrons.analytic_wall.ceramic.deposit_wall_charge = 1
+```
+
+通用路径中，`behaviors` 的顺序定义累积概率抽样；除
 最后一项外，每项以 `p_<behavior>(E_eV,u_n,u_t,x,y,z,t)` 给出概率，最后一项采用余量。
 支持 `absorb`、`specular`、`diffuse`、`convert`、`secondary_electron_1` 和
 `secondary_electron_2`，最多六项。
@@ -109,6 +126,16 @@ ions.analytic_wall.anode.wall_temperature = 400.0
 ions.analytic_wall.anode.product_charge = 0.0
 ions.analytic_wall.anode.deposit_wall_charge = 1
 ```
+
+两种路径共享预处理：先收集有效且位于对应边界外的粒子索引，再只对候选粒子计算
+撞击点、撞击速度、法向和剩余时间。后续交互、产物创建、沉积及诊断按候选数量遍历；
+不再为域内粒子分配碰撞信息数组。索引压缩可能改变随机数与粒子的对应顺序，
+相同种子下的逐粒子结果不保证与旧遍历方式完全一致。
+
+两种配置只在碰撞模型的事件选择和出射速度采样上不同。事件只抽样一次，
+随后统一按实际产物数量分配空间、初始化粒子、沉积电荷、删除入射粒子并记录诊断。
+材料模型的出射速度由其自身能谱采样函数给出，公共写入流程不会用通用热分布替换。
+陶瓷 SEE2 保留两个独立的发射采样；通用 SEE2 保留原有的共享速度采样。
 
 相互作用仅在物种实际推进的步执行。`specular` 与 `diffuse` 保留入射粒子并从交点推进
 剩余子步；`convert` 和二次电子发射使入射粒子失效，并以相同宏粒子权重创建目标

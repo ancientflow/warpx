@@ -10,7 +10,6 @@
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Random.H>
-#include <AMReX_Dim3.H>
 
 /** \brief Pure math operators for particle interactions with an analytic
  *         boundary.
@@ -115,18 +114,11 @@ BisectBoundaryIntersection (
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void
 AdvancePosition (
-    amrex::XDim3& x, amrex::XDim3 const& u,
+    ParticleVector& x, ParticleVector const& u,
     amrex::ParticleReal const mass, amrex::Real const dt) noexcept
 {
-    // UpdatePosition internally converts the proper velocity u = gamma * v
-    // to the physical velocity using the particle mass. XDim3 stores
-    // amrex::Real while UpdatePosition works on amrex::ParticleReal, so the
-    // coordinates go through local copies.
-    amrex::ParticleReal xt = x.x;
-    amrex::ParticleReal yt = x.y;
-    amrex::ParticleReal zt = x.z;
-    UpdatePosition(xt, yt, zt, u.x, u.y, u.z, dt, mass);
-    x = amrex::XDim3{xt, yt, zt};
+    // ParticleVector and UpdatePosition both use ParticleReal coordinates.
+    UpdatePosition(x.x, x.y, x.z, u.x, u.y, u.z, dt, mass);
 }
 
 /** \brief Specular reflection of the proper velocity about the boundary
@@ -134,14 +126,14 @@ AdvancePosition (
  *         |u|, so gamma is unchanged. The engine is unused but kept in the
  *         signature for interface symmetry with DiffuseVelocity. */
 [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::XDim3
+ParticleVector
 ReflectVelocity (
-    amrex::XDim3 const& normal_to_domain, amrex::XDim3 const& u_in,
+    ParticleVector const& normal_to_domain, ParticleVector const& u_in,
     amrex::RandomEngine const& engine) noexcept
 {
     // Delegate to the shared wall operator; a degenerate (zero) normal
     // leaves the velocity unchanged.
-    amrex::XDim3 u_out = u_in;
+    ParticleVector u_out = u_in;
     SpecularReflectionOperator{}(normal_to_domain, u_in, u_out, engine);
     return u_out;
 }
@@ -155,18 +147,18 @@ ReflectVelocity (
  *            and is the responsibility of the driver layer.
  */
 [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::XDim3
+ParticleVector
 DiffuseVelocity (
-    amrex::XDim3 const& normal_to_domain, amrex::ParticleReal const vth,
+    ParticleVector const& normal_to_domain, amrex::ParticleReal const vth,
     amrex::RandomEngine const& engine) noexcept
 {
     // The diffuse re-emission velocity is drawn from the wall distribution
     // and does not depend on the incident velocity; pass a zero placeholder
     // for the unused u_in argument of the shared wall operator.
-    amrex::XDim3 const u_unused{
+    ParticleVector const u_unused{
         amrex::ParticleReal(0.0), amrex::ParticleReal(0.0),
         amrex::ParticleReal(0.0)};
-    amrex::XDim3 u_out = u_unused;
+    ParticleVector u_out = u_unused;
     DiffuseReemissionOperator{vth}(normal_to_domain, u_unused, u_out, engine);
     return u_out;
 }
