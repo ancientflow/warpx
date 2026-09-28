@@ -66,7 +66,8 @@ ReadZmaxRadialExitConfig ()
     amrex::Real const r_corner = std::sqrt(
         std::max(hi_x * hi_x, lo_x * lo_x) + std::max(hi_y * hi_y, lo_y * lo_y));
     cfg.r_max = r_corner;
-    pp_mc.query("zmax_radial_r_max", cfg.r_max);
+    // Parser-aware query: accepts math expressions (e.g. scaled by l_factor).
+    utils::parser::queryWithParser(pp_mc, "zmax_radial_r_max", cfg.r_max);
 
     cfg.dx = geom.CellSize(0);
     cfg.zmax = geom.ProbHi(2);

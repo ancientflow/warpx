@@ -309,7 +309,8 @@ my_constants.dt = 3e-12
 - `insert.continuous_sources` 在每个粒子注入步执行。
 - 两个数组为空时，不会创建任何默认 source。
 - 连续注入使用 `my_constants.dt` 作为传入 source 的时间步。若未设置，该值为 `0`，
-  依赖 `dt` 的速率模型不会产生粒子。
+  依赖 `dt` 的速率模型不会产生粒子。`dt` 支持数学表达式（含 `my_constants`
+  中定义的其他常量），例如 `my_constants.dt = 5e-8 / l_factor`。
 
 ### Source 基本结构
 
