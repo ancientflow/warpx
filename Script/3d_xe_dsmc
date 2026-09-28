@@ -1,22 +1,28 @@
 # ============================================================
 # 三维氙气 DSMC 仿真：气体注入通道
 #
-# 计算域: 2mm x 2mm x 5mm, 网格 80 x 80 x 200 (dx = 25 um)
-# Xe 中性原子以 0.6 mg/s 从 zmin 面直径 0.5mm 的圆形区域、
+# 计算域: 2mm x 2mm x 5mm (未缩比), 网格 160 x 160 x 400
+# Xe 中性原子以 0.0125 mg/s 从 zmin 面直径 0.5mm 的圆形区域、
 # 800K 半麦克斯韦分布流入。
-# 计算域在通道出口 z = 5mm 处截断: z < 5mm 内 r > r_inj 为固体
+# 支持几何缩比 (与 3d_hall_dielectric_slot 相同约定): 所有几何
+# 尺寸除以 l_factor, 质量流率由注入源内部除以 l_factor^2,
+# dt 除以 l_factor 以保持相同的气流穿越步数, Xe-Xe 碰撞截面
+# 乘以 l_factor 以保持 Knudsen 数不变 (见碰撞一节); l_factor = 1 时
+# 完全还原未缩比算例 (需同时换回未缩比的截面文件)。
+# 计算域在通道出口 z = 5mm (缩比后 z_wall) 处截断: z < z_wall 内 r > r_inj 为固体
 # (通道壁与 z = 5mm 环形端面, 600K 漫反射, insert.analytic_walls);
 # 通道出口即 zmax 边界, 粒子出通道直接吸收 (自由流出, 忽略外部
 # 羽流碰撞与回流)。
 # 物种只有中性 Xe 原子, 只考虑 Xe-Xe 弹性碰撞(VHS 截面)。
-# 时间步 5e-8 s。所有 WarpX 边界吸收粒子, 电势边界均为 0。
+# 时间步 5e-8 s (未缩比)。所有 WarpX 边界吸收粒子, 电势边界均为 0。
 # ============================================================
 
 #------------------------------------
 # 全局设置
 #------------------------------------
-max_step = 20000                    # 1e-3 s, 约 25 倍气流穿越时间
-my_constants.dt = 5e-8
+max_step = 20000                    # 1e-3 s (未缩比), 约 25 倍气流穿越时间
+my_constants.l_factor = 5           # 几何缩比因子, 1 = 不缩比 (与正式仿真一致取 5)
+my_constants.dt = 5e-8 / l_factor   # dt 同步缩比, 保持相同的气流穿越步数
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -29,14 +35,19 @@ warpx.grid_type = collocated
 # 物理与几何参数
 #------------------------------------
 my_constants.m_xe = 2.18017e-25     # Xe 原子质量 [kg]
-my_constants.m_dot = 0.6e-6         # 质量流率 0.6 mg/s [kg/s]
+my_constants.m_dot = 0.0125e-6      # 未缩比物理质量流率 0.0125 mg/s [kg/s]
+                                    # (注入源内部除以 l_factor^2, 见 xe_inlet.l_factor)
 my_constants.T_inj = 800            # 注入气体温度 [K] (壁面温度 600K, 见 wall_temperature)
-my_constants.r_inj = 0.25e-3        # 注入圆/通道半径 (直径 0.5mm) [m]
-my_constants.z_wall = 5e-3          # 通道出口 (端面) 位置 [m]
-my_constants.xe_weight = 2e6        # 宏粒子权重, 每步约 6.9e4 个宏粒子
+my_constants.r_inj = 0.25e-3 / l_factor  # 注入圆/通道半径 (直径 0.5mm, 未缩比) [m]
+my_constants.z_wall = 5e-3 / l_factor    # 通道出口 (端面) 位置 [m]
+# 宏粒子权重按 l_factor^3 (体积) 缩比: 配合 m_dot/l_factor^2 与 dt/l_factor,
+# 每步注入宏粒子数、网格内宏粒子数密度均与未缩比算例一致
+# (与 3d_hall_dielectric_slot 中 elec_weight ∝ sim_L^3 相同约定)
+my_constants.xe_weight = 1e5 / l_factor**3
 
 #------------------------------------
-# 网格 (通道轴线位于 x = y = 0)
+# 网格 (通道轴线位于 x = y = 0); 计算域随 l_factor 缩比, n_cell 不变,
+# 即相对分辨率 (每通道直径的网格数) 保持不变
 #------------------------------------
 amr.n_cell = 160 160 400
 amr.max_grid_size = 400
@@ -44,8 +55,8 @@ amr.blocking_factor = 16
 amr.max_level = 0
 
 geometry.dims = 3
-geometry.prob_lo = -1e-3 -1e-3 0.0
-geometry.prob_hi =  1e-3  1e-3 5e-3
+geometry.prob_lo = -1e-3/l_factor -1e-3/l_factor 0.0
+geometry.prob_hi =  1e-3/l_factor  1e-3/l_factor 5e-3/l_factor
 
 #------------------------------------
 # 边界条件: 全部吸收粒子, 电势全为 0
@@ -97,15 +108,15 @@ analytic_wall.channel_wall.normal_x = "-x * heaviside((r_inj*r_inj - x*x - y*y) 
 analytic_wall.channel_wall.normal_y = "-y * heaviside((r_inj*r_inj - x*x - y*y) - (z - z_wall), 0.5)"
 analytic_wall.channel_wall.normal_z = "1.0 - heaviside((r_inj*r_inj - x*x - y*y) - (z - z_wall), 0.5)"
 
-xe_neutral.analytic_wall.channel_wall.behaviors = specular diffuse
-xe_neutral.analytic_wall.channel_wall.p_specular = "0.05"
+xe_neutral.analytic_wall.channel_wall.behaviors = diffuse
+#xe_neutral.analytic_wall.channel_wall.p_specular = "0.05"
 xe_neutral.analytic_wall.channel_wall.wall_temperature = 600
 # 纯中性气体算例不记壁面电荷; deposit_wall_charge 默认为 1, 需要持久壁面
 # 电荷场 (insert.use_electrostatic_materials 的介质泊松路径), 这里显式关闭
 xe_neutral.analytic_wall.channel_wall.deposit_wall_charge = 0
 
 #------------------------------------
-# 注入: zmin 面直径 0.5mm 圆形区域, 0.6 mg/s, 800K 半麦克斯韦
+# 注入: zmin 面直径 0.5mm (未缩比) 圆形区域, 0.0125 mg/s, 800K 半麦克斯韦
 #------------------------------------
 insert.continuous_sources = xe_inlet
 
@@ -114,6 +125,8 @@ xe_inlet.rate = mass_flow
 xe_inlet.mass_flow = m_dot
 xe_inlet.mass = m_xe
 xe_inlet.macro_weight = xe_weight
+# 几何缩比: 内部将 m_dot 除以 l_factor^2 (面积缩比)
+xe_inlet.l_factor = l_factor
 
 # 位置: 柱坐标, 圆面内按面积均匀, z 固定在 zmin 面
 xe_inlet.position.coordinate_system = cylindrical
@@ -139,15 +152,20 @@ my_constants.particle_number_diag = 1
 
 #------------------------------------
 # 碰撞: Xe-Xe 弹性 (VHS 截面, 由 XeXeVHSGenerator 生成)
+# 截面按 l_factor 放大 (CrossSectionScaler): 缩比下数密度不变而几何
+# 缩小 l_factor 倍, 截面乘以 l_factor 可保持 Knudsen 数 (lambda/L) 不变,
+# 与正式仿真一致 (3d_hall_mcccoll 的 xe_dsmc 同样使用 _x5 文件)。
+# 注意: _x5 文件仅对应 l_factor = 5; 改 l_factor 需重新生成:
+#   CrossSectionScaler <原始.dat> <新.dat> <l_factor>
 #------------------------------------
 collisions.collision_names = xe_xe
 
 xe_xe.type = dsmc
 xe_xe.species = xe_neutral xe_neutral
 xe_xe.scattering_processes = elastic
-xe_xe.elastic_cross_section = Xe2X/Xe_Xe_VHS_elastic.dat
+xe_xe.elastic_cross_section = Xe2X/Xe_Xe_VHS_elastic_x5.dat
 xe_xe.elastic_scattering_angle_model = isotropic
-xe_xe.ndt_supercycle = 1
+xe_xe.ndt_supercycle = 5
 
 #------------------------------------
 # 诊断输出
@@ -168,13 +186,13 @@ particle_number_inlet.intervals = 100
 
 #------------------------------------
 # zmax (= 通道出口) 径向统计 (稳态后累积, 最后一步写出 zmax_radial/*.dat)
-# 统计范围即通道截面 r <= r_inj; 径向档宽 = dx = 25 um,
-# r_max 必须能被 dx 整除 (0.25mm / 25um = 10 档)
+# 统计范围即通道截面 r <= r_inj; 径向档宽 = dx = 12.5 um / l_factor,
+# r_max 必须能被 dx 整除 (r_inj / dx = 20 档, 与 l_factor 无关)
 #------------------------------------
 my_constants.hall_diag_interval = 10        # 采样间隔 (现有控制参数)
 my_constants.zmax_radial_exit_diag = 1
 my_constants.zmax_radial_start_step = 10000 # 稳态后开始累积
-my_constants.zmax_radial_r_max = 0.25e-3
+my_constants.zmax_radial_r_max = 0.25e-3 / l_factor
 my_constants.zmax_radial_v_max = 1000       # 速度直方图范围 [-1000, 1000] m/s
 my_constants.zmax_radial_v_bins = 100
 # 定期清空边界缓冲区 (与 zmax_radial 相同的 hall_diag_interval 间隔;

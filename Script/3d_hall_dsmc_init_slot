@@ -1,0 +1,171 @@
+# 3d_hall_dsmc_init 的环缝版本: 入口由小孔阵列改为宽 0.5mm (未缩比)
+# 的连续环缝, 缝心位于 r_ring 环上 (环心由 x_offset/y_offset 给定),
+# 缝内按 0.5mm 通道、壁面 600K、1/48 低流量 (0.0125 mg/s) 工况的
+# 出口径向剖面回灌采样 (由 Source/Insert/tool/ZmaxRadialExitAnalyzer 生成,
+# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 5),
+# 按归一化坐标
+#   u = (r - slot_r_in) / slot_width ∈ [0,1]   (r 为相对环心轴的半径)
+# 铺到环缝上:
+#   位置: P(r) ∝ r * flux(u)   (几何权重 r 显式写在表达式中,
+#         parser 采样器内部自行归一化, 表达式无需显式归一化)
+#   速度: T_x/T_y/T_z(u), mean_vz(u) 代入各轴 sigma(r)/mean(r)
+# 换用其他剖面时替换下方拟合系数即可; 缝宽变化需同步修改 slot_width。
+
+#全局定义
+max_step = 10000
+my_constants.dt = 5.6e-10
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-06
+warpx.sort_intervals = 50
+amrex.the_arena_init_size = 1024*1024*1024*8
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+
+#工况定义
+my_constants.m_dot = 0.6e-6
+my_constants.ifhole = 0
+
+# 环缝几何: 缝心位于 r_ring 环上, 缝宽 0.5mm 为物理尺寸, 不做 l_factor 缩比
+my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
+my_constants.slot_width = 0.5e-3 / l_factor
+my_constants.slot_r_in = r_ring - slot_width / 2
+my_constants.slot_r_out = r_ring + slot_width / 2
+
+# 出口剖面 poly3 拟合系数 (u = (r - slot_r_in)/slot_width ∈ [0,1]),
+# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 0.5mm 通道, 注入 800K /
+# 壁面 600K, 1/48 低流量即 0.0125 mg/s 单孔分流工况, 5% 镜面反射),
+# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 5
+# flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
+# (jf 绝对值对应 0.0125 mg/s, 此处仅用其径向形状, 总量由 m_dot 控制)
+my_constants.jf_c0 = 3.1093e22
+my_constants.jf_c1 = -1.2104e22
+my_constants.jf_c2 = 2.5988e22
+my_constants.jf_c3 = -2.3639e22
+# T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
+my_constants.tx_c0 = 4.5345e2
+my_constants.tx_c1 = -8.9290e1
+my_constants.tx_c2 = 2.3191e2
+my_constants.tx_c3 = -1.3822e2
+my_constants.ty_c0 = 4.5155e2
+my_constants.ty_c1 = -7.6317e1
+my_constants.ty_c2 = 2.0671e2
+my_constants.ty_c3 = -1.2413e2
+my_constants.tz_c0 = 2.7916e2
+my_constants.tz_c1 = -1.3112e1
+my_constants.tz_c2 = 3.6252e1
+my_constants.tz_c3 = -3.0710e1
+my_constants.mvz_c0 = 2.8110e2
+my_constants.mvz_c1 = 1.8574e1
+my_constants.mvz_c2 = -4.9945e1
+my_constants.mvz_c3 = 3.0711e1
+
+#粒子参数定义
+my_constants.rho_init = 2.5e18
+my_constants.w_factor = 2
+my_constants.weight_ratio = 1
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 0
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+warpx.poisson_solver = multigrid
+
+#几何
+
+my_constants.n_cell = 256
+
+amr.n_cell = n_cell n_cell n_cell
+amr.blocking_factor = n_cell
+amr.max_grid_size = n_cell
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo =  pec pec pec
+boundary.field_hi =  pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = xe_neutral
+
+xe_neutral.mass = m_xe
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+xe_neutral.ndt = 1
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# This file generates an initial neutral distribution via continuous injection.
+# ==========================================
+#insert.initial_sources =
+insert.continuous_sources = xe_neutral_inlet
+
+xe_neutral_inlet.species = xe_neutral
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1.0
+xe_neutral_inlet.x_offset = 0.025 / l_factor
+xe_neutral_inlet.y_offset = 0.025 / l_factor
+
+# 位置: 环缝 (r ∈ [slot_r_in, slot_r_out], 以环心为轴);
+# r 按 P(r) ∝ r * flux(u) 采样, u = (r - slot_r_in)/slot_width
+# (parser 任意一维 CDF, 几何权重 r 显式写在表达式中);
+# theta 均匀, z 固定在 zmin 面
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = parser
+xe_neutral_inlet.position.r.min = slot_r_in
+xe_neutral_inlet.position.r.max = slot_r_out
+xe_neutral_inlet.position.r.num_bins = 1024
+xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*((r-slot_r_in)/slot_width) + jf_c2*((r-slot_r_in)/slot_width)**2 + jf_c3*((r-slot_r_in)/slot_width)**3)
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = 0.0
+
+# 速度: 各分量参数为缝内归一化位置的函数 (sigma(r)/mean(r), 逐粒子求值,
+# r 为相对环心轴的半径, u = (r - slot_r_in)/slot_width ∈ [0,1]);
+# vx/vy 全高斯, vz 截断 vz > 0 的漂移高斯 (截断尾部约 1%)
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*((r-slot_r_in)/slot_width) + tx_c2*((r-slot_r_in)/slot_width)**2 + tx_c3*((r-slot_r_in)/slot_width)**3) / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*((r-slot_r_in)/slot_width) + ty_c2*((r-slot_r_in)/slot_width)**2 + ty_c3*((r-slot_r_in)/slot_width)**3) / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*((r-slot_r_in)/slot_width) + mvz_c2*((r-slot_r_in)/slot_width)**2 + mvz_c3*((r-slot_r_in)/slot_width)**3
+xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*((r-slot_r_in)/slot_width) + tz_c2*((r-slot_r_in)/slot_width)**2 + tz_c3*((r-slot_r_in)/slot_width)**3) / m_xe)
+
+
+#碰撞定义
+FILE = ../../Script/3d_hall_xecoll
+
+#输出定义
+FILE = ../../Script/init_diag

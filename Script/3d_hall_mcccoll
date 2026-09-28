@@ -14,7 +14,7 @@ my_constants.dsmcndt = 10*mcc_factor
 #e / Xe 弹性、激发为MCC 其余DSMC
 elec_mcc_coll.type = coupled_background_mcc
 xe_coll.type = coupled_background_mcc
-
+xe_dsmc.type = dsmc
 
 # e- / Xe 弹性碰撞 激发碰撞 电离碰撞
 elec_mcc_coll.scattering_processes = elastic excitation1 ionization
@@ -48,7 +48,6 @@ xe_coll.have_excitation = 0
 
 # Xe / Xe 弹性碰撞
 xe_dsmc.species = xe_neutral xe_neutral
-xe_dsmc.type = dsmc
 xe_dsmc.ndt_supercycle = 100
 xe_dsmc.scattering_processes = elastic
 xe_dsmc.elastic_cross_section = Xe2X/Xe_Xe_VHS_elastic_x5.dat
