@@ -8,6 +8,7 @@ foreach(D IN LISTS WarpX_DIMS)
         Boundary/AnalyticBoundaryGeometry.cpp
         Boundary/AnalyticBoundaryInteraction.cpp
         Boundary/CeramicInteraction.cpp
+        Boundary/StainlessSteelInteraction.cpp
         Boundary/InsertBoundaryPhi.cpp
         Collisions/CoupledBackgroundMCCCollision.cpp
         Collisions/IonizationSourceTable.cpp

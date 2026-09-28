@@ -8,10 +8,11 @@ namespace Insert {
 /** Common event vocabulary for parser-based and material collision models. */
 enum class WallBehavior : int {
     none = -1, absorb, specular, diffuse, convert, secondary_electron_1,
-    secondary_electron_2
+    secondary_electron_2, elastic_backscatter, rediffused_backscatter, true_secondary
 };
 
-constexpr int max_wall_behaviors = 6;
+constexpr int max_generic_wall_behaviors = 6;
+constexpr int max_wall_behaviors = 9;
 
 [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 int WallEmissionCount (WallBehavior const event) noexcept

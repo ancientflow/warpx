@@ -81,9 +81,9 @@ struct WallPolicy
     bool active = false;
     std::optional<MaterialInteraction> material;
     int count = 0;
-    std::array<WallBehavior, max_wall_behaviors> behaviors{};
-    std::array<amrex::ParserExecutor<7>, max_wall_behaviors - 1> probabilities{};
-    std::array<std::unique_ptr<amrex::Parser>, max_wall_behaviors - 1> parsers{};
+    std::array<WallBehavior, max_generic_wall_behaviors> behaviors{};
+    std::array<amrex::ParserExecutor<7>, max_generic_wall_behaviors - 1> probabilities{};
+    std::array<std::unique_ptr<amrex::Parser>, max_generic_wall_behaviors - 1> parsers{};
     amrex::ParticleReal wall_temperature = 0.0_prt;
     amrex::ParticleReal secondary_temperature_eV = 0.0_prt;
     std::string product_species;
@@ -98,8 +98,8 @@ struct WallPolicy
 struct WallPolicyView
 {
     int count = 0;
-    std::array<WallBehavior, max_wall_behaviors> behaviors{};
-    std::array<amrex::ParserExecutor<7>, max_wall_behaviors - 1> probabilities{};
+    std::array<WallBehavior, max_generic_wall_behaviors> behaviors{};
+    std::array<amrex::ParserExecutor<7>, max_generic_wall_behaviors - 1> probabilities{};
     amrex::ParticleReal wall_temperature = 0.0_prt;
 
     explicit WallPolicyView (WallPolicy const& policy)
@@ -221,16 +221,12 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
             if (pp_species.query((prefix + "material").c_str(), material_name)) {
                 // An explicit material owns this species/wall interaction.
                 // Do not parse behaviors or their probabilities on this path.
-                if (material_name != "ceramic") {
+                if (material_name != "ceramic" && material_name != "stainless_steel") {
                     amrex::Abort("Unknown analytic-wall material: " + material_name);
                 }
                 policy.secondary_species = species_name;
                 pp_species.query((prefix + "secondary_electron_species").c_str(),
                     policy.secondary_species);
-                policy.secondary_temperature_eV = 3.0_prt;
-                utils::parser::queryWithParser(pp_species,
-                    (prefix + "secondary_electron_temperature_eV").c_str(),
-                    policy.secondary_temperature_eV);
                 pp_species.query((prefix + "deposit_wall_charge").c_str(),
                     policy.deposit_wall_charge);
                 auto const& source = mpc.GetParticleContainerFromName(species_name);
@@ -240,14 +236,25 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
                 if (source.getMass() != electron_mass || target.getMass() != electron_mass ||
                     source.getCharge() != electron_charge ||
                     target.getCharge() != electron_charge) {
-                    amrex::Abort("The ceramic material requires physical-electron source "
+                    amrex::Abort("The wall material requires physical-electron source "
                                  "and secondary species: " + species_name + "." + prefix);
                 }
-                if (!std::isfinite(policy.secondary_temperature_eV) ||
-                    policy.secondary_temperature_eV <= 0.0_prt) {
-                    amrex::Abort("The ceramic secondary temperature must be finite and positive.");
+                if (material_name == "ceramic") {
+                    policy.secondary_temperature_eV = 3.0_prt;
+                    utils::parser::queryWithParser(pp_species,
+                        (prefix + "secondary_electron_temperature_eV").c_str(),
+                        policy.secondary_temperature_eV);
+                    if (!std::isfinite(policy.secondary_temperature_eV) ||
+                        policy.secondary_temperature_eV <= 0.0_prt) {
+                        amrex::Abort("The ceramic secondary temperature must be finite and positive.");
+                    }
+                    policy.material.emplace(CeramicInteraction(policy.secondary_temperature_eV));
+                } else {
+                    int trials = StainlessSteelInteraction::spectrum_count;
+                    utils::parser::queryWithParser(pp_species,
+                        (prefix + "binomial_trials").c_str(), trials);
+                    policy.material.emplace(StainlessSteelInteraction(trials));
                 }
-                policy.material.emplace(CeramicInteraction(policy.secondary_temperature_eV));
                 policy.active = true;
                 has_policy = true;
                 continue;
@@ -259,7 +266,7 @@ ReadAnalyticWallConfiguration (MultiParticleContainer const& mpc)
                 continue;
             }
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-                !behaviors.empty() && behaviors.size() <= max_wall_behaviors,
+                !behaviors.empty() && behaviors.size() <= max_generic_wall_behaviors,
                 species_name + "." + parameter + " must contain one to six behaviors.");
             policy.active = true;
             policy.count = static_cast<int>(behaviors.size());
@@ -856,7 +863,7 @@ AnalyticBoundaryInteraction ()
     amrex::Print() << "AnalyticBoundaryInteraction: step " << warpx_instance.getistep(0)
         << " (all analytic walls, macroparticle counts)\n";
     for (auto& [species_name, counts] : species_counts) {
-        amrex::ParallelDescriptor::ReduceLongSum(counts.data(), max_wall_behaviors);
+        amrex::ParallelDescriptor::ReduceLongSum(counts.data(), wall_diagnostic_size);
 
         amrex::Long const n_absorb = counts[static_cast<int>(WallBehavior::absorb)];
         amrex::Long const n_specular = counts[static_cast<int>(WallBehavior::specular)];
@@ -864,7 +871,11 @@ AnalyticBoundaryInteraction ()
         amrex::Long const n_convert = counts[static_cast<int>(WallBehavior::convert)];
         amrex::Long const n_see1 = counts[static_cast<int>(WallBehavior::secondary_electron_1)];
         amrex::Long const n_see2 = counts[static_cast<int>(WallBehavior::secondary_electron_2)];
-        amrex::Long const n_removed = n_absorb + n_convert + n_see1 + n_see2;
+        amrex::Long const n_elastic = counts[static_cast<int>(WallBehavior::elastic_backscatter)];
+        amrex::Long const n_rediffused = counts[static_cast<int>(WallBehavior::rediffused_backscatter)];
+        amrex::Long const n_true = counts[static_cast<int>(WallBehavior::true_secondary)];
+        amrex::Long const n_removed = n_absorb + n_convert + n_see1 + n_see2 +
+            n_elastic + n_rediffused + n_true;
         amrex::Long const n_emitted = counts[emitted_secondary_slot];
         amrex::Print() << "  species: " << species_name << '\n'
             << "    removed: " << n_removed
@@ -873,6 +884,10 @@ AnalyticBoundaryInteraction ()
             << ", emitted products: " << n_convert
             << ", emitted secondaries: " << n_emitted
             << " (SEE1 " << n_see1 << ", SEE2 " << n_see2 << ")\n";
+        if (n_elastic + n_rediffused + n_true > 0) {
+            amrex::Print() << "    stainless events: elastic " << n_elastic
+                << ", rediffused " << n_rediffused << ", true secondary " << n_true << '\n';
+        }
     }
 #endif
 }
