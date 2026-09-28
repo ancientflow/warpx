@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Insert/Boundary/CeramicInteraction.h"
+#include "Insert/Boundary/StainlessSteelInteraction.h"
 
 #include <variant>
 
@@ -10,6 +11,6 @@ namespace Insert {
  * Each alternative manages its own allocation and device emission kernels.
  * Only its trivially copyable sampler is captured inside those kernels.
  */
-using MaterialInteraction = std::variant<CeramicInteraction>;
+using MaterialInteraction = std::variant<CeramicInteraction, StainlessSteelInteraction>;
 
 } // namespace Insert

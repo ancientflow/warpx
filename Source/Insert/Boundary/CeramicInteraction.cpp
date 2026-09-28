@@ -42,6 +42,8 @@ void CeramicInteraction::Process (
     auto* const count = counts.dataPtr();
     auto* const offset = offsets.dataPtr();
 
+    // 第一遍确定事件和新增数量；镜面分支保留原粒子并推进剩余时间。
+    // 吸收记录保持零出射电荷，公共流程因此沉积全部入射电荷。
     amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
         int const k, amrex::RandomEngine const& engine) noexcept {
         int const i = source_index[k];
@@ -62,6 +64,7 @@ void CeramicInteraction::Process (
         }
         record[k] = result;
     });
+    // 前缀和为每个事件分配互不重叠的写入区间，added 是实际新增粒子总数。
     amrex::Long const added = amrex::Scan::ExclusiveSum(nhits, count, offsets.data());
     amrex::Gpu::streamSynchronize(); // finish source access before resizing
     if (added == 0) { return; }
@@ -75,6 +78,7 @@ void CeramicInteraction::Process (
         amrex::Abort("Ceramic emission exceeds the particle tile index range.");
     }
     target_tile.resize(old_size + added);
+    // 源和目标可能相同；resize 后重新获取数据指针，避免使用失效地址。
     auto const src = source.ParticlesAt(lev, pti).getParticleTileData();
     auto const dst = target_tile.getParticleTileData();
     amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
@@ -88,6 +92,7 @@ void CeramicInteraction::Process (
         for (int j = 0; j < count[k]; ++j) {
             int const target = static_cast<int>(old_size + offset[k] + j);
             auto const& u = velocities[j];
+            // 继承宏粒子权重及共享属性，再覆盖出射速度和剩余时间推进后的坐标。
             Copy(dst, src, i, target, engine);
             dst.m_rdata[PIdx::ux][target] = u.x;
             dst.m_rdata[PIdx::uy][target] = u.y;
@@ -95,10 +100,12 @@ void CeramicInteraction::Process (
             dst.m_rdata[PIdx::x][target] = impact.position.x + u.x * impact.remaining_time;
             dst.m_rdata[PIdx::y][target] = impact.position.y + u.y * impact.remaining_time;
             dst.m_rdata[PIdx::z][target] = impact.position.z + u.z * impact.remaining_time;
+            // 记录带宏粒子权重的实际出射电荷，供公共流程计算净沉积电荷。
             record[k].outgoing_charge += target_charge * dst.m_rdata[PIdx::w][target];
             ++record[k].emitted_count;
         }
     });
+    // 补齐运行时属性并赋予新 ID；同步保证临时数组释放前设备读写已完成。
     ParticleCreation::DefaultInitializeRuntimeAttributes(
         target_tile, destination, old_size, old_size + added);
     setNewParticleIDs(target_tile, old_size, added);
