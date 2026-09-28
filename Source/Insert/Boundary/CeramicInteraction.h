@@ -1,11 +1,15 @@
 #pragma once
 
 #include "Insert/Boundary/WallBehavior.h"
+#include "Insert/Boundary/WallInteractionData.h"
 #include "Insert/Boundary/WallInteractionOperators.h"
 #include "Insert/Math/ParticleVector.h"
 #include "Utils/WarpXConst.H"
 
+#include "Particles/WarpXParticleContainer_fwd.H"
+
 #include <AMReX_Array.H>
+#include <AMReX_GpuContainers.H>
 #include <AMReX_Random.H>
 
 #include <cmath>
@@ -13,16 +17,29 @@
 
 namespace Insert {
 
-/** Electron/ceramic collision model from Script/3d_hall_dielectric_slot.
- * Defines event probabilities and outgoing velocity distributions only.
- * Particle creation, charge deposition, deletion and diagnostics are handled
- * by the common boundary driver. Input velocities are physical m/s.
+/** Electron/ceramic interaction from Script/3d_hall_dielectric_slot.
+ * Owns event selection, reflection, allocation and secondary emission.
+ * Deposition, primary deletion and diagnostics remain in the common finalizer.
+ * Input velocities are physical m/s.
  */
 class CeramicInteraction
 {
 public:
     /** Thermal parameter kT in eV, not mean emitted kinetic energy. */
     explicit CeramicInteraction (amrex::ParticleReal secondary_temperature_eV = 3.0);
+
+    static constexpr int max_emitted = 2;
+
+#if defined(WARPX_DIM_3D)
+    /** Host entry; all records and products are complete on return. The source
+     * may also be the destination. Primaries remain valid until common cleanup.
+     */
+    void Process (
+        WarpXParticleContainer& source, WarpXParticleContainer& destination,
+        WarpXParIter const& pti, amrex::Gpu::DeviceVector<int> const& indices,
+        amrex::Gpu::DeviceVector<WallImpact> const& impacts,
+        amrex::Gpu::DeviceVector<WallInteractionRecord>& records) const;
+#endif
 
     /** Select the event once; its multiplicity is given by WallEmissionCount. */
     [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -35,7 +52,7 @@ public:
      * with mean kinetic energy 2 kT and no event-wise energy truncation.
      */
     [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    amrex::GpuArray<ParticleVector, max_wall_emissions> SampleEmission (
+    amrex::GpuArray<ParticleVector, max_emitted> SampleEmission (
         WallBehavior event, ParticleVector const& hit_velocity,
         ParticleVector const& normal, amrex::RandomEngine const& engine) const noexcept;
 
@@ -74,13 +91,14 @@ WallBehavior CeramicInteraction::SelectEvent (
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::GpuArray<ParticleVector, max_wall_emissions> CeramicInteraction::SampleEmission (
+amrex::GpuArray<ParticleVector, CeramicInteraction::max_emitted>
+CeramicInteraction::SampleEmission (
     WallBehavior const event, ParticleVector const& hit_velocity,
     ParticleVector const& normal_to_domain, amrex::RandomEngine const& engine) const noexcept
 {
     ParticleVector normal = normal_to_domain;
     Math::Normalize(normal_to_domain, normal);
-    amrex::GpuArray<ParticleVector, max_wall_emissions> velocities{};
+    amrex::GpuArray<ParticleVector, max_emitted> velocities{};
     int const count = WallEmissionCount(event);
     for (int j = 0; j < count; ++j) {
         DiffuseReemissionOperator{m_thermal_velocity}(
