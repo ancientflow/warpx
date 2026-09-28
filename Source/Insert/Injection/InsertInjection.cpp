@@ -636,7 +636,8 @@ InjectHallParticles ()
 #if defined(HALL3D) || defined(HALL3D_INIT)
     amrex::Real dt = 0.0;
     amrex::ParmParse pp_mc("my_constants");
-    pp_mc.query("dt", dt);
+    // Parser-aware query: dt may be a math expression (e.g. 5e-8 / l_factor).
+    utils::parser::queryWithParser(pp_mc, "dt", dt);
     HallInjector::GetInstance().InjectParticles(WarpX::GetInstance(), dt, 0);
 #endif
 }

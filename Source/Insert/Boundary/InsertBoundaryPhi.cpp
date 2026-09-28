@@ -90,9 +90,9 @@ VoltageAdjustment ()
 
     amrex::Print() << "voltage adjustment: " << phisum << std::endl;
 
-    // MLMG filled the ghosts for the uncorrected potential. Apply the same
-    // affine correction there before computeE takes centered differences.
-    // Iterate whole FABs without tiling so each ghost is updated exactly once.
+    // Apply the same affine correction to the ghost nodes before computeE
+    // takes centered differences. Iterate whole FABs without tiling so each
+    // ghost is updated exactly once.
     for (amrex::MFIter mfi(*phi_field); mfi.isValid(); ++mfi) {
         amrex::Box const box = mfi.fabbox();
 
@@ -100,6 +100,37 @@ VoltageAdjustment ()
         amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
             phi(i, j, k) -= phisum * amrex::Real(i - xlo) / correction_frac;
         });
+    }
+
+    // MLMG leaves Dirichlet-side ghost nodes unfilled (zero) for nodal solves,
+    // while computeE reads them at the boundary nodes. Refill them by quadratic
+    // extrapolation so the centered difference there becomes the second-order
+    // one-sided difference of the corrected potential.
+    int const xhi_node = xlo + domain.length(0);
+    for (amrex::MFIter mfi(*phi_field); mfi.isValid(); ++mfi) {
+        amrex::Box const box = mfi.fabbox();
+
+        amrex::Array4<amrex::Real> const& phi = phi_field->array(mfi);
+        if (box.smallEnd(0) < xlo) {
+            amrex::Box ghost_lo = box;
+            ghost_lo.setBig(0, xlo - 1);
+            amrex::ParallelFor(ghost_lo, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+                amrex::Real const g = amrex::Real(xlo - i);
+                phi(i, j, k) = amrex::Real(0.5) * (g + 1) * (g + 2) * phi(xlo, j, k)
+                             - g * (g + 2) * phi(xlo + 1, j, k)
+                             + amrex::Real(0.5) * g * (g + 1) * phi(xlo + 2, j, k);
+            });
+        }
+        if (box.bigEnd(0) > xhi_node) {
+            amrex::Box ghost_hi = box;
+            ghost_hi.setSmall(0, xhi_node + 1);
+            amrex::ParallelFor(ghost_hi, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+                amrex::Real const g = amrex::Real(i - xhi_node);
+                phi(i, j, k) = amrex::Real(0.5) * (g + 1) * (g + 2) * phi(xhi_node, j, k)
+                             - g * (g + 2) * phi(xhi_node - 1, j, k)
+                             + amrex::Real(0.5) * g * (g + 1) * phi(xhi_node - 2, j, k);
+            });
+        }
     }
 #endif
 }
