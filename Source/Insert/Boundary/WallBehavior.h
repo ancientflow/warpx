@@ -12,7 +12,6 @@ enum class WallBehavior : int {
 };
 
 constexpr int max_wall_behaviors = 6;
-constexpr int max_wall_emissions = 2;
 
 [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 int WallEmissionCount (WallBehavior const event) noexcept

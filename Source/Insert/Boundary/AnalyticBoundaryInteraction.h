@@ -7,7 +7,9 @@ namespace Insert {
  *  Reads the insert.analytic_walls registry and the per-species
  *  <species>.analytic_wall.<wall>.material or .behaviors policies. An explicit
  *  material takes precedence over generic behaviors. Both paths share a compact
- *  outside-particle list and precomputed collision states. It must be called after
+ *  outside-particle list and precomputed collision states. Each handler completes
+ *  its own reflection/emission before shared deposition, deletion and diagnostics.
+ *  It must be called after
  *  the particle push and before Redistribute, so invalidated particles are
  *  removed by redistribution.
  */

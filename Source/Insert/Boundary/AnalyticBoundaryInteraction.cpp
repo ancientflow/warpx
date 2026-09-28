@@ -5,6 +5,7 @@
 #include "Insert/Boundary/BoundaryMathUtils.h"
 #include "Insert/Boundary/MaterialInteraction.h"
 #include "Insert/Boundary/WallBehavior.h"
+#include "Insert/Boundary/WallInteractionData.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Insert/Fields/HallWallCharge.H"
 #include "Insert/Math/ThermalVelocity.h"
@@ -53,6 +54,9 @@ namespace {
 
 using namespace amrex::literals;
 
+constexpr int emitted_secondary_slot = max_wall_behaviors;
+constexpr int wall_diagnostic_size = max_wall_behaviors + 1;
+
 struct AnalyticWall
 {
     std::string name;
@@ -93,7 +97,6 @@ struct WallPolicy
  * WallPolicy own the expression storage for these executors. */
 struct WallPolicyView
 {
-    MaterialInteractionDevice material;
     int count = 0;
     std::array<WallBehavior, max_wall_behaviors> behaviors{};
     std::array<amrex::ParserExecutor<7>, max_wall_behaviors - 1> probabilities{};
@@ -101,14 +104,7 @@ struct WallPolicyView
 
     explicit WallPolicyView (WallPolicy const& policy)
         : count(policy.count), behaviors(policy.behaviors), probabilities(policy.probabilities),
-          wall_temperature(policy.wall_temperature)
-    {
-        if (policy.material) {
-            material = std::visit([](auto const& model) {
-                return MaterialInteractionDevice(model);
-            }, *policy.material);
-        }
-    }
+          wall_temperature(policy.wall_temperature) {}
 };
 
 /** Generic policy selection is independent of geometry intersection and materials. */
@@ -327,79 +323,6 @@ GetAnalyticWallConfiguration (MultiParticleContainer const& mpc)
     return config;
 }
 
-/** Shared preprocessing data, allocated only for the compact outside list.
- * Particle indices remain separate so no source pointer survives a tile resize.
- * Positions/velocities/normals use particle precision; remaining_time is in s.
- */
-struct WallImpact
-{
-    AnalyticBoundaryPosition position;
-    AnalyticBoundaryPosition velocity;
-    AnalyticBoundaryPosition normal;
-    amrex::Real remaining_time;
-};
-
-/** Only event selection and outgoing velocity sampling depend on the model. */
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-WallBehavior
-SelectWallBehavior (WallPolicyView const& policy, WallImpact const& impact,
-                    amrex::ParticleReal const mass, amrex::Real const time,
-                    amrex::RandomEngine const& engine) noexcept
-{
-    auto const& u = impact.velocity;
-    if (policy.material.IsActive()) {
-        return policy.material.SelectEvent(u, engine);
-    }
-    return SelectGenericWallBehavior(policy, impact.position, impact.normal,
-        u.x, u.y, u.z, mass, time, engine);
-}
-
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-amrex::GpuArray<ParticleVector, max_wall_emissions>
-SampleWallEmission (WallPolicyView const& policy, WallBehavior const event,
-                    WallImpact const& impact, amrex::ParticleReal const thermal_velocity,
-                    amrex::RandomEngine const& engine) noexcept
-{
-    auto const& n = impact.normal;
-    ParticleVector const& normal = n;
-    if (policy.material.IsActive()) {
-        auto const& u = impact.velocity;
-        return policy.material.SampleEmission(event, u,
-            normal, engine);
-    }
-    // Preserve the generic model's existing joint distribution: SEE2 shares one
-    // thermal draw. Material models sample the complete event themselves above.
-    ParticleVector const velocity =
-        BoundaryMath::DiffuseVelocity(normal, thermal_velocity, engine);
-    amrex::GpuArray<ParticleVector, max_wall_emissions> velocities{};
-    for (int j = 0; j < WallEmissionCount(event); ++j) {
-        velocities[j] = velocity;
-    }
-    return velocities;
-}
-
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-ParticleVector
-SampleWallReflection (WallPolicyView const& policy, WallBehavior const event,
-                      WallImpact const& impact, ParticleVector const& stored_velocity,
-                      amrex::ParticleReal const mass,
-                      amrex::RandomEngine const& engine) noexcept
-{
-    auto const& n = impact.normal;
-    ParticleVector const& normal = n;
-    if (policy.material.IsActive()) {
-        auto const& u = impact.velocity;
-        return policy.material.SampleReflection(u, normal);
-    }
-    // The generic specular model retains its original use of stored velocity;
-    // ceramic reflection uses the corrected impact velocity, as before.
-    if (event == WallBehavior::specular) {
-        return BoundaryMath::ReflectVelocity(normal, stored_velocity, engine);
-    }
-    return BoundaryMath::DiffuseVelocity(normal,
-        Math::ThermalVelocityFromTemperature(policy.wall_temperature, mass), engine);
-}
-
 /** Two lightweight scans without an N-particle flag or prefix-offset array.
  * Only valid particles outside this particular wall are collected. The atomic
  * append does not promise index order; each source index occurs exactly once.
@@ -588,21 +511,22 @@ PreprocessWallImpacts (WarpXParticleContainer& pc, WarpXParIter const& pti,
 }
 
 void
-CreateWallProducts (WarpXParticleContainer& source, WarpXParticleContainer& destination,
-                    WarpXParIter const& pti, amrex::Gpu::DeviceVector<int> const& indices,
-                    amrex::Gpu::DeviceVector<WallImpact> const& impacts,
-                    amrex::Gpu::DeviceVector<int> const& choices,
-                    WallPolicyView const& device_policy, WallBehavior const requested,
-                    amrex::ParticleReal const thermal_velocity, int const lev)
+CreateGenericWallProducts (
+    WarpXParticleContainer& source, WarpXParticleContainer& destination,
+    WarpXParIter const& pti, amrex::Gpu::DeviceVector<int> const& indices,
+    amrex::Gpu::DeviceVector<WallImpact> const& impacts,
+    amrex::Gpu::DeviceVector<WallInteractionRecord>& records,
+    WallBehavior const requested, amrex::ParticleReal const product_charge,
+    amrex::ParticleReal const thermal_velocity, int const lev)
 {
     int const nhits = static_cast<int>(indices.size());
     auto* const source_index = indices.dataPtr();
     auto* const hit = impacts.dataPtr();
-    auto* const choice = choices.dataPtr();
+    auto* const record = records.dataPtr();
     amrex::Gpu::DeviceVector<amrex::Long> counts(nhits), offsets(nhits);
     auto* const count = counts.dataPtr();
     amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
-        count[k] = choice[k] == static_cast<int>(requested) ? WallEmissionCount(requested) : 0;
+        count[k] = record[k].event == requested ? WallEmissionCount(requested) : 0;
     });
     amrex::Long const added = amrex::Scan::ExclusiveSum(nhits, count, offsets.data());
     if (added == 0) { return; }
@@ -625,10 +549,9 @@ CreateWallProducts (WarpXParticleContainer& source, WarpXParticleContainer& dest
         if (count[k] == 0) { return; }
         int const i = source_index[k];
         auto const impact = hit[k];
-        auto const velocities = SampleWallEmission(
-            device_policy, requested, impact, thermal_velocity, engine);
+        // Preserve the generic SEE2 model: one velocity draw shared by both products.
+        auto const u = BoundaryMath::DiffuseVelocity(impact.normal, thermal_velocity, engine);
         for (int j = 0; j < count[k]; ++j) {
-            auto const& u = velocities[j];
             int const idst = static_cast<int>(old_size + offset[k] + j);
             Copy(dst_data, src_data, i, idst, engine);
             dst_data.m_rdata[PIdx::ux][idst] = static_cast<amrex::ParticleReal>(u.x);
@@ -640,12 +563,90 @@ CreateWallProducts (WarpXParticleContainer& source, WarpXParticleContainer& dest
                 static_cast<amrex::ParticleReal>(u.y) * impact.remaining_time;
             dst_data.m_rdata[PIdx::z][idst] = impact.position.z +
                 static_cast<amrex::ParticleReal>(u.z) * impact.remaining_time;
+            record[k].outgoing_charge += product_charge * dst_data.m_rdata[PIdx::w][idst];
+            ++record[k].emitted_count;
         }
     });
     ParticleCreation::DefaultInitializeRuntimeAttributes(
         dst_tile, destination, old_size, old_size + added);
     amrex::Gpu::synchronize();
     setNewParticleIDs(dst_tile, old_size, added);
+}
+
+/** Generic policy's complete interaction stage; no deposition or primary deletion. */
+void
+ProcessGenericWallPolicy (
+    WarpXParticleContainer& pc, WallPolicy const& policy, WarpXParIter const& pti,
+    amrex::Gpu::DeviceVector<int> const& indices,
+    amrex::Gpu::DeviceVector<WallImpact> const& impacts,
+    amrex::Gpu::DeviceVector<WallInteractionRecord>& records,
+    amrex::Real const time, MultiParticleContainer& mpc)
+{
+    int const nhits = static_cast<int>(indices.size());
+    int const lev = pti.GetLevel();
+    auto const* const source_index = indices.dataPtr();
+    auto const* const hit = impacts.dataPtr();
+    auto* const record = records.dataPtr();
+    WallPolicyView const model(policy);
+    amrex::ParticleReal const mass = pc.getMass();
+    amrex::ParticleReal const charge = pc.getCharge();
+    auto const input = pc.ParticlesAt(lev, pti).getParticleTileData();
+    amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
+        int const k, amrex::RandomEngine const& engine) noexcept {
+        int const i = source_index[k];
+        auto const impact = hit[k];
+        auto const& u = impact.velocity;
+        WallInteractionRecord result;
+        result.event = SelectGenericWallBehavior(model, impact.position, impact.normal,
+            u.x, u.y, u.z, mass, time, engine);
+        result.keep_primary = result.event == WallBehavior::specular ||
+                              result.event == WallBehavior::diffuse;
+        if (result.keep_primary) {
+            result.outgoing_charge = charge * input.m_rdata[PIdx::w][i];
+        }
+        record[k] = result;
+    });
+    amrex::Gpu::streamSynchronize(); // source views must finish before any resize
+
+    if (!policy.product_species.empty()) {
+        auto& target = mpc.GetParticleContainerFromName(policy.product_species);
+        auto const product_charge = policy.has_product_charge ?
+            policy.product_charge : target.getCharge();
+        CreateGenericWallProducts(pc, target, pti, indices, impacts, records,
+            WallBehavior::convert, product_charge,
+            Math::ThermalVelocityFromTemperature(policy.wall_temperature, target.getMass()), lev);
+    }
+    if (!policy.secondary_species.empty()) {
+        auto& target = mpc.GetParticleContainerFromName(policy.secondary_species);
+        auto const thermal = Math::ThermalVelocityFromEV(
+            policy.secondary_temperature_eV, target.getMass());
+        CreateGenericWallProducts(pc, target, pti, indices, impacts, records,
+            WallBehavior::secondary_electron_1, target.getCharge(), thermal, lev);
+        CreateGenericWallProducts(pc, target, pti, indices, impacts, records,
+            WallBehavior::secondary_electron_2, target.getCharge(), thermal, lev);
+    }
+
+    // Creation may have resized the source tile. Use fresh pointers for reflection.
+    auto const particles = pc.ParticlesAt(lev, pti).getParticleTileData();
+    amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
+        int const k, amrex::RandomEngine const& engine) noexcept {
+        if (!record[k].keep_primary) { return; }
+        int const i = source_index[k];
+        auto const impact = hit[k];
+        ParticleVector const stored_velocity{particles.m_rdata[PIdx::ux][i],
+            particles.m_rdata[PIdx::uy][i], particles.m_rdata[PIdx::uz][i]};
+        auto const u = record[k].event == WallBehavior::specular ?
+            BoundaryMath::ReflectVelocity(impact.normal, stored_velocity, engine) :
+            BoundaryMath::DiffuseVelocity(impact.normal,
+                Math::ThermalVelocityFromTemperature(model.wall_temperature, mass), engine);
+        particles.m_rdata[PIdx::ux][i] = u.x;
+        particles.m_rdata[PIdx::uy][i] = u.y;
+        particles.m_rdata[PIdx::uz][i] = u.z;
+        particles.m_rdata[PIdx::x][i] = impact.position.x + u.x * impact.remaining_time;
+        particles.m_rdata[PIdx::y][i] = impact.position.y + u.y * impact.remaining_time;
+        particles.m_rdata[PIdx::z][i] = impact.position.z + u.z * impact.remaining_time;
+    });
+    amrex::Gpu::streamSynchronize();
 }
 
 template <typename Boundary>
@@ -656,23 +657,7 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                  amrex::Long* const counts,
                  amrex::Real* const anode_stats, int const wall_id)
 {
-    amrex::ParticleReal const mass = pc.getMass();
     amrex::ParticleReal const charge = pc.getCharge();
-    WallPolicyView const device_policy(policy);
-    amrex::ParticleReal product_charge = 0.0_prt;
-    amrex::ParticleReal secondary_charge = 0.0_prt;
-    if (!policy.product_species.empty()) {
-        // The product charge defaults to the product species' charge, but can
-        // be overridden: a species may carry a nonzero bookkeeping charge
-        // (e.g. 1 C so that charge deposition yields a density field)
-        // while the physical conversion product is uncharged.
-        product_charge = policy.has_product_charge
-            ? policy.product_charge
-            : mpc.GetParticleContainerFromName(policy.product_species).getCharge();
-    }
-    if (!policy.secondary_species.empty()) {
-        secondary_charge = mpc.GetParticleContainerFromName(policy.secondary_species).getCharge();
-    }
     for (int lev = 0; lev <= pc.finestLevel(); ++lev) {
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
@@ -689,44 +674,23 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
             auto impacts = PreprocessWallImpacts(pc, pti, boundary, outside_indices, dt);
             auto* const hit = impacts.dataPtr();
 
-            amrex::Gpu::DeviceVector<int> choices(nhits);
-            auto* const choice = choices.dataPtr();
-            amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
-                int const k, amrex::RandomEngine const& engine) noexcept {
-                // Persist the event once; later allocation and spectra use it unchanged.
-                choice[k] = static_cast<int>(SelectWallBehavior(
-                    device_policy, hit[k], mass, time, engine));
-            });
-
-            if (!policy.product_species.empty()) {
-                auto& target = mpc.GetParticleContainerFromName(policy.product_species);
-                CreateWallProducts(
-                    pc, target, pti, outside_indices, impacts, choices,
-                    device_policy, WallBehavior::convert,
-                    Math::ThermalVelocityFromTemperature(
-                        policy.wall_temperature, target.getMass()), lev);
-            }
-            if (!policy.secondary_species.empty()) {
+            amrex::Gpu::DeviceVector<WallInteractionRecord> records(nhits);
+            if (policy.material) {
                 auto& target = mpc.GetParticleContainerFromName(policy.secondary_species);
-                auto const thermal = Math::ThermalVelocityFromEV(
-                    policy.secondary_temperature_eV, target.getMass());
-                CreateWallProducts(pc, target, pti, outside_indices, impacts, choices,
-                    device_policy, WallBehavior::secondary_electron_1, thermal, lev);
-                CreateWallProducts(pc, target, pti, outside_indices, impacts, choices,
-                    device_policy, WallBehavior::secondary_electron_2, thermal, lev);
+                std::visit([&](auto const& model) {
+                    model.Process(pc, target, pti, outside_indices, impacts, records);
+                }, *policy.material);
+            } else {
+                ProcessGenericWallPolicy(pc, policy, pti, outside_indices, impacts,
+                    records, time, mpc);
             }
 
-            // Product creation can resize this source tile when a product is emitted
-            // into the same species. Reacquire all source pointers after that resize.
+            // Both handlers have completed all products and source-dependent copies.
+            // Only finalization below may invalidate incident particles.
+            auto const* const record = records.dataPtr();
             auto& updated_soa = pc.ParticlesAt(lev, pti).GetStructOfArrays();
-            uint64_t* const AMREX_RESTRICT updated_idcpu = updated_soa.GetIdCPUData().data();
-            auto* const AMREX_RESTRICT updated_x = updated_soa.GetRealData(PIdx::x).data();
-            auto* const AMREX_RESTRICT updated_y = updated_soa.GetRealData(PIdx::y).data();
-            auto* const AMREX_RESTRICT updated_z = updated_soa.GetRealData(PIdx::z).data();
-            auto* const AMREX_RESTRICT updated_ux = updated_soa.GetRealData(PIdx::ux).data();
-            auto* const AMREX_RESTRICT updated_uy = updated_soa.GetRealData(PIdx::uy).data();
-            auto* const AMREX_RESTRICT updated_uz = updated_soa.GetRealData(PIdx::uz).data();
-            auto* const AMREX_RESTRICT updated_weight = updated_soa.GetRealData(PIdx::w).data();
+            auto* const updated_idcpu = updated_soa.GetIdCPUData().data();
+            auto* const updated_weight = updated_soa.GetRealData(PIdx::w).data();
             if (policy.deposit_wall_charge) {
                 // wall_charge is only fetched from HallWallCharge when at
                 // least one active policy deposits; it must be valid here.
@@ -742,46 +706,18 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 // when atomics are used.
                 amrex::For(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
                     int const i = source_index[k];
-                    WallBehavior const selected = static_cast<WallBehavior>(choice[k]);
-                    if (selected == WallBehavior::none || selected == WallBehavior::specular ||
-                        selected == WallBehavior::diffuse) { return; }
-                    // Reuse the common preprocessing result.
+                    if (record[k].event == WallBehavior::none) { return; }
+                    amrex::ParticleReal const retained_charge =
+                        charge * updated_weight[i] - record[k].outgoing_charge;
+                    if (retained_charge == 0.0_prt) { return; }
                     auto const& position = hit[k].position;
-                    amrex::ParticleReal out_charge = 0.0_prt;
-                    if (selected == WallBehavior::convert) { out_charge = product_charge; }
-                    else if (selected == WallBehavior::secondary_electron_1) {
-                        out_charge = secondary_charge;
-                    } else if (selected == WallBehavior::secondary_electron_2) {
-                        out_charge = 2.0_prt * secondary_charge;
-                    }
-                    DepositWallChargeToNodes(
-                        charge_grid, grid, position.x, position.y, position.z,
-                        (charge - out_charge) * updated_weight[i]);
+                    DepositWallChargeToNodes(charge_grid, grid,
+                        position.x, position.y, position.z, retained_charge);
                 });
             }
-            amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
-                int const k, amrex::RandomEngine const& engine) noexcept {
-                int const i = source_index[k];
-                WallBehavior const selected = static_cast<WallBehavior>(choice[k]);
-                auto pidw = amrex::ParticleIDWrapper{updated_idcpu[i]};
-                if (!pidw.is_valid() || selected == WallBehavior::none) { return; }
-                if (selected == WallBehavior::specular || selected == WallBehavior::diffuse) {
-                    // Reuse the common preprocessing result.
-                    auto const& position = hit[k].position;
-                    amrex::Real const remaining_time = hit[k].remaining_time;
-                    ParticleVector const stored_velocity{
-                        updated_ux[i], updated_uy[i], updated_uz[i]};
-                    ParticleVector const u = SampleWallReflection(
-                        device_policy, selected, hit[k], stored_velocity, mass, engine);
-                    updated_ux[i] = static_cast<amrex::ParticleReal>(u.x);
-                    updated_uy[i] = static_cast<amrex::ParticleReal>(u.y);
-                    updated_uz[i] = static_cast<amrex::ParticleReal>(u.z);
-                    updated_x[i] = position.x + updated_ux[i] * remaining_time;
-                    updated_y[i] = position.y + updated_uy[i] * remaining_time;
-                    updated_z[i] = position.z + updated_uz[i] * remaining_time;
-                    return;
-                }
-                pidw.make_invalid();
+            amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
+                if (record[k].event == WallBehavior::none || record[k].keep_primary) { return; }
+                amrex::ParticleIDWrapper{updated_idcpu[source_index[k]]}.make_invalid();
             });
             if (anode_stats != nullptr) {
                 // Wall-current bookkeeping: scatter weighted sums into the
@@ -790,15 +726,8 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 int const base = wall_id * anode_current_class_size;
                 amrex::For(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
                     int const i = source_index[k];
-                    WallBehavior const selected = static_cast<WallBehavior>(choice[k]);
-                    if (selected == WallBehavior::none || selected == WallBehavior::specular ||
-                        selected == WallBehavior::diffuse) { return; }
-                    amrex::ParticleReal out_charge = 0.0_prt;
-                    if (selected == WallBehavior::convert) { out_charge = product_charge; }
-                    else if (selected == WallBehavior::secondary_electron_1) {
-                        out_charge = secondary_charge;
-                    } else if (selected == WallBehavior::secondary_electron_2) {
-                        out_charge = 2.0_prt * secondary_charge;
+                    if (record[k].event == WallBehavior::none || record[k].keep_primary) {
+                        return;
                     }
                     amrex::ParticleReal const w = updated_weight[i];
                     if (charge < 0.0_prt) {
@@ -809,26 +738,33 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                             static_cast<amrex::Real>(w));
                     }
                     amrex::HostDevice::Atomic::Add(&anode_stats[base + 2],
-                        static_cast<amrex::Real>((charge - out_charge) * w));
+                        static_cast<amrex::Real>(charge * w - record[k].outgoing_charge));
                 });
             }
 
-            if (counts == nullptr) { continue; }
+            if (counts == nullptr) {
+                // Record and impact storage must outlive the finalization kernels.
+                amrex::Gpu::streamSynchronize();
+                continue;
+            }
 
-            // Count the events selected for this tile. choice[k] still holds the
-            // behavior even for particles that were invalidated above.
-            amrex::Long tile_counts[max_wall_behaviors];
+            // Records remain valid after their incident particles are invalidated.
+            amrex::Long tile_counts[wall_diagnostic_size];
             for (int b = 0; b < max_wall_behaviors; ++b) {
                 tile_counts[b] = amrex::Reduce::Sum<amrex::Long>(
                     nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept -> amrex::Long {
-                        return choice[k] == b ? 1 : 0;
+                        return static_cast<int>(record[k].event) == b ? 1 : 0;
                     });
             }
+            tile_counts[emitted_secondary_slot] = amrex::Reduce::Sum<amrex::Long>(
+                nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept -> amrex::Long {
+                    return record[k].event == WallBehavior::convert ? 0 : record[k].emitted_count;
+                });
 #ifdef AMREX_USE_OMP
 #pragma omp critical
 #endif
             {
-                for (int b = 0; b < max_wall_behaviors; ++b) {
+                for (int b = 0; b < wall_diagnostic_size; ++b) {
                     counts[b] += tile_counts[b];
                 }
             }
@@ -886,7 +822,7 @@ AnalyticBoundaryInteraction ()
     }();
     // Attribute events to the incident species and accumulate across all walls.
     // Keep the same species order on every rank, including ranks with no hits.
-    std::map<std::string, std::array<amrex::Long, max_wall_behaviors>> species_counts;
+    std::map<std::string, std::array<amrex::Long, wall_diagnostic_size>> species_counts;
     if (wall_interaction_diag) {
         for (auto const& [species_name, policies] : config.policies) {
             species_counts[species_name] = {};
@@ -929,7 +865,7 @@ AnalyticBoundaryInteraction ()
         amrex::Long const n_see1 = counts[static_cast<int>(WallBehavior::secondary_electron_1)];
         amrex::Long const n_see2 = counts[static_cast<int>(WallBehavior::secondary_electron_2)];
         amrex::Long const n_removed = n_absorb + n_convert + n_see1 + n_see2;
-        amrex::Long const n_emitted = n_see1 + 2*n_see2;
+        amrex::Long const n_emitted = counts[emitted_secondary_slot];
         amrex::Print() << "  species: " << species_name << '\n'
             << "    removed: " << n_removed
             << ", specular: " << n_specular
