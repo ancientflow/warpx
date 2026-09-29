@@ -537,6 +537,12 @@ computePhi (
 #endif
         mlmg.setVerbose(verbosity);
         mlmg.setMaxIter(max_iters);
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        if (relative_permittivity != nullptr) {
+            mlmg.setPreSmooth(1);
+            mlmg.setPostSmooth(2);
+        }
+#endif
         if (num_final_sweeps) {
             mlmg.setFinalSmooth(*num_final_sweeps);
         }
