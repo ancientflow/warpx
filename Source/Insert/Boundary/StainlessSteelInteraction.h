@@ -19,8 +19,8 @@ namespace Insert {
 /** Furman--Pivi unconditioned SLAC 304 preset (2002), Tables I/II.
  * Uses the penetrated-electron binomial model, Eqs. (39)--(46).
  * M defaults to 10; the tabulated spectra only support multiplicities 1--10.
- * Invalid probabilities are reported by Process before any particle is
- * modified. No probability clipping, angular saturation or Poisson truncation.
+ * Impacts with invalid probabilities or conditional mean are fully absorbed.
+ * No probability clipping, angular saturation or Poisson truncation.
  */
 class StainlessSteelInteraction
 {
@@ -56,7 +56,7 @@ public:
     };
 
     /** 设置二项分布试验次数 M；1<=M<=10，受现有能谱表覆盖范围限制。
-     * 每次撞击还须满足条件均值 mu<M；这里不实现泊松分布或其截断。
+     * 条件均值不满足 mu<M 的撞击回退为吸收；这里不实现泊松分布或其截断。
      */
     explicit StainlessSteelInteraction (int binomial_trials = spectrum_count);
 
@@ -83,7 +83,7 @@ public:
     Parameters Evaluate (
         ParticleVector const& velocity, ParticleVector const& normal) const noexcept;
 
-    /** 要求 p.status==valid；先按 delta_e、delta_r 选择两个背散射分支。
+    /** p.status 无效时直接吸收，不抽随机数；有效时先选择两个背散射分支。
      * 剩余概率 A 内采样 Binomial(M,mu/M)，其中 n=0 为吸收。
      * A 不是吸收概率：实际吸收概率为 A*(1-mu/M)^M。
      */
@@ -183,6 +183,9 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 StainlessSteelInteraction::Event StainlessSteelInteraction::SelectEvent (
     Parameters const& p, amrex::RandomEngine const& engine) const noexcept
 {
+    // Outside the sampler's admissible domain, absorb the whole incident.
+    // The common finalizer handles its charge deposition and deletion.
+    if (p.status != Status::valid) { return {WallBehavior::absorb, 0}; }
     Scalar const u = UniformOpen(engine);
     if (u < p.elastic) { return {WallBehavior::elastic_backscatter, 1}; }
     if (u < p.elastic+p.rediffused) { return {WallBehavior::rediffused_backscatter, 1}; }

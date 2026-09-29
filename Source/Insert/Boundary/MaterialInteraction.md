@@ -1,9 +1,13 @@
-# Boundary collision models and shared execution
+# Analytic-wall preprocessing, interaction handlers and finalization
 
-The generic and material paths differ only in collision-model operations:
-event selection, emission velocity sampling, and reflected velocity sampling.
-Particle filtering, impact reconstruction, allocation, creation, wall-charge
-deposition, deletion and diagnostics all use the same driver implementation.
+The generic, ceramic and stainless-steel paths own their complete reflection/emission stage.
+They share preprocessing and finalization, not an emission buffer interface.
+
+```text
+CollectOutsideParticleIndices -> PreprocessWallImpacts
+    -> ProcessGenericWallPolicy OR material.Process
+    -> common charge deposition -> primary invalidation -> diagnostics
+```
 
 ## Configuration
 
@@ -14,119 +18,159 @@ electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
 electrons.analytic_wall.ceramic_wall.deposit_wall_charge = 1
 ```
 
-`ceramic` is currently the only material name; unknown names are input errors.
-The target defaults to the incident species, temperature to 3 eV and deposition
-to enabled. Material selection takes precedence over `behaviors`, `p_*`,
-`wall_temperature` and conversion settings for that species/wall pair. Without
-a material, the generic parser-based configuration is used. Without either
-configuration the policy is inactive. The Hall slot example selects ceramic for
-electron/ceramic interaction while its other pairs use generic policies.
+Material selection takes precedence over the same species/wall's generic
+`behaviors` and probability expressions. Without a material, generic policies
+retain their existing behavior. Materials are `ceramic` and `stainless_steel`;
+unknown names are input errors. The target defaults to the incident species,
+ceramic temperature to 3 eV and deposition to enabled. Both material species must be
+physical electrons. The Hall slot example uses ceramic for electrons at the
+ceramic wall, with generic policies for the other species/wall pairs.
 
-The host retains `std::variant` for material configuration and converts it to a
-trivially copyable `MaterialInteractionDevice`. Only collision-model functions
-perform device-side material dispatch; no `std::visit` executes on the device.
+The host uses `std::visit` to select a material's `Process` method after shared
+preprocessing. Each method owns allocation and launches its own device kernels;
+only its sampler data is captured by those kernels. No variant or virtual call
+runs on the device. The former common device material dispatcher is removed.
 
-## Shared preprocessing
+## Shared preprocessing and records
 
-Particle positions, velocities, normals and sampled emission arrays use
-`ParticleVector`, whose three components are `amrex::ParticleReal`.
-`AnalyticBoundaryPosition` is an alias of this type. Reflection, normalization
-and basis transforms also operate in particle precision, without passing through
-`amrex::XDim3`. The latter remains only for field-gather geometry such as the
-inverse mesh spacing and mesh-box origin.
+`CollectOutsideParticleIndices` counts valid particles outside the wall and
+atomically appends their indices to an exactly sized array. It uses a reduction
+and `amrex::For`, without full-particle flags or offsets. Empty lists skip later
+work. The append does not guarantee ordering or the previous RNG sequence.
 
-Thermal sampling scales dimensionless normal draws in particle precision. The
-zero-drift normal flux uses its exact inverse CDF in that precision; this retains
-the same Maxwellian flux spectrum but may consume a different RNG sequence.
+`PreprocessWallImpacts` stores position at impact, corrected physical velocity,
+normal and remaining time in `WallImpact`. These calculations are unchanged.
+Coordinates, velocities and directions use `ParticleVector`/`ParticleReal`;
+only field-gather mesh geometry uses `XDim3`. Every downstream array is indexed
+by compact event index k; source attributes use i = outside_indices[k].
 
-`CollectOutsideParticleIndices` counts valid particles outside the wall, then
-collects their original indices into an exactly sized array. This uses a reduction
-and an atomic append with `amrex::For`, with no full-particle flags or offsets.
-Empty tiles and zero-candidate tiles skip subsequent work. Append order is not
-guaranteed, so random draws need not match the former full-particle traversal.
+Both handlers fill `WallInteractionRecord` for every candidate:
 
-`PreprocessWallImpacts` computes a position at impact, corrected physical velocity,
-normal and remaining time for each candidate. Coordinates are in metres,
-velocities in physical m/s, and remaining time in seconds. It preserves the
-existing nonrelativistic bisection and field-regather correction. Preprocessing
-completes before either model is sampled or any source storage is resized.
+- `event`: diagnostic category.
+- `keep_primary`: whether the handler retained and updated the incident particle.
+- `emitted_count`: actual newly created macro-particle count, excluding the primary.
+- `outgoing_charge`: total outgoing charge in C, including macro weights and any
+  retained primary. Generic conversions use the configured `product_charge`
+  override when present.
 
-Event arrays use compact index `k`; particle attributes use original index
-`i = outside_indices[k]`. The lists are rebuilt per species/wall/tile in the
-existing wall order. The source must not be reordered while consuming a list.
+Handlers complete all products, IDs, runtime attributes and record writes before
+returning. They do not invalidate primaries or deposit wall charge. The common
+record imposes no emission-array size. Other materials can implement a different
+multiplicity/energy sampler and allocation scheme without changing generic SEE.
+Diagnostic categories for any new physical channels must be defined explicitly.
 
-## One particle lifecycle
+## Generic processing
 
-1. `SelectWallBehavior` samples one event per candidate, using either generic
-   expressions or `CeramicInteraction::SelectEvent`. The selected `WallBehavior`
-   is stored once and determines multiplicity through `WallEmissionCount`.
-2. `CreateWallProducts` counts the actual products of each event type and uses a
-   prefix sum to allocate exactly the required slots. Both models use the same
-   code, including `SmartCopy`, weight inheritance, runtime-attribute initialization
-   and new IDs. Source pointers are reacquired after same-species resizing.
-3. `SampleWallEmission` invokes the selected collision model for the complete
-   event's outgoing velocities. The common creation code writes each velocity and
-   advances its position from impact through the stored remaining time. The
-   chosen event is not sampled again.
-4. After all products have been created and initialized, the common deposition
-   kernel deposits net retained charge at the original impact point.
-5. The common update kernel either samples a reflected velocity and updates the
-   primary's position, or marks the primary invalid. No primary is deleted before
-   its products are complete. Redistribution later removes invalid entries.
-6. Existing wall-current and event-count diagnostics consume the same event list
-   for both models.
+`ProcessGenericWallPolicy` samples the configured parser probabilities once,
+then calls its private `CreateGenericWallProducts` for conversion, SEE1 and SEE2.
+The helper computes exact counts and offsets, expands the destination tile and
+writes products using `SmartCopy`. It reacquires source data after a same-species
+resize and initializes runtime attributes and IDs before returning.
 
-There is no material-specific maximum-capacity reservation, emission append
-counter, particle-write callback, deposition kernel or deletion implementation.
-Creation counts, offsets and diagnostic loops all scale with candidate count.
-Only collision-model operations branch on the material tag. The public behavior
-vocabulary and its current maximum of two emissions are in `WallBehavior.h`.
+The existing generic thermal distribution is preserved, including the shared
+velocity draw for the two products of SEE2. Specular reflection continues to use
+the stored velocity; diffuse reflection uses the configured wall temperature.
+The handler performs reflection and position updates before common finalization.
 
-## Preserving outgoing spectra
+## Ceramic processing
 
-`SampleEmission` returns the outgoing velocities for one already-selected event.
-The driver copies those samples directly; it never replaces them with a common
-thermal draw, rescales their energy or independently resamples the event. Sampling
-the entire event also leaves room for a material to impose correlations between
-its emitted particles.
+`CeramicInteraction::Process` independently owns its event-selection kernel,
+emission counts, prefix offsets, destination allocation, reflection and emission
+kernel. It allocates the exact combined SEE1/SEE2 product count. It calls its own
+`SampleEmission` once per selected emission event and writes those velocities
+directly into the destination. Only low-level copying, initialization and ID tools
+are reused; it never invokes the generic product-creation helper.
 
-The ceramic preset retains its probability curves, with incident energy E in eV:
+The ceramic sampler retains its original probability curves (E in eV):
 
 - Absorption: `0.5 exp(-(E/43.4592)^2)`.
 - Specular reflection: `0.5 exp(-(E/30)^2)`.
-- Two secondaries: `1 - exp(-(E/127.8958)^2)`.
-- One secondary: the remaining probability.
+- SEE2: `1 - exp(-(E/127.8958)^2)`.
+- SEE1: the remaining probability.
 
-`CeramicInteraction::SampleEmission` independently draws each secondary from the
-existing Maxwellian flux operator using its own configured kT. SEE2 therefore
-still has two independent draws. At the default kT = 3 eV the mean emitted kinetic
-energy is 6 eV. There is no event energy truncation or incidence-angle-dependent
-yield in this inherited ceramic preset. Reflection uses corrected impact velocity.
+Each secondary independently samples the same Maxwellian flux at the material's
+configured kT. SEE2 retains two independent velocities. At kT = 3 eV the mean
+emitted kinetic energy is 6 eV. There is no event-wise energy truncation in this
+preset. Reflection uses the corrected impact velocity. The two-element velocity
+array is now local to the ceramic model, not a requirement on other materials.
 
-The generic model retains its configured thermal distribution, including the
-legacy shared velocity draw for SEE2 and stored-velocity specular reflection.
-These are differences in the existing model prescriptions, not in allocation,
-particle writes or deposition. Reorganizing RNG calls need not preserve the old
-bitwise random sequence even though the distributions are retained.
+All container expansion occurs on the host between kernels. Both handlers retain
+original source indices, reacquire pointers after resizing and avoid processing
+new products as original candidates. Particle redistribution/compaction must not
+occur until the current compact list has been consumed.
 
-## Shared charge accounting
+## Common finalization
 
-Both models use `DepositWallChargeToNodes` and `WallChargeGrid` from
-`HallWallCharge.H`, depositing `(q_in - sum(q_out)) * weight` at the hit point.
-The helper uses trilinear nodal weights, inverse cell volume and
-`HostDevice::Atomic::Add`. For equally weighted electrons (e > 0):
+After the selected handler returns, the driver reacquires source pointers and
+uses only the completed records to perform finalization:
 
-| Event | Retained charge |
-| --- | --- |
-| Absorption | -e * weight |
-| Specular reflection | 0 |
-| SEE1 | 0 |
-| SEE2 | +e * weight |
+1. Deposit `q_in * original_weight - outgoing_charge` at the original hit point
+   with `DepositWallChargeToNodes`, when deposition is enabled. Zero net charge
+   is skipped. This scatter uses `amrex::For` and the existing host/device atomics.
+2. Mark the primary invalid if `keep_primary` is false. All emission work is
+   already complete; redistribution later removes invalid particles.
+3. Accumulate current and event diagnostics. Emitted-secondary totals are reduced
+   from actual `emitted_count`, rather than reconstructed from SEE1/SEE2 labels.
 
-The existing `product_charge` override still applies to generic conversions.
-`deposit_wall_charge = 0` disables surface deposition for either model without
-changing its particle or current-diagnostic behavior. The driver obtains the
-persistent field with `HallWallCharge::get`, and the existing material Poisson
-path handles synchronization and source addition (currently at level 0).
-Deposition uses `amrex::For` to avoid CPU SIMD independence assumptions for shared
-nodes; independent sampling/creation uses the appropriate AMReX particle kernels.
+For equal-weight electrons the retained charge is -e*w for absorption, zero for
+specular reflection/SEE1, and +e*w for SEE2. Neither deposition nor current
+accounting needs to know how a material sampled its spectrum or allocated products.
+The existing persistent field and material Poisson integration are unchanged.
+`deposit_wall_charge = 0` disables deposition without suppressing interaction or
+current diagnostics. RNG call ordering can differ after the reorganization;
+the physical probability and emission distributions are retained.
+
+## Stainless steel: Furman--Pivi SLAC 304 preset
+
+`StainlessSteelInteraction` implements the unconditioned, etched/passivated
+SLAC 304 parameter set in `不锈钢SEE模型_Furman-Pivi.md`, Tables I/II. It is a
+specific surface preset, not a universal stainless-steel model.
+
+```ini
+electrons.analytic_wall.anode.material = stainless_steel
+electrons.analytic_wall.anode.secondary_electron_species = electrons
+electrons.analytic_wall.anode.binomial_trials = 10
+electrons.analytic_wall.anode.deposit_wall_charge = 1
+```
+
+Only `binomial_trials` adjusts the multiplicity distribution; it defaults to 10
+and must be in [1,10], matching the available spectral table. Fitted yield and
+spectral coefficients are encoded in the device sampler. The ceramic
+`secondary_electron_temperature_eV` does not control this material's spectrum.
+The existing Hall example's generic anode policy is not changed automatically.
+
+The sampler follows section 4.2's binomial alternative: first select elastic or
+rediffused backscatter with probabilities delta_e and delta_r; otherwise sample
+n ~ Binomial(M, delta_ts / ((1-delta_e-delta_r) M)). n=0 is absorption.
+This is not the document's alternative Poisson multiplicity law. There is no
+Poisson tail truncation or extrapolation of the n<=10 spectral table.
+
+Elastic backscatter samples the finite-width (sigma=1.9 eV) Gaussian restricted
+to [0,E0]. Rediffused energy is E0 U^(1/1.4). For true secondaries, the exact
+conditional joint Gamma law is sampled using its independent total/fraction
+factorization: S ~ Gamma(n*p_n, epsilon_n) conditional on S<=E0, with fractions
+~ Dirichlet(p_n,...,p_n). A power-law rejection proposal samples the truncated
+total efficiently at low E0; this is mathematically equivalent to rejecting
+entire sets of independent Gamma energies. Rejection never changes the selected
+multiplicity. A roundoff-only correction prevents rotated velocities from
+exceeding the total energy budget. All three channels use the cosine angular
+law about the normal pointing into the simulation domain.
+
+The sampler assumes valid incident states from preprocessing and applies no
+energy or angle fit-range cutoff. It evaluates the same yield formulas outside
+the fitted range. The model requires A>=0 (A=0 only if delta_ts=0) and mu<M.
+These conditions can fail even within the fitted range: E0=100 eV, theta=30 degrees gives mu~14.78,
+invalid for M=10. Evaluation writes a device status; SelectEvent maps any
+invalid status to complete absorption (zero emitted electrons), without drawing
+random numbers or aborting the run. This fallback applies to the entire impact,
+including its backscatter channels. It is an additional physical approximation,
+not a fit-range cutoff or a probability clamp, and reduces the effective yield
+for these impacts. Common finalization deposits the full incident charge when
+wall-charge deposition is enabled, deletes the incident and counts an absorption.
+
+Each emitted electron has the copied incident macro-weight and a new ID.
+All channels replace the incident after emission, including backscatter.
+Common deposition uses q_in*w_in - sum(q_out*w_out): absorption deposits the
+incident charge, one returning electron gives zero net charge, and n true
+secondaries give (n-1)*e*w. The diagnostic `removed` count includes replaced
+backscattered primaries; net current is computed from charge balance.

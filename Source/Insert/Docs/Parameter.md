@@ -86,9 +86,10 @@ Insert 模块处理。
 同一壁面上的 `behaviors` 和 `p_*` 参数；未配置材料时保持通用解析边界处理。
 两者都未配置时，该物种不与此解析壁面交互。未知材料名称会报错，不会退回通用路径。
 
-目前支持 `material = ceramic`，要求入射和二次电子物种均使用物理电子质量和电荷。
+目前支持 `material = ceramic` 和 `material = stainless_steel`，
+要求入射和二次电子物种均使用物理电子质量和电荷。
 `secondary_electron_species` 默认与入射物种相同，
-`secondary_electron_temperature_eV` 默认 `3.0`，`deposit_wall_charge` 默认 `1`。
+陶瓷的 `secondary_electron_temperature_eV` 默认 `3.0`，`deposit_wall_charge` 默认 `1`。
 材料路径仍使用同一解析几何、壁面电荷场和电流诊断，不重复执行通用碰撞处理。例如：
 
 ```text
@@ -97,6 +98,28 @@ electrons.analytic_wall.ceramic.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic.secondary_electron_temperature_eV = 3.0
 electrons.analytic_wall.ceramic.deposit_wall_charge = 1
 ```
+
+不锈钢采用 Furman–Pivi 的 SLAC 304 未处理表面参数集，独立实现弹性背散射、
+再扩散和多电子真二次发射能谱，三类出射均使用余弦角分布：
+
+```text
+electrons.analytic_wall.anode.material = stainless_steel
+electrons.analytic_wall.anode.secondary_electron_species = electrons
+electrons.analytic_wall.anode.binomial_trials = 10
+electrons.analytic_wall.anode.deposit_wall_charge = 1
+```
+
+`binomial_trials` 为文档二项方案的 M，默认 10，允许 1–10；拟合系数与能谱表编码在模型中，
+不使用陶瓷的温度参数。真二次能量按受总能量约束的联合分布采样。
+实现假定预处理提供有效入射状态，不检查输入状态异常，也不限制拟合能量或角度范围；
+超出拟合范围时继续使用相同公式。仍需满足
+`A=1-delta_e-delta_r>=0`（A=0 时需 delta_ts=0）及 `mu=delta_ts/A<M`。
+例如 100 eV、30° 已不满足 M=10，不能仅按能量范围判断可用性。
+概率或条件均值不满足上述要求时，整个撞击直接回退为完全吸收，不再中止计算：
+不产生任何出射电子，删除入射粒子，并在启用壁面电荷沉积时沉积完整入射电荷。
+这是一项额外的物理近似，会降低这些撞击的有效二次电子产额；有效撞击仍使用原模型。
+不裁剪概率，也不截断泊松尾部。
+详见 [材料实现说明](../Boundary/MaterialInteraction.md)。
 
 通用路径中，`behaviors` 的顺序定义累积概率抽样；除
 最后一项外，每项以 `p_<behavior>(E_eV,u_n,u_t,x,y,z,t)` 给出概率，最后一项采用余量。
@@ -132,9 +155,10 @@ ions.analytic_wall.anode.deposit_wall_charge = 1
 不再为域内粒子分配碰撞信息数组。索引压缩可能改变随机数与粒子的对应顺序，
 相同种子下的逐粒子结果不保证与旧遍历方式完全一致。
 
-两种配置只在碰撞模型的事件选择和出射速度采样上不同。事件只抽样一次，
-随后统一按实际产物数量分配空间、初始化粒子、沉积电荷、删除入射粒子并记录诊断。
-材料模型的出射速度由其自身能谱采样函数给出，公共写入流程不会用通用热分布替换。
+预处理后，通用路径和材料路径各自完成事件选择、目标空间分配、反射与发射。
+事件只抽样一次，材料路径自行按其能谱生成并写入粒子，不经过通用发射函数。
+两者返回是否保留原粒子、实际新增数量和含宏粒子权重的出射总电荷；公共收尾据此
+沉积电荷、标记删除并记录诊断，保证在发射及初始化完成之后才删除入射粒子。
 陶瓷 SEE2 保留两个独立的发射采样；通用 SEE2 保留原有的共享速度采样。
 
 相互作用仅在物种实际推进的步执行。`specular` 与 `diffuse` 保留入射粒子并从交点推进
