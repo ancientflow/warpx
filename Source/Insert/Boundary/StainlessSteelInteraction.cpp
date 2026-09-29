@@ -7,11 +7,9 @@
 
 #include <AMReX_Gpu.H>
 #include <AMReX_GpuLaunch.H>
-#include <AMReX_Reduce.H>
 #include <AMReX_Scan.H>
 
 #include <limits>
-#include <sstream>
 
 namespace Insert {
 
@@ -49,33 +47,6 @@ void StainlessSteelInteraction::Process (
     amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
         parameter[k] = model.Evaluate(hit[k].velocity, hit[k].normal);
     });
-    // 有效项返回 -1，无效项返回紧凑索引；最大值定位一个无效撞击。
-    // 归约结果返回主机后再决定是否中止，检查发生在当前 tile 的粒子修改之前。
-    int const bad = amrex::Reduce::Max<int>(nhits,
-        [=] AMREX_GPU_DEVICE (int const k) noexcept {
-            return parameter[k].status == Status::valid ? -1 : k;
-        });
-    if (bad >= 0) {
-        Parameters p;
-        amrex::Gpu::copy(amrex::Gpu::deviceToHost, parameters.begin()+bad,
-            parameters.begin()+bad+1, &p);
-        std::ostringstream message;
-        message << "Invalid stainless-steel wall impact: ";
-        switch (p.status) {
-        case Status::probabilities:
-            message << "elastic + rediffused probabilities exceed one";
-            break;
-        case Status::binomial_mean:
-            message << "conditional mean must be less than binomial_trials";
-            break;
-        default: break;
-        }
-        message << "; E=" << p.energy << " eV, cos(theta)=" << p.cosine
-                << ", delta_e=" << p.elastic << ", delta_r=" << p.rediffused
-                << ", delta_ts=" << p.true_yield << ", mu=" << p.mean
-                << ", M=" << m_trials << ", level=" << lev << ", compact index=" << bad;
-        amrex::Abort(message.str());
-    }
     amrex::ParallelForRNG(nhits, [=] AMREX_GPU_DEVICE (
         int const k, amrex::RandomEngine const& engine) noexcept {
         event[k] = model.SelectEvent(parameter[k], engine);

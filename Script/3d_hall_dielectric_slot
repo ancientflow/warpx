@@ -157,19 +157,14 @@ analytic_wall.ceramic_wall.normal_x = "0.0"
 analytic_wall.ceramic_wall.normal_y = "0.0"
 analytic_wall.ceramic_wall.normal_z = "1.0"
 
-# 电子在阳极环上发生五种过程：吸收、镜面反射、热化 (diffuse)、SEE1、SEE2。
-# 最后的 secondary_electron_2 自动使用剩余概率。
-# 热化温度与二次电子温度暂沿用陶瓷壁面的取值，可按需调整。
-electrons.analytic_wall.anode_ring.behaviors = absorb specular diffuse secondary_electron_1 secondary_electron_2
-electrons.analytic_wall.anode_ring.p_absorb = "0.5*exp(-E_eV/18)"
-electrons.analytic_wall.anode_ring.p_specular = "0.07+0.43*exp(-E_eV/80)"
-electrons.analytic_wall.anode_ring.p_diffuse = "0.74*(1-exp(-E_eV/40))"
-electrons.analytic_wall.anode_ring.p_secondary_electron_1 = "0.1*E_eV/16*exp(1-E_eV/16)"
-electrons.analytic_wall.anode_ring.wall_temperature = 40000.0
+# 阳极电子采用不锈钢材料模型：弹性背散射、再扩散和真二次发射。
+# 概率或条件均值不合法的撞击回退为完全吸收。
+electrons.analytic_wall.anode_ring.material = stainless_steel
 electrons.analytic_wall.anode_ring.secondary_electron_species = electrons
-electrons.analytic_wall.anode_ring.secondary_electron_temperature_eV = 3.0
+electrons.analytic_wall.anode_ring.binomial_trials = 10
+electrons.analytic_wall.anode_ring.deposit_wall_charge = 1
 
-# 陶瓷材料特化；阳极、离子和中性原子仍使用通用 behaviors 路径。
+# 陶瓷电子采用材料特化；离子和中性原子仍使用通用 behaviors 路径。
 electrons.analytic_wall.ceramic_wall.material = ceramic
 electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
