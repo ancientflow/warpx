@@ -205,13 +205,15 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     auto & warpx = WarpX::GetInstance();
     warpx.SyncRho( rho_fp, rho_cp, amrex::GetVecOfPtrs(rho_buf) );
 
-#ifndef WARPX_DIM_RZ
+#if !defined(WARPX_DIM_RZ) && !defined(WARPX_USE_HALL_FAR_FIELD)
     for (int lev = 0; lev < num_levels; lev++) {
         // Reflect density over PEC boundaries, if needed.
         warpx.ApplyRhofieldBoundary(lev, rho_fp[lev], PatchType::fine);
     }
 #endif
 
+    // With the far-field grid, keep the exterior deposition support from SyncRho
+    // instead of reflecting it into the fine domain as a PEC image charge.
     Insert::FilterRhoForECDIControl(rho_fp, max_level);
 
     // beta is zero in lab frame
@@ -232,6 +234,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         electrostatic_material.prepare(rho_fp, phi_fp, max_level);
         anode_masks = *electrostatic_material.anodeMasks();
         relative_permittivity = electrostatic_material.relativePermittivity();
+#ifdef WARPX_USE_HALL_FAR_FIELD
+        m_far_field_poisson.restrictCharge(*rho_fp[0]);
+#endif
     }
 #endif
 

@@ -3,6 +3,7 @@
 
 #include <ablastr/fields/MultiFabRegister.H>
 
+#include <AMReX_Geometry.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_Parser.H>
 #include <AMReX_Vector.H>
@@ -37,6 +38,9 @@ public:
 
     [[nodiscard]] amrex::Vector<amrex::iMultiFab const*> const*
     anodeMasks () const noexcept;
+
+    /** Evaluate the same physical anode on a caller-owned nodal layout. */
+    void fillAnodeMask (amrex::iMultiFab& mask, amrex::Geometry const& geom);
 
 private:
     HallElectrostaticMaterial () = default;

@@ -11,6 +11,7 @@
 #include <AMReX_MLMG.H>
 #include <AMReX_MLNodeLaplacian.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_iMultiFab.H>
 
 #include <array>
 #include <memory>
@@ -22,8 +23,8 @@ namespace Insert {
 
 /** Fixed auxiliary Poisson grid, owned by the single-level electrostatic solver.
  *
- * Stage one only constructs the layout and storage. Charge transfer, material
- * initialization and the coarse solve will be added in subsequent stages.
+ * Builds the layout and transfers charge, including exterior deposition support.
+ * The coarse material solve and potential transfer are added in subsequent stages.
  */
 class HallFarFieldPoisson
 {
@@ -35,12 +36,18 @@ public:
     void assertLayout (amrex::Geometry const& geom, amrex::MultiFab const& phi,
                        amrex::MultiFab const& rho) const;
 
+    /** Restrict synchronized total fine charge, then zero the coarse anode RHS.
+     * The input includes wall charge once and has not undergone PEC reflection.
+     */
+    void restrictCharge (amrex::MultiFab const& rho);
+
 private:
     void defineGeometry (amrex::Geometry const& fine_geom);
     void defineBoxes (amrex::BoxArray const& fine_boxes,
                      amrex::DistributionMapping const& fine_dmap);
     void allocateFields (amrex::MultiFab const& phi, amrex::MultiFab const& rho,
                          int history_capacity);
+    void defineChargeTransfer (amrex::MultiFab const& rho);
     void reportLayout () const;
 
     bool m_defined = false;
@@ -59,9 +66,18 @@ private:
 
     amrex::MultiFab m_rho;
     amrex::MultiFab m_phi;
-    // Coarsened fine Boxes retain their fine-grid ownership and natural indices.
+    // Partial restrictions of uniquely owned fine nodes; component 1 tracks |rho|.
     amrex::MultiFab m_rho_patch;
+    // Coarsened fine Boxes used for future potential interpolation.
     amrex::MultiFab m_phi_patch;
+    // Expanded at physical faces to retain all synchronized deposition ghosts.
+    amrex::MultiFab m_rho_source;
+    amrex::MultiFab m_rho_raw;
+    amrex::MultiFab m_source_support;
+    amrex::iMultiFab m_source_anode_mask;
+    amrex::iMultiFab m_anode_mask;
+    std::unique_ptr<amrex::iMultiFab> m_source_owner;
+    std::unique_ptr<amrex::iMultiFab> m_coarse_owner;
     std::array<std::unique_ptr<amrex::MultiFab>, 3> m_phi_history;
     std::array<amrex::Real, 3> m_history_times{};
     int m_history_depth = 0;

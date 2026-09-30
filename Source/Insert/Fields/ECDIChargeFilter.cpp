@@ -1,8 +1,8 @@
 #include "ECDIChargeFilter.h"
 
-#include "Insert/Math/InterpUtils.h"
+#include "Insert/Config/HallElectrostaticConfig.H"
 #include "Insert/Config/WarpXSimulationConfig.h"
-
+#include "Insert/Math/InterpUtils.h"
 #include "WarpX.H"
 
 #include <ablastr/profiler/ProfilerWrapper.H>
@@ -379,9 +379,12 @@ FilterRhoForECDIControl (
     ECDIChargeFilterDiagnostics* diagnostics_ptr = options.diagnostics ? &diagnostics : nullptr;
     ApplyECDIChargeFilter(*rho_fp[0], warpx.Geom(0), options, diagnostics_ptr);
 
-    // Refresh guard cells and physical boundaries after modifying valid-domain rho.
+    // Refresh internal ghosts. The far-field path retains actual exterior
+    // deposition support and must not replace it with a PEC image source.
     rho_fp[0]->FillBoundary(warpx.Geom(0).periodicity());
+#ifndef WARPX_USE_HALL_FAR_FIELD
     warpx.ApplyRhofieldBoundary(0, rho_fp[0], PatchType::fine);
+#endif
 
     if (options.diagnostics) {
         PrintDiagnostics(diagnostics);

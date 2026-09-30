@@ -22,6 +22,27 @@ namespace Insert {
 
 namespace {
 
+void
+FillAnodeMask (
+    amrex::iMultiFab& mask, amrex::Geometry const& geom,
+    amrex::ParserExecutor<3> const anode_implicit)
+{
+    auto const prob_lo = geom.ProbLoArray();
+    auto const cell_size = geom.CellSizeArray();
+    auto const domain_lo = amrex::lbound(geom.Domain());
+    for (amrex::MFIter mfi(mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto const values = mask.array(mfi);
+        amrex::ParallelFor(mfi.tilebox(),
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+            {
+                amrex::Real const x = prob_lo[0] + (i - domain_lo.x) * cell_size[0];
+                amrex::Real const y = prob_lo[1] + (j - domain_lo.y) * cell_size[1];
+                amrex::Real const z = prob_lo[2] + (k - domain_lo.z) * cell_size[2];
+                values(i, j, k) = anode_implicit(x, y, z) <= 0.0 ? 0 : 1;
+            });
+    }
+}
+
 /**
  * Initialize and validate the static electrostatic material fields on one level.
  *
@@ -70,9 +91,10 @@ InitializeMaterialLevel (
             });
     }
 
+    FillAnodeMask(anode_mask, geom, anode_implicit);
     for (amrex::MFIter mfi(anode_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
         amrex::Box const& box = mfi.tilebox();
-        auto const mask = anode_mask.array(mfi);
+        auto const mask = anode_mask.const_array(mfi);
         auto const fixed_phi = anode_phi.array(mfi);
         amrex::ParallelFor(
             box,
@@ -81,8 +103,7 @@ InitializeMaterialLevel (
                 amrex::Real const x = prob_lo[0] + (i - domain_lo.x) * cell_size[0];
                 amrex::Real const y = prob_lo[1] + (j - domain_lo.y) * cell_size[1];
                 amrex::Real const z = prob_lo[2] + (k - domain_lo.z) * cell_size[2];
-                bool const inside_anode = anode_implicit(x, y, z) <= 0.0;
-                mask(i, j, k) = inside_anode ? 0 : 1;
+                bool const inside_anode = mask(i, j, k) == 0;
                 fixed_phi(i, j, k) = inside_anode ? anode_potential(x, y, z) : 0.0;
             });
     }
@@ -203,6 +224,17 @@ HallElectrostaticMaterial::readParametersOnce ()
     m_anode_potential = utils::parser::compileParser<3>(m_anode_potential_parser.get());
 
     m_parameters_read = true;
+}
+
+void
+HallElectrostaticMaterial::fillAnodeMask (
+    amrex::iMultiFab& mask, amrex::Geometry const& geom)
+{
+    readParametersOnce();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_enabled && mask.ixType().nodeCentered() && mask.nComp() == 1,
+        "Anode mask evaluation requires enabled materials and a scalar nodal mask.");
+    FillAnodeMask(mask, geom, m_anode_implicit);
 }
 
 void

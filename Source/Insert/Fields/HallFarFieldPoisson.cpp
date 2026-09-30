@@ -9,11 +9,18 @@
 #include "Utils/TextMsg.H"
 #include "WarpX.H"
 
+#include <ablastr/coarsen/average.H>
+#include <ablastr/fields/Interpolate.H>
+#include <ablastr/utils/Communication.H>
+
 #include <AMReX_CoordSys.H>
+#include <AMReX_Gpu.H>
+#include <AMReX_MFIter.H>
 #include <AMReX_ParallelDescriptor.H>
 #include <AMReX_ParmParse.H>
 #include <AMReX_Print.H>
 #include <AMReX_RealBox.H>
+#include <AMReX_Reduce.H>
 #include <AMReX_Vector.H>
 
 #include <algorithm>
@@ -49,6 +56,20 @@ void WriteBox (std::ostream& os, amrex::Box const& box)
     }
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         os << ' ' << box.bigEnd(d);
+    }
+}
+
+// NVCC extended device lambdas cannot be defined in private member functions.
+void FillCoarseSupport (amrex::MultiFab& support, amrex::iMultiFab const& anode_mask)
+{
+    for (amrex::MFIter mfi(support, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto const mask = anode_mask.const_array(mfi);
+        auto const values = support.array(mfi);
+        amrex::ParallelFor(mfi.tilebox(),
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+            {
+                values(i, j, k) = amrex::Real(mask(i, j, k));
+            });
     }
 }
 
@@ -93,6 +114,7 @@ void HallFarFieldPoisson::initialize (
     defineGeometry(m_fine_geom);
     defineBoxes(m_fine_boxes, phi.DistributionMap());
     allocateFields(phi, rho, history_capacity);
+    defineChargeTransfer(rho);
     m_defined = true;
     reportLayout();
 }
@@ -228,11 +250,9 @@ void HallFarFieldPoisson::allocateFields (
     }
     m_rho.define(nodes, m_dmap, 1, rho_ngrow);
     m_phi.define(nodes, m_dmap, 1, phi_ngrow);
-    m_rho_patch.define(patch_nodes, m_dmap, 1, rho_ngrow);
     m_phi_patch.define(patch_nodes, m_dmap, 1, phi_ngrow);
     m_rho.setVal(0);
     m_phi.setVal(0);
-    m_rho_patch.setVal(0);
     m_phi_patch.setVal(0);
     for (int hist = 0; hist < history_capacity; ++hist) {
         m_phi_history[hist] = std::make_unique<amrex::MultiFab>(nodes, m_dmap, 1, phi_ngrow);
@@ -240,6 +260,169 @@ void HallFarFieldPoisson::allocateFields (
     }
     m_history_depth = 0;
     m_history_times.fill(0);
+}
+
+void HallFarFieldPoisson::defineChargeTransfer (amrex::MultiFab const& rho)
+{
+    // Extend only physical faces, rounding outwards to complete coarse cells.
+    // This makes formerly exterior deposition ghosts valid source nodes. Internal
+    // Box overlaps are still only nodal overlaps and have a cached unique owner.
+    auto const padding = ((rho.nGrowVect() + m_ratio - 1) / m_ratio) * m_ratio;
+    amrex::Vector<amrex::Box> source_boxes(m_fine_boxes.size());
+    for (int ibox = 0; ibox < m_fine_boxes.size(); ++ibox) {
+        auto box = m_fine_boxes[ibox];
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            if (box.smallEnd(d) == m_fine_geom.Domain().smallEnd(d)) {
+                box.growLo(d, padding[d]);
+            }
+            if (box.bigEnd(d) == m_fine_geom.Domain().bigEnd(d)) {
+                box.growHi(d, padding[d]);
+            }
+        }
+        source_boxes[ibox] = box;
+    }
+    amrex::BoxArray source_nodes(source_boxes.data(), static_cast<int>(source_boxes.size()));
+    source_nodes.surroundingNodes();
+    auto const patch_nodes = amrex::coarsen(source_nodes, m_ratio);
+    auto const coarse_nodes = m_rho.boxArray();
+    m_rho_source.define(source_nodes, m_dmap, 2, 0);
+    m_rho_patch.define(patch_nodes, m_dmap, 2, 0);
+    m_rho_raw.define(coarse_nodes, m_dmap, 2, 0);
+    m_source_support.define(source_nodes, m_dmap, 1, 0);
+    m_source_anode_mask.define(source_nodes, m_dmap, 1, 0);
+    m_anode_mask.define(coarse_nodes, m_dmap, 1, 0);
+    m_source_owner = m_rho_source.OwnerMask();
+    m_coarse_owner = m_rho_raw.OwnerMask();
+    m_rho_source.setVal(0);
+    m_rho_patch.setVal(0);
+    m_rho_raw.setVal(0);
+
+    auto& material = HallElectrostaticMaterial::GetInstance();
+    material.fillAnodeMask(m_source_anode_mask, m_fine_geom);
+    material.fillAnodeMask(m_anode_mask, m_geom);
+
+    // P(mask) > 0 iff at least one non-anode coarse recipient has nonzero
+    // restriction weight. Use the existing interpolation kernel, not new weights.
+    amrex::MultiFab coarse_support(coarse_nodes, m_dmap, 1, 0);
+    amrex::MultiFab patch_support(patch_nodes, m_dmap, 1, 0);
+    FillCoarseSupport(coarse_support, m_anode_mask);
+    patch_support.setVal(0);
+    ablastr::utils::communication::ParallelCopy(
+        patch_support, coarse_support, 0, 0, 1,
+        amrex::IntVect::TheZeroVector(), amrex::IntVect::TheZeroVector(), false);
+    for (amrex::MFIter mfi(m_source_support, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        ablastr::fields::details::PoissonInterpCPtoFP const interp(
+            m_source_support.array(mfi), patch_support.const_array(mfi), m_ratio);
+        amrex::ParallelFor(mfi.tilebox(), interp);
+    }
+    amrex::Gpu::streamSynchronize();
+}
+
+void HallFarFieldPoisson::restrictCharge (amrex::MultiFab const& rho)
+{
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_defined && rho.boxArray().CellEqual(m_fine_boxes) &&
+            rho.DistributionMap() == m_dmap && rho.nGrowVect() == m_fine_rho_ngrow &&
+            rho.ixType().nodeCentered() && rho.nComp() == 1,
+        "Hall charge transfer requires the initialized fine rho layout.");
+    auto const zero = amrex::IntVect::TheZeroVector();
+    // SyncRho has already summed deposition into valid AND exterior ghost nodes.
+    // The second copy gives valid data priority over stale internal ghosts after
+    // filtering, wall-charge addition and fine-anode clearing. Do not sum again.
+    m_rho_source.setVal(0);
+    ablastr::utils::communication::ParallelCopy(
+        m_rho_source, rho, 0, 0, 1, rho.nGrowVect(), zero, false);
+    ablastr::utils::communication::ParallelCopy(
+        m_rho_source, rho, 0, 0, 1, zero, zero, false);
+    m_rho_source.OverrideSync();
+
+    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum, amrex::ReduceOpSum> fine_ops;
+    amrex::ReduceData<amrex::Real, amrex::Real, amrex::Real> fine_data(fine_ops);
+    using FineTuple = decltype(fine_data)::Type;
+    for (amrex::MFIter mfi(m_rho_source, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto const source = m_rho_source.array(mfi);
+        auto const owner = m_source_owner->const_array(mfi);
+        auto const mask = m_source_anode_mask.const_array(mfi);
+        auto const support = m_source_support.const_array(mfi);
+        fine_ops.eval(mfi.tilebox(), fine_data,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> FineTuple
+            {
+                // Restrict disjoint contributions. Shared coarse nodes are summed later.
+                amrex::Real const value = owner(i, j, k) && mask(i, j, k)
+                    ? source(i, j, k, 0) : amrex::Real(0);
+                amrex::Real const magnitude = std::abs(value);
+                source(i, j, k, 0) = value;
+                source(i, j, k, 1) = magnitude;
+                amrex::Real const unsupported = magnitude != 0 && support(i, j, k) <= 0
+                    ? amrex::Real(1) : amrex::Real(0);
+                return {value, magnitude, unsupported};
+            });
+    }
+    auto const fine_sums = fine_data.value();
+
+    // With no source ghosts, Coarsen computes each Box's partial contribution.
+    // Source Box endpoints are coarse-aligned, so every stencil recipient lies
+    // in that Box's coarse patch. ParallelAdd accumulates those partial results.
+    ablastr::coarsen::average::Coarsen(m_rho_patch, m_rho_source, m_ratio);
+    m_rho_raw.setVal(0);
+    ablastr::utils::communication::ParallelAdd(
+        m_rho_raw, m_rho_patch, 0, 0, 2, zero, zero, false);
+    m_rho_raw.OverrideSync();
+
+    amrex::ReduceOps<amrex::ReduceOpSum, amrex::ReduceOpSum> coarse_ops;
+    amrex::ReduceData<amrex::Real, amrex::Real> coarse_data(coarse_ops);
+    using CoarseTuple = decltype(coarse_data)::Type;
+    m_rho.setVal(0);
+    for (amrex::MFIter mfi(m_rho_raw, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto const raw = m_rho_raw.const_array(mfi);
+        auto const owner = m_coarse_owner->const_array(mfi);
+        auto const mask = m_anode_mask.const_array(mfi);
+        auto const rhs = m_rho.array(mfi);
+        coarse_ops.eval(mfi.tilebox(), coarse_data,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> CoarseTuple
+            {
+                bool const anode = mask(i, j, k) == 0;
+                rhs(i, j, k) = anode ? amrex::Real(0) : raw(i, j, k, 0);
+                if (!owner(i, j, k)) {
+                    return {0, 0};
+                }
+                amrex::Real const charge = raw(i, j, k, 0);
+                amrex::Real const magnitude = raw(i, j, k, 1);
+                return {charge, magnitude};
+            });
+    }
+    auto const coarse_sums = coarse_data.value();
+    // These are deposited nodal charges rho*dV, including exterior support, not
+    // trapezoidal integration of a continuum density over the truncated fine box.
+    amrex::Real const fine_volume = m_fine_geom.CellSize(0) * m_fine_geom.CellSize(1)
+        * m_fine_geom.CellSize(2);
+    amrex::Real const coarse_volume = m_geom.CellSize(0) * m_geom.CellSize(1)
+        * m_geom.CellSize(2);
+    std::array<amrex::Real, 5> sums{
+        amrex::get<0>(fine_sums) * fine_volume,
+        amrex::get<1>(fine_sums) * fine_volume,
+        amrex::get<2>(fine_sums),
+        amrex::get<0>(coarse_sums) * coarse_volume,
+        amrex::get<1>(coarse_sums) * coarse_volume};
+    amrex::ParallelDescriptor::ReduceRealSum(sums.data(), static_cast<int>(sums.size()));
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::all_of(sums.begin(), sums.end(), [](amrex::Real v) { return std::isfinite(v); }),
+        "Non-finite source encountered in Hall far-field charge transfer.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(sums[2] == 0,
+        "A charged fine node has no non-anode coarse recipient. Reduce the coarse cell size "
+        "or extend the coarse domain; source charge will not be silently discarded.");
+    amrex::Real const tolerance = 512 * std::numeric_limits<amrex::Real>::epsilon()
+        * (1 + std::log2(std::max(amrex::Real(1),
+                                 amrex::Real(m_rho_source.boxArray().numPts()))))
+        * std::max(sums[1], sums[4]);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::abs(sums[0] - sums[3]) <= tolerance && std::abs(sums[1] - sums[4]) <= tolerance,
+        "Hall charge restriction lost source support or duplicated nodes. The coarse domain "
+        "must contain the complete deposition/restriction support, including fine-domain ghosts.");
+    // Fixed-potential nodes keep rho=0; the masked contribution is neither
+    // redistributed nor recorded as physical wall absorption.
+    m_rho.OverrideSync();
+    ablastr::utils::communication::FillBoundary(m_rho, false);
 }
 
 void HallFarFieldPoisson::assertLayout (
@@ -271,7 +454,7 @@ void HallFarFieldPoisson::reportLayout () const
     auto const history_capacity = std::count_if(
         m_phi_history.begin(), m_phi_history.end(), [](auto const& field) { return bool(field); });
     os << std::setprecision(std::numeric_limits<amrex::Real>::max_digits10);
-    os << "Hall far-field layout initialized (stage one; coarse solve not active).\n";
+    os << "Hall far-field layout initialized (stage two; coarse solve not active).\n";
     os << "fine_domain";
     WriteBox(os, m_fine_geom.Domain());
     os << "\ncoarse_domain";
