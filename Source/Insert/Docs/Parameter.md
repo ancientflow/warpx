@@ -78,6 +78,44 @@ Insert 模块处理。
 入口已删除，不再在求解后用外边界电荷密度额外覆盖 ghost 电势。内部体阳极的
 固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
 
+## 独立远场电势网格
+
+目前完成阶段一，只初始化粗网格、传递缓冲与电势历史，尚未执行粗层求解，
+也不会替换细层电势边界。日志会明确显示 `stage one; coarse solve not active`。
+
+开关位于 `Source/Insert/Config/HallElectrostaticConfig.H`，当前已定义
+`WARPX_USE_HALL_FAR_FIELD`。注释或恢复对应的 `#define` 行后，通过 CLion
+重新构建 `app_3d`。不提供运行时布尔开关。该宏要求保留 `WARPX_USE_HALL_ELECTROSTATIC_MATERIALS`，
+并在输入中启用 `insert.use_electrostatic_materials = 1`。
+
+启用宏后，以下三个数组为必填项，支持参数表达式：
+
+```text
+# 假定细域为 [-1,1] × [-1,1] × [0,2]，网格数为 32 32 32。
+insert.far_field.prob_lo = -2 -2 -0.5
+insert.far_field.prob_hi =  2  2  3.5
+insert.far_field.coarsening_ratio = 2 2 2
+
+# 可选，将初始化布局报告额外写入指定文件，便于人工检查。
+insert.far_field.layout_file = far_field_layout.txt
+```
+
+粗域必须包含并扩展细域，各方向扩展量必须为整数个粗网格单元。x、y 方向要求
+细域居中、粗细网格各自的 x/y 单元数相等、x/y 粗化比相等。z 可以不居中。
+粗层保留自然粗化索引，外延部分可能使用负索引，因此后续可以复用 WarpX 的
+`fine_index = coarse_index * ratio` 限制和插值规则。
+
+MPI 布局要求每个细 Box 在 x、y 方向恰好占对应的半域，且分界位于中心面。
+上述示例可以设置 `amr.max_grid_size_x = 16`、`amr.max_grid_size_y = 16` 和
+`amr.max_grid_size_z = 32`。串行还允许 x、y 都不分块；z 分块必须与粗网格对齐。
+粗层只向外延伸边缘 Boxes，保持 Box 编号和 rank 所有权，实际布局不满足约束时
+初始化直接报错。MPI ghost 通信仍然必要。
+
+本模式要求 `amr.max_level = 0`、非周期三维笛卡尔布局、lab-frame MLMG，
+不支持 EB、Python `poissonsolver` 回调、移动窗口、负载均衡和 regrid。
+历史槽数暂用 `warpx.self_fields_phi_extrapolation_order + 1`，重启重新分配并清零。
+阶段一预留求解器缓存，但不创建材料算子；原有细层求解流程继续执行。
+
 ## 解析壁面粒子相互作用
 
 解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。

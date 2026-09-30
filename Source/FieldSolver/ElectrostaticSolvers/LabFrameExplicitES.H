@@ -10,6 +10,9 @@
 #define WARPX_LABFRAMEEXPLICITES_H_
 
 #include "ElectrostaticSolver.H"
+#ifdef WARPX_USE_HALL_FAR_FIELD
+#include "Insert/Fields/HallFarFieldPoisson.H"
+#endif
 
 #include <AMReX_MultiFab.H>
 #include <AMReX_Vector.H>
@@ -45,6 +48,10 @@ public:
     );
 
 private:
+
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    Insert::HallFarFieldPoisson m_far_field_poisson;
+#endif
 
     void preparePhiExtrapolatedInitialGuess (
         const ablastr::fields::MultiLevelScalarField& phi

@@ -412,6 +412,12 @@ WarpX::WarpX ()
     m_borrowing.resize(nlevs_max);
 
     // Create Electrostatic Solver object if needed
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame ||
+            electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrameElectroMagnetostatic,
+        "WARPX_USE_HALL_FAR_FIELD requires a lab-frame electrostatic solver.");
+#endif
     if ((WarpX::electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame)
         || (WarpX::electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrameElectroMagnetostatic))
     {

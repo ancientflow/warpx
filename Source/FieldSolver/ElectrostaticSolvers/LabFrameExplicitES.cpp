@@ -29,6 +29,12 @@ using namespace amrex;
 void LabFrameExplicitES::InitData() {
     auto & warpx = WarpX::GetInstance();
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    m_far_field_poisson.initialize(
+        warpx, *warpx.m_fields.get(warpx::fields::FieldType::phi_fp, 0),
+        *warpx.m_fields.get(warpx::fields::FieldType::rho_fp, 0),
+        phiExtrapolationCacheDepth());
+#endif
 }
 
 int LabFrameExplicitES::phiExtrapolationCacheDepth () const
@@ -181,6 +187,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     const MultiLevelScalarField rho_fp = fields.get_mr_levels(FieldType::rho_fp, max_level);
     const MultiLevelScalarField rho_cp = fields.get_mr_levels(FieldType::rho_cp, max_level, skip_lev0_coarse_patch);
     const MultiLevelScalarField phi_fp = fields.get_mr_levels(FieldType::phi_fp, max_level);
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    m_far_field_poisson.assertLayout(WarpX::GetInstance().Geom(0), *phi_fp[0], *rho_fp[0]);
+#endif
     const MultiLevelVectorField Efield_fp = fields.get_mr_levels_alldirs(FieldType::Efield_fp, max_level);
 
     ExecutePythonCallback("beforedeposition");
