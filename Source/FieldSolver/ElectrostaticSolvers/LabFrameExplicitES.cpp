@@ -30,10 +30,19 @@ void LabFrameExplicitES::InitData() {
     auto & warpx = WarpX::GetInstance();
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 #ifdef WARPX_USE_HALL_FAR_FIELD
+    Insert::HallFarFieldPoisson::SolverSettings defaults;
+    defaults.m_relative_tolerance = self_fields_required_precision;
+    defaults.m_absolute_tolerance = self_fields_absolute_tolerance;
+    defaults.m_max_iters = self_fields_max_iters;
+    defaults.m_verbosity = self_fields_verbosity;
+    defaults.m_num_final_sweeps = self_fields_num_final_sweeps;
+    defaults.m_extrapolation_order = self_fields_phi_extrapolation_order;
+    defaults.m_extrapolation_alpha = self_fields_phi_extrapolation_alpha;
+    defaults.m_extrapolation_beta = self_fields_phi_extrapolation_beta;
     m_far_field_poisson.initialize(
         warpx, *warpx.m_fields.get(warpx::fields::FieldType::phi_fp, 0),
         *warpx.m_fields.get(warpx::fields::FieldType::rho_fp, 0),
-        phiExtrapolationCacheDepth());
+        defaults);
 #endif
 }
 
@@ -236,6 +245,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         relative_permittivity = electrostatic_material.relativePermittivity();
 #ifdef WARPX_USE_HALL_FAR_FIELD
         m_far_field_poisson.restrictCharge(*rho_fp[0]);
+        m_far_field_poisson.solve(warpx.gett_new(0), verbose_step);
 #endif
     }
 #endif

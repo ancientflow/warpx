@@ -5,7 +5,7 @@
 #if defined(WARPX_DIM_3D)
 #define WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 
-/* Independent far-field grid and charge transfer; the coarse solve is not active yet. */
+/* Independent far-field material solve; fine-grid boundary transfer is not active yet. */
 #define WARPX_USE_HALL_FAR_FIELD
 #endif
 

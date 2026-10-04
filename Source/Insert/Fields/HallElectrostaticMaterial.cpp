@@ -238,6 +238,36 @@ HallElectrostaticMaterial::fillAnodeMask (
 }
 
 void
+HallElectrostaticMaterial::initializeMaterialFields (
+    amrex::MultiFab& epsilon_r, amrex::iMultiFab& anode_mask,
+    amrex::MultiFab& anode_phi, amrex::Geometry const& geom)
+{
+    readParametersOnce();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_enabled && geom.Coord() == amrex::CoordSys::cartesian &&
+            epsilon_r.ixType().cellCentered() && anode_mask.ixType().nodeCentered() &&
+            anode_phi.ixType().nodeCentered() && epsilon_r.nComp() == 1 &&
+            anode_mask.nComp() == 1 && anode_phi.nComp() == 1 &&
+            epsilon_r.boxArray().CellEqual(anode_mask.boxArray()) &&
+            anode_mask.boxArray() == anode_phi.boxArray() &&
+            epsilon_r.DistributionMap() == anode_mask.DistributionMap() &&
+            anode_mask.DistributionMap() == anode_phi.DistributionMap(),
+        "Independent Hall material fields require matching Cartesian cell/nodal layouts.");
+    amrex::Real epsilon_min;
+    amrex::Real epsilon_max;
+    int min_masked_k;
+    int max_masked_k;
+    amrex::Long masked_nodes;
+    InitializeMaterialLevel(
+        epsilon_r, anode_mask, anode_phi, geom,
+        m_relative_permittivity, m_anode_implicit, m_anode_potential,
+        epsilon_min, epsilon_max, min_masked_k, max_masked_k, masked_nodes);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(masked_nodes > 0 && min_masked_k < max_masked_k,
+        "The coarse Hall anode must cover at least two z-node planes. "
+        "Reduce insert.far_field.coarsening_ratio to resolve the anode.");
+}
+
+void
 HallElectrostaticMaterial::prepare (
     ablastr::fields::MultiLevelScalarField const& rho,
     ablastr::fields::MultiLevelScalarField const& phi,

@@ -11,6 +11,7 @@
 
 #include <ablastr/coarsen/average.H>
 #include <ablastr/fields/Interpolate.H>
+#include <ablastr/fields/PoissonSolver.H>
 #include <ablastr/utils/Communication.H>
 
 #include <AMReX_CoordSys.H>
@@ -28,7 +29,9 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
+#include <utility>
 
 namespace Insert {
 namespace {
@@ -73,11 +76,93 @@ void FillCoarseSupport (amrex::MultiFab& support, amrex::iMultiFab const& anode_
     }
 }
 
+void ApplyFixedPotential (
+    amrex::MultiFab& phi, amrex::iMultiFab const& mask,
+    amrex::MultiFab const& anode_phi, amrex::Geometry const& geom)
+{
+    auto const lo = amrex::lbound(amrex::surroundingNodes(geom.Domain()));
+    auto const hi = amrex::ubound(amrex::surroundingNodes(geom.Domain()));
+    for (amrex::MFIter mfi(phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto const values = phi.array(mfi);
+        auto const active = mask.const_array(mfi);
+        auto const fixed = anode_phi.const_array(mfi);
+        amrex::ParallelFor(mfi.tilebox(),
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+            {
+                if (i == lo.x || i == hi.x || j == lo.y || j == hi.y ||
+                    k == lo.z || k == hi.z) {
+                    values(i, j, k) = 0;
+                } else if (active(i, j, k) == 0) {
+                    values(i, j, k) = fixed(i, j, k);
+                }
+            });
+    }
+}
+
+void CheckGroundedAnode (
+    amrex::MultiFab const& anode_phi, amrex::Geometry const& geom)
+{
+    auto const lo = amrex::lbound(amrex::surroundingNodes(geom.Domain()));
+    auto const hi = amrex::ubound(amrex::surroundingNodes(geom.Domain()));
+    amrex::ReduceOps<amrex::ReduceOpMax> ops;
+    amrex::ReduceData<amrex::Real> data(ops);
+    using Tuple = decltype(data)::Type;
+    for (amrex::MFIter mfi(anode_phi, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        auto const fixed = anode_phi.const_array(mfi);
+        ops.eval(mfi.tilebox(), data,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> Tuple
+            {
+                bool const boundary = i == lo.x || i == hi.x || j == lo.y || j == hi.y ||
+                    k == lo.z || k == hi.z;
+                return {boundary ? std::abs(fixed(i, j, k)) : amrex::Real(0)};
+            });
+    }
+    amrex::Real conflict = amrex::get<0>(data.value());
+    amrex::ParallelDescriptor::ReduceRealMax(conflict);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(conflict == 0,
+        "A nonzero Hall anode potential touches the grounded coarse-domain boundary. "
+        "Extend insert.far_field.prob_lo/prob_hi or adjust the anode geometry.");
+}
+
+/** Check the coincident anode nodes retained by AMReX's nodal mask injection. */
+int FirstUnresolvedAnodeLevel (
+    amrex::MLNodeLaplacian const& linop, amrex::iMultiFab const& mask)
+{
+    for (int mg = 0; mg < linop.NMGLevels(0); ++mg) {
+        auto const ratio = linop.Geom(0).Domain().length() / linop.Geom(0, mg).Domain().length();
+        amrex::ReduceOps<amrex::ReduceOpMin, amrex::ReduceOpMax> ops;
+        amrex::ReduceData<int, int> data(ops);
+        using Tuple = decltype(data)::Type;
+        constexpr int empty_min = std::numeric_limits<int>::max();
+        constexpr int empty_max = std::numeric_limits<int>::lowest();
+        for (amrex::MFIter mfi(mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+            auto const values = mask.const_array(mfi);
+            ops.eval(mfi.tilebox(), data,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> Tuple
+                {
+                    bool const retained = values(i, j, k) == 0 &&
+                        i % ratio[0] == 0 && j % ratio[1] == 0 && k % ratio[2] == 0;
+                    return {retained ? k / ratio[2] : empty_min,
+                            retained ? k / ratio[2] : empty_max};
+                });
+        }
+        auto const result = data.value();
+        int min_k = amrex::get<0>(result);
+        int max_k = amrex::get<1>(result);
+        amrex::ParallelDescriptor::ReduceIntMin(min_k);
+        amrex::ParallelDescriptor::ReduceIntMax(max_k);
+        if (min_k >= max_k) {
+            return mg;
+        }
+    }
+    return -1;
+}
+
 } // namespace
 
 void HallFarFieldPoisson::initialize (
     WarpX const& warpx, amrex::MultiFab const& phi, amrex::MultiFab const& rho,
-    int const history_capacity)
+    SolverSettings const& defaults)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!m_defined,
         "Hall far-field grid has already been initialized.");
@@ -111,12 +196,43 @@ void HallFarFieldPoisson::initialize (
     m_fine_boxes = amrex::convert(phi.boxArray(), amrex::IntVect::TheZeroVector());
     m_fine_phi_ngrow = phi.nGrowVect();
     m_fine_rho_ngrow = rho.nGrowVect();
+    readSolverSettings(defaults);
     defineGeometry(m_fine_geom);
     defineBoxes(m_fine_boxes, phi.DistributionMap());
-    allocateFields(phi, rho, history_capacity);
+    allocateFields(phi, rho, m_settings.m_extrapolation_order + 1);
     defineChargeTransfer(rho);
+    defineSolver();
     m_defined = true;
     reportLayout();
+}
+
+void HallFarFieldPoisson::readSolverSettings (SolverSettings const& defaults)
+{
+    m_settings = defaults;
+    amrex::ParmParse const pp("insert.far_field");
+    utils::parser::queryWithParser(pp, "relative_tolerance", m_settings.m_relative_tolerance);
+    utils::parser::queryWithParser(pp, "absolute_tolerance", m_settings.m_absolute_tolerance);
+    utils::parser::queryWithParser(pp, "max_iters", m_settings.m_max_iters);
+    utils::parser::queryWithParser(pp, "verbosity", m_settings.m_verbosity);
+    utils::parser::queryWithParser(pp, "max_coarsening_level", m_settings.m_max_coarsening_level);
+    utils::parser::queryWithParser(pp, "num_final_sweeps", m_settings.m_num_final_sweeps);
+    utils::parser::queryWithParser(pp, "phi_extrapolation_order", m_settings.m_extrapolation_order);
+    utils::parser::queryWithParser(pp, "phi_extrapolation_alpha", m_settings.m_extrapolation_alpha);
+    utils::parser::queryWithParser(pp, "phi_extrapolation_beta", m_settings.m_extrapolation_beta);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::isfinite(m_settings.m_relative_tolerance) &&
+            std::isfinite(m_settings.m_absolute_tolerance) &&
+            m_settings.m_relative_tolerance >= 0 && m_settings.m_absolute_tolerance >= 0 &&
+            (m_settings.m_relative_tolerance > 0 || m_settings.m_absolute_tolerance > 0) &&
+            m_settings.m_max_iters > 0 && m_settings.m_verbosity >= 0 &&
+            m_settings.m_max_coarsening_level >= 0 && m_settings.m_num_final_sweeps > 0,
+        "Hall far-field solver requires finite nonnegative tolerances (at least one positive), "
+        "positive max_iters/num_final_sweeps and nonnegative verbosity/max_coarsening_level.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_settings.m_extrapolation_order >= 0 && m_settings.m_extrapolation_order <= 2 &&
+            std::isfinite(m_settings.m_extrapolation_alpha) &&
+            std::isfinite(m_settings.m_extrapolation_beta),
+        "Hall far-field phi_extrapolation_order must be 0, 1 or 2, with finite alpha/beta.");
 }
 
 void HallFarFieldPoisson::defineGeometry (amrex::Geometry const& fine_geom)
@@ -320,6 +436,7 @@ void HallFarFieldPoisson::defineChargeTransfer (amrex::MultiFab const& rho)
 
 void HallFarFieldPoisson::restrictCharge (amrex::MultiFab const& rho)
 {
+    m_charge_ready = false;
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_defined && rho.boxArray().CellEqual(m_fine_boxes) &&
             rho.DistributionMap() == m_dmap && rho.nGrowVect() == m_fine_rho_ngrow &&
@@ -423,6 +540,134 @@ void HallFarFieldPoisson::restrictCharge (amrex::MultiFab const& rho)
     // redistributed nor recorded as physical wall absorption.
     m_rho.OverrideSync();
     ablastr::utils::communication::FillBoundary(m_rho, false);
+    m_charge_ready = true;
+}
+
+void HallFarFieldPoisson::defineSolver ()
+{
+    m_rhs.define(m_rho.boxArray(), m_dmap, 1, m_rho.nGrowVect());
+    m_epsilon_r.define(m_boxes, m_dmap, 1, 0);
+    m_anode_phi.define(m_phi.boxArray(), m_dmap, 1, 0);
+    m_rhs.setVal(0);
+    HallElectrostaticMaterial::GetInstance().initializeMaterialFields(
+        m_epsilon_r, m_anode_mask, m_anode_phi, m_geom);
+    CheckGroundedAnode(m_anode_phi, m_geom);
+
+    int max_coarsening = m_settings.m_max_coarsening_level;
+    while (true) {
+        amrex::LPInfo info;
+        info.setMaxCoarseningLevel(max_coarsening);
+        m_linop = std::make_unique<amrex::MLNodeLaplacian>(
+            amrex::Vector<amrex::Geometry>{m_geom},
+            amrex::Vector<amrex::BoxArray>{m_boxes},
+            amrex::Vector<amrex::DistributionMapping>{m_dmap}, info);
+        int const unresolved = FirstUnresolvedAnodeLevel(*m_linop, m_anode_mask);
+        if (unresolved < 0) {
+            break;
+        }
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(unresolved > 0,
+            "The Hall anode is unresolved on the coarse physical grid. "
+            "Reduce insert.far_field.coarsening_ratio.");
+        // An upper bound, not a demand to coarsen past the represented electrode.
+        max_coarsening = unresolved - 1;
+    }
+    m_linop->setSigma(0, m_epsilon_r);
+    amrex::Array<amrex::LinOpBCType, AMREX_SPACEDIM> domain_bc;
+    domain_bc.fill(amrex::LinOpBCType::Dirichlet);
+    m_linop->setDomainBC(domain_bc, domain_bc);
+    m_linop->setOversetMask(0, m_anode_mask);
+    m_mlmg = std::make_unique<amrex::MLMG>(*m_linop);
+}
+
+void HallFarFieldPoisson::prepareInitialGuess (amrex::Real const time)
+{
+    if (m_history_depth > 0 && time < m_history_times[0]) {
+        m_history_depth = 0;
+    }
+    if (m_history_depth == 0) {
+        m_phi.setVal(0);
+        return;
+    }
+    auto const ngrow = m_phi.nGrowVect();
+    amrex::MultiFab::Copy(m_phi, *m_phi_history[0], 0, 0, 1, ngrow);
+    if (time == m_history_times[0] || m_history_depth < 2) {
+        return;
+    }
+
+    amrex::Real const interval = time - m_history_times[0];
+    amrex::Real const previous_interval = m_history_times[0] - m_history_times[1];
+    amrex::Real const time_scale = std::max({std::abs(time), std::abs(m_history_times[0]),
+                                            std::abs(m_history_times[1])});
+    amrex::Real const tolerance = 64 * std::numeric_limits<amrex::Real>::epsilon() * time_scale;
+    if (previous_interval <= 0 || std::abs(interval - previous_interval) > tolerance) {
+        // Fixed-step coefficients are not applied across a timestep change.
+        m_history_depth = 1;
+        return;
+    }
+    if (m_history_depth >= 3 &&
+        std::abs(previous_interval - (m_history_times[1] - m_history_times[2])) > tolerance)
+    {
+        m_history_depth = 2;
+    }
+
+    int const order = std::min(m_settings.m_extrapolation_order, m_history_depth - 1);
+    amrex::Real const alpha = m_settings.m_extrapolation_alpha;
+    amrex::Real const beta = order == 2 ? m_settings.m_extrapolation_beta : amrex::Real(0);
+    amrex::MultiFab::LinComb(
+        m_phi, 1 + alpha + beta, *m_phi_history[0], 0,
+        -(alpha + 2 * beta), *m_phi_history[1], 0, 0, 1, ngrow);
+    if (order == 2) {
+        amrex::MultiFab::Saxpy(m_phi, beta, *m_phi_history[2], 0, 0, 1, ngrow);
+    }
+}
+
+void HallFarFieldPoisson::updateHistory (amrex::Real const time)
+{
+    int const capacity = m_settings.m_extrapolation_order + 1;
+    if (m_history_depth == 0 || time != m_history_times[0]) {
+        int const last = std::min(m_history_depth, capacity - 1);
+        for (int hist = last; hist > 0; --hist) {
+            std::swap(m_phi_history[hist], m_phi_history[hist - 1]);
+            m_history_times[hist] = m_history_times[hist - 1];
+        }
+        m_history_depth = std::min(m_history_depth + 1, capacity);
+    }
+    // A repeated solve at the same physical time replaces the latest snapshot.
+    amrex::MultiFab::Copy(*m_phi_history[0], m_phi, 0, 0, 1, m_phi.nGrowVect());
+    m_history_times[0] = time;
+}
+
+void HallFarFieldPoisson::solve (amrex::Real const time, bool const verbose_step)
+{
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_defined && m_charge_ready && m_linop && m_mlmg && std::isfinite(time),
+        "Hall coarse solve requires freshly restricted charge, a solver and a finite time.");
+    m_charge_ready = false;
+    prepareInitialGuess(time);
+    ApplyFixedPotential(m_phi, m_anode_mask, m_anode_phi, m_geom);
+    m_phi.OverrideSync();
+    // computePhi scales its input rho in-place. A separate RHS preserves the
+    // physical charge field even when the solver throws before restoring it.
+    amrex::MultiFab::Copy(m_rhs, m_rho, 0, 0, 1, m_rho.nGrowVect());
+    ablastr::fields::ConstMultiLevelScalarField const epsilon{&m_epsilon_r};
+    // The preconfigured cache keeps the independently chosen geometry, mask and
+    // MG hierarchy. No WarpX AMR level or boundary handler is used for this solve.
+    ablastr::fields::computePhi<std::nullopt_t, std::nullopt_t, void>(
+        {&m_rhs}, {&m_phi}, {0, 0, 0},
+        m_settings.m_relative_tolerance, m_settings.m_absolute_tolerance,
+        m_settings.m_max_iters, verbose_step ? m_settings.m_verbosity : 0,
+        {m_geom}, {m_dmap}, {m_boxes}, ablastr::utils::enums::GridType::Collocated,
+        false, false, false, false,
+        std::nullopt, m_settings.m_num_final_sweeps,
+        std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+        amrex::Vector<amrex::iMultiFab const*>{&m_anode_mask},
+        &epsilon, &m_linop, &m_mlmg);
+    bool const finite_phi = m_phi.is_finite(0, 1, 0);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::isfinite(m_mlmg->getFinalResidual()) && finite_phi,
+        "Hall coarse Poisson solve returned a non-finite residual or potential.");
+    m_phi.OverrideSync();
+    updateHistory(time);
 }
 
 void HallFarFieldPoisson::assertLayout (
@@ -454,7 +699,7 @@ void HallFarFieldPoisson::reportLayout () const
     auto const history_capacity = std::count_if(
         m_phi_history.begin(), m_phi_history.end(), [](auto const& field) { return bool(field); });
     os << std::setprecision(std::numeric_limits<amrex::Real>::max_digits10);
-    os << "Hall far-field layout initialized (stage two; coarse solve not active).\n";
+    os << "Hall far-field layout initialized (stage three; fine boundary transfer not active).\n";
     os << "fine_domain";
     WriteBox(os, m_fine_geom.Domain());
     os << "\ncoarse_domain";
@@ -463,6 +708,8 @@ void HallFarFieldPoisson::reportLayout () const
     os << "\nfine_offset " << m_fine_offset[0] << ' ' << m_fine_offset[1]
        << ' ' << m_fine_offset[2];
     os << "\nhistory_capacity " << history_capacity << "\nhistory_depth " << m_history_depth;
+    os << "\nmg_levels " << m_linop->NMGLevels(0)
+       << "\nmax_coarsening_level " << m_settings.m_max_coarsening_level;
     os << "\nranks " << amrex::ParallelDescriptor::NProcs();
     for (int d = 0; d < AMREX_SPACEDIM; ++d) {
         os << "\nphysical " << d << ' ' << m_fine_geom.ProbLo(d) << ' '

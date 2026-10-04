@@ -23,14 +23,27 @@ namespace Insert {
 
 /** Fixed auxiliary Poisson grid, owned by the single-level electrostatic solver.
  *
- * Builds the layout and transfers charge, including exterior deposition support.
- * The coarse material solve and potential transfer are added in subsequent stages.
+ * Transfers charge and solves the coarse material problem with a temporal predictor.
+ * Transfer of the coarse potential to the fine solver is added in stage four.
  */
 class HallFarFieldPoisson
 {
 public:
+    struct SolverSettings
+    {
+        amrex::Real m_relative_tolerance = 1.e-11;
+        amrex::Real m_absolute_tolerance = 0;
+        int m_max_iters = 200;
+        int m_verbosity = 2;
+        int m_max_coarsening_level = 4;
+        int m_num_final_sweeps = 8;
+        int m_extrapolation_order = 0;
+        amrex::Real m_extrapolation_alpha = 0;
+        amrex::Real m_extrapolation_beta = 0;
+    };
+
     void initialize (WarpX const& warpx, amrex::MultiFab const& phi,
-                     amrex::MultiFab const& rho, int history_capacity);
+                     amrex::MultiFab const& rho, SolverSettings const& defaults);
 
     /** Reject changes to the fine layout instead of retaining stale MPI mappings. */
     void assertLayout (amrex::Geometry const& geom, amrex::MultiFab const& phi,
@@ -41,16 +54,25 @@ public:
      */
     void restrictCharge (amrex::MultiFab const& rho);
 
+    /** Solve the current coarse source and retain only converged potential history. */
+    void solve (amrex::Real time, bool verbose_step);
+
 private:
+    void readSolverSettings (SolverSettings const& defaults);
     void defineGeometry (amrex::Geometry const& fine_geom);
     void defineBoxes (amrex::BoxArray const& fine_boxes,
                      amrex::DistributionMapping const& fine_dmap);
     void allocateFields (amrex::MultiFab const& phi, amrex::MultiFab const& rho,
                          int history_capacity);
     void defineChargeTransfer (amrex::MultiFab const& rho);
+    void defineSolver ();
+    void prepareInitialGuess (amrex::Real time);
+    void updateHistory (amrex::Real time);
     void reportLayout () const;
 
     bool m_defined = false;
+    bool m_charge_ready = false;
+    SolverSettings m_settings;
     amrex::Geometry m_fine_geom;
     amrex::BoxArray m_fine_boxes;
     amrex::DistributionMapping m_dmap;
@@ -66,6 +88,9 @@ private:
 
     amrex::MultiFab m_rho;
     amrex::MultiFab m_phi;
+    amrex::MultiFab m_rhs;
+    amrex::MultiFab m_epsilon_r;
+    amrex::MultiFab m_anode_phi;
     // Partial restrictions of uniquely owned fine nodes; component 1 tracks |rho|.
     amrex::MultiFab m_rho_patch;
     // Coarsened fine Boxes used for future potential interpolation.
@@ -82,7 +107,7 @@ private:
     std::array<amrex::Real, 3> m_history_times{};
     int m_history_depth = 0;
 
-    // Populated with the coarse material operator in stage three. MLMG dies first.
+    // The cached operator borrows the static material fields above. MLMG dies first.
     std::unique_ptr<amrex::MLNodeLaplacian> m_linop;
     std::unique_ptr<amrex::MLMG> m_mlmg;
 };

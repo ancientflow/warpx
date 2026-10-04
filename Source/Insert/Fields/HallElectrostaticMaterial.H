@@ -42,6 +42,11 @@ public:
     /** Evaluate the same physical anode on a caller-owned nodal layout. */
     void fillAnodeMask (amrex::iMultiFab& mask, amrex::Geometry const& geom);
 
+    /** Initialize material fields on an independent, caller-owned grid. */
+    void initializeMaterialFields (
+        amrex::MultiFab& epsilon_r, amrex::iMultiFab& anode_mask,
+        amrex::MultiFab& anode_phi, amrex::Geometry const& geom);
+
 private:
     HallElectrostaticMaterial () = default;
     ~HallElectrostaticMaterial () = default;
