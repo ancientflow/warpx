@@ -80,9 +80,9 @@ Insert 模块处理。
 
 ## 独立远场电势网格
 
-目前实现到阶段二：初始化粗网格，并在每次求场时把叠加壁面电荷后的细层源项
-限制到粗层。尚未执行粗层求解或替换细层电势边界，日志显示
-`stage two; coarse solve not active`。实际构建和 MPI 运行验证尚待完成。
+目前实现到阶段三：每次求场时将细层总电荷限制到粗层，使用历史电势构造初值，
+再求解包含介质和体阳极的粗域泊松方程。粗层解尚未传给细层边界，日志显示
+`stage three; fine boundary transfer not active`。实际构建和 MPI 运行验证尚待完成。
 
 开关位于 `Source/Insert/Config/HallElectrostaticConfig.H`，当前已定义
 `WARPX_USE_HALL_FAR_FIELD`。注释或恢复对应的 `#define` 行后，通过 CLion
@@ -114,8 +114,7 @@ MPI 布局要求每个细 Box 在 x、y 方向恰好占对应的半域，且分�
 
 本模式要求 `amr.max_level = 0`、非周期三维笛卡尔布局、lab-frame MLMG，
 不支持 EB、Python `poissonsolver` 回调、移动窗口、负载均衡和 regrid。
-历史槽数暂用 `warpx.self_fields_phi_extrapolation_order + 1`，重启重新分配并清零。
-目前只预留求解器缓存，不创建粗层材料算子；细层仍使用原有电势边界和求解器。
+粗层使用独立的材料算子和 MLMG 缓存；细层仍使用原有电势边界、初值和求解器。
 
 电荷转移复用 `ablastr::coarsen::average::Coarsen()`。先把已同步的细层总源项
 复制到临时网格，保留粒子沉积在细域外侧 ghost 节点上的形状函数支撑。复制时
@@ -141,6 +140,57 @@ MPI 布局要求每个细 Box 在 x、y 方向恰好占对应的半域，且分�
 
 不输出逐步电荷诊断。若原始转移不守恒则报错；即使细域端点
 与粗域外表面对齐，粗域仍需容纳实际非零沉积及限制支撑，不能静默裁掉外侧贡献。
+
+### 粗层材料求解和外推
+
+介电系数、阳极 mask 与阳极固定电势复用同一套材料表达式，在粗网格的物理坐标上
+分别求值。粗域外表面全部接地；非零电势阳极若接触粗域外表面，初始化报错。
+粗层物理网格上的阳极必须非空并至少覆盖两个 z 向节点层，否则需要减小物理粗化比。
+
+以下均为可选的 `insert.far_field.*` 参数。除内部最大粗化层数外，未设置时继承
+对应的 `warpx.self_fields_*` 配置：
+
+| 参数 | 默认来源或含义 |
+| --- | --- |
+| `relative_tolerance` | `warpx.self_fields_required_precision` |
+| `absolute_tolerance` | `warpx.self_fields_absolute_tolerance` |
+| `max_iters` | `warpx.self_fields_max_iters` |
+| `verbosity` | `warpx.self_fields_verbosity`，仅在当前步输出求场日志时使用 |
+| `num_final_sweeps` | `warpx.self_fields_num_final_sweeps` |
+| `max_coarsening_level` | 默认 4，是求解器内部 MG 粗化次数的上限，与物理粗细网格比不同 |
+| `phi_extrapolation_order` | `warpx.self_fields_phi_extrapolation_order`，支持 0、1、2 |
+| `phi_extrapolation_alpha` | `warpx.self_fields_phi_extrapolation_alpha` |
+| `phi_extrapolation_beta` | `warpx.self_fields_phi_extrapolation_beta` |
+
+初始化时检查各内部 MG 网格注入后保留的阳极节点。如果某级阳极消失或少于两个
+z 向节点层，自动降低内部粗化上限并重建，直到满足条件。布局日志的 `mg_levels`
+是实际层数，包含最细的求解层。该检查避免电极在粗化时消失，不能代替几何精度验证。
+
+粗层使用 `ablastr::fields::computePhi()` 求解，并复用已配置的独立算子和 MLMG。
+RHS 缓冲与物理 `rho_c` 分开，求解器对 RHS 的单位缩放不会改变已限制的电荷场。
+每次求解前，在外推初值上重新写入外表面零电势和体阳极指定电势。
+
+等时间间隔下的外推与现有细层系数定义相同：
+
+```text
+order = 0: phi_guess = phi_n
+order = 1: phi_guess = (1 + alpha)*phi_n - alpha*phi_nm1
+order = 2: phi_guess = (1 + alpha + beta)*phi_n
+                       - (alpha + 2*beta)*phi_nm1 + beta*phi_nm2
+```
+
+例如，下面的配置启用标准二阶时间外推：
+
+```text
+insert.far_field.phi_extrapolation_order = 2
+insert.far_field.phi_extrapolation_alpha = 1
+insert.far_field.phi_extrapolation_beta = 1
+```
+
+历史不足时自动降阶，首次以零初值加固定电势约束启动。求场时间间隔变化时先退回
+最近的收敛电势，再积累新间隔的历史；同一物理时刻重复求场会替换最新记录，
+不会产生重复时间点。重启或时间回退时清空有效历史。只有粗层求解成功返回且
+电势和最终残差有限时才更新历史，失败解不进入外推缓存。
 
 ## 解析壁面粒子相互作用
 

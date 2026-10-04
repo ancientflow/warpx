@@ -33,6 +33,9 @@ public:
         ablastr::fields::MultiLevelScalarField const& phi,
         int max_level);
 
+    /** Restore fixed anode values after interpolation. */
+    void restoreAnodePotential (amrex::MultiFab& phi, int lev);
+
     [[nodiscard]] ablastr::fields::ConstMultiLevelScalarField const*
     relativePermittivity () const noexcept;
 

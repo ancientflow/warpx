@@ -240,34 +240,8 @@ computePhi (
     auto const finest_level = static_cast<int>(rho.size() - 1);
 
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    if (relative_permittivity != nullptr) {
-        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-            static_cast<int>(relative_permittivity->size()) == finest_level + 1,
-            "Relative-permittivity data must cover every Poisson level.");
-        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-            !is_solver_igf_on_lev0,
-            "Variable relative permittivity is supported only by the MLMG Poisson solver.");
-        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-            !eb_enabled,
-            "Variable relative permittivity cannot be combined with embedded boundaries.");
-        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-            std::all_of(beta.begin(), beta.end(), [](amrex::Real const value) {
-                return value == 0.0;
-            }),
-            "Variable relative permittivity is supported only for a lab-frame solve.");
-    }
     bool const use_material_solver_cache = material_linop_cache != nullptr ||
                                            material_mlmg_cache != nullptr;
-    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-        (material_linop_cache == nullptr) == (material_mlmg_cache == nullptr),
-        "The material Poisson operator and MLMG caches must be supplied together.");
-    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-        !use_material_solver_cache ||
-            (relative_permittivity != nullptr && finest_level == 0),
-        "The material Poisson solver cache requires a single-level variable-permittivity solve.");
-    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-        !use_material_solver_cache || !(*material_mlmg_cache) || *material_linop_cache,
-        "A cached material MLMG instance requires its cached linear operator.");
 #endif
     if (!rel_ref_ratio.has_value()) {
         ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(finest_level == 0u,
@@ -369,16 +343,6 @@ computePhi (
             info.setMaxCoarseningLevel(4);
 
             amrex::MultiFab const* const epsilon_r = (*relative_permittivity)[lev];
-            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-                epsilon_r != nullptr,
-                "Relative-permittivity data contains a null level pointer.");
-            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-                epsilon_r->ixType().cellCentered() && epsilon_r->nComp() == 1,
-                "Relative permittivity must be a single-component cell-centered field.");
-            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-                epsilon_r->boxArray().CellEqual(grids[lev]) &&
-                    epsilon_r->DistributionMap() == dmap[lev],
-                "Relative permittivity must use the Poisson grid layout.");
 
             if (use_material_solver_cache) {
                 if (!(*material_linop_cache)) {

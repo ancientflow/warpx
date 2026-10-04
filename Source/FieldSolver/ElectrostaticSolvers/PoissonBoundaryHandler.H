@@ -37,6 +37,9 @@ public:
      */
     void DefinePhiBCs (const amrex::Geometry& geom);
 
+    /** Use caller-supplied nodal potentials on every nonperiodic domain face. */
+    void DefineExternalDirichletBCs ();
+
     /**
      * \brief Initialize amrex::Parser objects to get the boundary potential
      * values at specified times.

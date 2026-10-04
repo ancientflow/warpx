@@ -51,6 +51,7 @@ private:
 
 #ifdef WARPX_USE_HALL_FAR_FIELD
     Insert::HallFarFieldPoisson m_far_field_poisson;
+    amrex::MultiFab m_phi_ghost_work;
 #endif
 
     void preparePhiExtrapolatedInitialGuess (

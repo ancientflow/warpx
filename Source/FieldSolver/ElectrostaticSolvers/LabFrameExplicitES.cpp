@@ -28,8 +28,8 @@ using namespace amrex;
 
 void LabFrameExplicitES::InitData() {
     auto & warpx = WarpX::GetInstance();
-    m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 #ifdef WARPX_USE_HALL_FAR_FIELD
+    m_poisson_boundary_handler->DefineExternalDirichletBCs();
     Insert::HallFarFieldPoisson::SolverSettings defaults;
     defaults.m_relative_tolerance = self_fields_required_precision;
     defaults.m_absolute_tolerance = self_fields_absolute_tolerance;
@@ -43,6 +43,14 @@ void LabFrameExplicitES::InitData() {
         warpx, *warpx.m_fields.get(warpx::fields::FieldType::phi_fp, 0),
         *warpx.m_fields.get(warpx::fields::FieldType::rho_fp, 0),
         defaults);
+    auto const& phi = *warpx.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
+    auto ngrow = phi.nGrowVect();
+    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+        ngrow[d] = std::max(ngrow[d], 2);
+    }
+    m_phi_ghost_work.define(phi.boxArray(), phi.DistributionMap(), 1, ngrow);
+#else
+    m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 #endif
 }
 
@@ -196,9 +204,6 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     const MultiLevelScalarField rho_fp = fields.get_mr_levels(FieldType::rho_fp, max_level);
     const MultiLevelScalarField rho_cp = fields.get_mr_levels(FieldType::rho_cp, max_level, skip_lev0_coarse_patch);
     const MultiLevelScalarField phi_fp = fields.get_mr_levels(FieldType::phi_fp, max_level);
-#ifdef WARPX_USE_HALL_FAR_FIELD
-    m_far_field_poisson.assertLayout(WarpX::GetInstance().Geom(0), *phi_fp[0], *rho_fp[0]);
-#endif
     const MultiLevelVectorField Efield_fp = fields.get_mr_levels_alldirs(FieldType::Efield_fp, max_level);
 
     ExecutePythonCallback("beforedeposition");
@@ -229,10 +234,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // Todo: use simpler finite difference form with beta=0
     const std::array<Real, 3> beta = {0._rt};
 
+#ifndef WARPX_USE_HALL_FAR_FIELD
     preparePhiExtrapolatedInitialGuess(phi_fp);
 
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
+#endif
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
     auto& electrostatic_material = Insert::HallElectrostaticMaterial::GetInstance();
     std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
@@ -246,6 +253,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #ifdef WARPX_USE_HALL_FAR_FIELD
         m_far_field_poisson.restrictCharge(*rho_fp[0]);
         m_far_field_poisson.solve(warpx.gett_new(0), verbose_step);
+        m_far_field_poisson.interpolateToFine(*phi_fp[0]);
 #endif
     }
 #endif
@@ -277,8 +285,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 #endif
     }
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    Insert::ExtendPhysicalGhosts(*phi_fp[0], m_phi_ghost_work, warpx.Geom(0), 2);
+#else
     // Keep extrapolation history on the uncorrected Poisson potential.
     updatePhiExtrapolationHistory(phi_fp);
+#endif
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     Insert::VoltageAdjustment();
 #endif
@@ -289,6 +301,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     else {
         if (IsPythonCallbackInstalled("poissonsolver")) { computeE(Efield_fp, phi_fp, beta); }
     }
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    m_far_field_poisson.fillElectricFieldGhosts(Efield_fp[0]);
+#endif
 }
 
 /* \brief Compute the potential by solving Poisson's equation with

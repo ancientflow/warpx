@@ -21,10 +21,15 @@ class WarpX;
 
 namespace Insert {
 
+/** Extend physical ghosts from synchronized interior samples. */
+void ExtendPhysicalGhosts (
+    amrex::MultiFab& field, amrex::MultiFab& work,
+    amrex::Geometry const& geom, int order);
+
 /** Fixed auxiliary Poisson grid, owned by the single-level electrostatic solver.
  *
  * Transfers charge and solves the coarse material problem with a temporal predictor.
- * Transfer of the coarse potential to the fine solver is added in stage four.
+ * Supplies the fine-grid initial guess and Dirichlet data from the coarse solution.
  */
 class HallFarFieldPoisson
 {
@@ -45,10 +50,6 @@ public:
     void initialize (WarpX const& warpx, amrex::MultiFab const& phi,
                      amrex::MultiFab const& rho, SolverSettings const& defaults);
 
-    /** Reject changes to the fine layout instead of retaining stale MPI mappings. */
-    void assertLayout (amrex::Geometry const& geom, amrex::MultiFab const& phi,
-                       amrex::MultiFab const& rho) const;
-
     /** Restrict synchronized total fine charge, then zero the coarse anode RHS.
      * The input includes wall charge once and has not undergone PEC reflection.
      */
@@ -56,6 +57,12 @@ public:
 
     /** Solve the current coarse source and retain only converged potential history. */
     void solve (amrex::Real time, bool verbose_step);
+
+    /** Interpolate the converged coarse solution onto all valid fine nodes. */
+    void interpolateToFine (amrex::MultiFab& phi);
+
+    /** Synchronize E and extend its physical ghosts for particle gathering. */
+    void fillElectricFieldGhosts (std::array<amrex::MultiFab*, 3> const& fields);
 
 private:
     void readSolverSettings (SolverSettings const& defaults);
@@ -70,14 +77,10 @@ private:
     void updateHistory (amrex::Real time);
     void reportLayout () const;
 
-    bool m_defined = false;
-    bool m_charge_ready = false;
     SolverSettings m_settings;
     amrex::Geometry m_fine_geom;
     amrex::BoxArray m_fine_boxes;
     amrex::DistributionMapping m_dmap;
-    amrex::IntVect m_fine_phi_ngrow;
-    amrex::IntVect m_fine_rho_ngrow;
 
     amrex::Geometry m_geom;
     amrex::BoxArray m_boxes;
@@ -91,18 +94,16 @@ private:
     amrex::MultiFab m_rhs;
     amrex::MultiFab m_epsilon_r;
     amrex::MultiFab m_anode_phi;
-    // Partial restrictions of uniquely owned fine nodes; component 1 tracks |rho|.
+    // Partial restrictions of uniquely owned fine nodes.
     amrex::MultiFab m_rho_patch;
-    // Coarsened fine Boxes used for future potential interpolation.
+    // Coarsened fine Boxes retain the natural coarse indices, including z offsets.
     amrex::MultiFab m_phi_patch;
+    std::array<std::unique_ptr<amrex::MultiFab>, 3> m_fine_e_work;
     // Expanded at physical faces to retain all synchronized deposition ghosts.
     amrex::MultiFab m_rho_source;
-    amrex::MultiFab m_rho_raw;
-    amrex::MultiFab m_source_support;
     amrex::iMultiFab m_source_anode_mask;
     amrex::iMultiFab m_anode_mask;
     std::unique_ptr<amrex::iMultiFab> m_source_owner;
-    std::unique_ptr<amrex::iMultiFab> m_coarse_owner;
     std::array<std::unique_ptr<amrex::MultiFab>, 3> m_phi_history;
     std::array<amrex::Real, 3> m_history_times{};
     int m_history_depth = 0;

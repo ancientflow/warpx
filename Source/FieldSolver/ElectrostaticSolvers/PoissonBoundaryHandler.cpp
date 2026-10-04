@@ -152,6 +152,14 @@ void PoissonBoundaryHandler::DefinePhiBCs (const amrex::Geometry& geom)
     }
 }
 
+void PoissonBoundaryHandler::DefineExternalDirichletBCs ()
+{
+    lobc.fill(amrex::LinOpBCType::Dirichlet);
+    hibc.fill(amrex::LinOpBCType::Dirichlet);
+    dirichlet_flag.fill(true);
+    has_non_periodic = true;
+}
+
 void PoissonBoundaryHandler::BuildParsers ()
 {
     potential_xlo_parser = utils::parser::makeParser(potential_xlo_str, {"t"});

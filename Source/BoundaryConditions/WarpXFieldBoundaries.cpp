@@ -3,6 +3,7 @@
 #include "BoundaryConditions/PML.H"
 #include "FieldSolver/FiniteDifferenceSolver/FiniteDifferenceSolver.H"
 #include "FieldSolver/FiniteDifferenceSolver/HybridPICModel/HybridPICModel.H"
+#include "Insert/Config/HallElectrostaticConfig.H"
 #include "WarpX_PEC.H"
 
 #include <AMReX.H>
@@ -51,6 +52,17 @@ namespace
 void WarpX::ApplyEfieldBoundary(const int lev, PatchType patch_type, amrex::Real time)
 {
     using ablastr::fields::Direction;
+
+#ifdef WARPX_USE_HALL_FAR_FIELD
+    if (electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame ||
+        electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrameElectroMagnetostatic)
+    {
+        // These faces are artificial Dirichlet interfaces, not conducting walls.
+        // In particular AddExternalFields must not zero the solved tangential E.
+        // The lab-frame solver has already filled physical and inter-Box ghosts.
+        return;
+    }
+#endif
 
     if (::isAnyBoundary<FieldBoundaryType::PEC>(field_boundary_lo, field_boundary_hi)) {
         if (patch_type == PatchType::fine) {

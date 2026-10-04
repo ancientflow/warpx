@@ -5,7 +5,7 @@
 #if defined(WARPX_DIM_3D)
 #define WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 
-/* Independent far-field material solve; fine-grid boundary transfer is not active yet. */
+/* Independent far-field material solve and fine-grid Dirichlet coupling. */
 #define WARPX_USE_HALL_FAR_FIELD
 #endif
 
