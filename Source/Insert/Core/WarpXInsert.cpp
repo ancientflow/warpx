@@ -4,10 +4,14 @@
 #include "Insert/Boundary/AnalyticBoundaryInteraction.h"
 #include "Insert/Boundary/InsertBoundaryPhi.h"
 #include "Insert/Collisions/IonizationSourceTable.h"
+#include "Insert/Config/HallElectrostaticConfig.H"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Insert/Diagnostics/ZmaxRadialExitStats.h"
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/HallElectrostaticMaterial.H"
+#endif
 #include "Insert/Injection/InsertInjection.h"
 #include "Utils/TextMsg.H"
 
@@ -109,8 +113,30 @@ PhiAdjustmentEntrance () {
  */
 void
 SetBoundaryPhi () {
-#ifdef PHT
+#if defined(WARPX_DIM_3D)
+#   ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    // 材料 (体阳极 overset mask) 路径启用时跳过 zmin 面电势设置
+    if (HallElectrostaticMaterial::GetInstance().enabled()) {
+        return;
+    }
+#   endif
     AnodeVoltage();
+#endif
+}
+
+/**
+ * 求解后 Dirichlet 面 ghost 电势重填入口
+ */
+void
+SetPhiGuards () {
+#if defined(WARPX_DIM_3D)
+#   ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    // 材料路径有自己的 ghost 处理, 启用时跳过
+    if (HallElectrostaticMaterial::GetInstance().enabled()) {
+        return;
+    }
+#   endif
+    DirichletPhiGuardSet();
 #endif
 }
 

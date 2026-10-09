@@ -16,7 +16,24 @@ AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 - `insert.neutral_atom_eb.*`：改用解析壁面几何及物种对应的壁面行为。
 
 这些参数即使设置为 `0` 也会报出迁移提示。旧输入中的 `my_constants.voltage`
-仅是表达式常量，不再自动建立 zmin 环形阳极；必须在体阳极电势表达式中引用。
+仅是表达式常量；zmin 环形阳极可用 `insert.zmin_ring_anode`（见下节）显式打开，
+或在体阳极电势表达式中引用。
+
+## zmin 面环形阳极电势
+
+无陶瓷的简化 Hall 模型（阳极环位于 zmin 域边界面上）可用以下开关：
+
+```text
+insert.zmin_ring_anode = 1
+```
+
+每次 Poisson 求解前，在 `boundary.potential_lo_z` 写入整面常量之后，把 zmin
+面内阳极环覆盖到的节点改写为 `my_constants.voltage`；环外节点保持
+`boundary.potential_lo_z` 的值（通常设 `0`）。环几何由 `my_constants` 的
+`l_factor`、`L` 决定：环心为 `(prob_lo_x, prob_lo_y) + L/l_factor/2`，内、外半径
+分别为 `0.021/(2*l_factor)` 和 `0.031/(2*l_factor)`。仅限 3D，且当
+`insert.use_electrostatic_materials = 1`（体阳极 overset 路径）启用时自动跳过。
+该设置只改电势，不含壁面电荷沉积、Schur 修正或粒子边界相互作用。
 
 ## 静电介质与体阳极
 
@@ -74,9 +91,12 @@ mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z
 Insert 模块处理。
 
 计算域外边界的电势和 ghost nodes 沿用求解器自身的边界处理；共置网格的 MLMG
-路径启用 `setFinalFillBC(true)`。旧 `DirichletPhiGuardSet()` 及 `SetPhiGuards()`
-入口已删除，不再在求解后用外边界电荷密度额外覆盖 ghost 电势。内部体阳极的
-固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
+路径启用 `setFinalFillBC(true)`。注意 MLMG 不会填 Dirichlet 面的 ghost 节点
+（保持为 0），而 collocated 网格的 `computeE` 在边界节点的中心差分会读到它们；
+因此在未启用材料路径时，求解后由 `Insert::SetPhiGuards()`（`DirichletPhiGuardSet`）
+按 `phi_ghost = 2*phi_bnd - phi_int - rho_bnd*dx^2/eps0` 重填六个 PEC 面的 ghost
+节点，使中心差分退化为 Poisson 一致的单边通量。材料路径启用时该重填跳过。
+内部体阳极的固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
 
 ## 解析壁面粒子相互作用
 
@@ -448,6 +468,7 @@ my_constants.dt = 3e-12
 | `area_uniform` | `min`, `max` | 无 | 面积均匀半径分布，要求 `min >= 0` 且 `max > min`。 |
 | `gaussian` | `sigma` | `mean = 0` | 高斯分布，要求 `sigma >= 0`。 |
 | `positive_gaussian` | `sigma` | `mean = 0` | 重采样直到值非负。 |
+| `flux_gaussian` | `sigma` | 无 | 通量加权半麦克斯韦（Rayleigh）法向分量，`p(v) ∝ v exp(-v²/2σ²)`，`v >= 0`，精确逆 CDF 采样；用于平衡态储罐/缓冲腔的孔口入口。 |
 | `single_spoke` | `sigma` 或 `spoke_sigma` | `center` / `spoke_center = pi`, `num_bins = 1024` | 单 spoke 角向分布。 |
 | `multi_spoke` | `sigma` 或 `spoke_sigma` | `spoke_count = 1`, `spoke_phase = 0`, `num_bins = 1024` | 多 spoke 角向分布。 |
 | `neutral_spoke` | `ion_width` | `min_ratio = 0.25`, `drop_exponent = 4.0`, `phase` / `phase_offset` / `spoke_phase = 0`, `reverse = 0`, `spoke_count = 1`, `num_bins = 1024` | 中性气体 spoke 耗尽分布；`spoke_count > 1` 时结构在圆周上重复，要求 `ion_width < 2*pi/spoke_count`。 |
