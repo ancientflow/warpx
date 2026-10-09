@@ -1,0 +1,210 @@
+# ============================================================
+# SPT-100 中性氙气初始化算例 (SPT100_init)
+#
+# 目的: 通过连续注入生成通道/羽流区的中性氙背景分布 (供正式算例
+# 作为初始中性场使用)。物种只有中性氙原子; 沿用 3d_hall_init /
+# 3d_xe_dsmc 惯例保留 labframe 静电求解 (rho=0, phi≈0),
+# 不启用 SPT100 中的介质/阳极固定电势 (对纯中性初始化无影响)。
+#
+# 几何与壁面: 沿用 Script/SPT/SPT100 的 SPT-100 几何 (l_factor=10;
+# 阳极环 Rin=35/Rout=50 mm 未缩比, 暴露面 z=0; 通道 0<z<22 mm;
+# 网格 320x320x160 不随缩比改变) 及三个解析壁面:
+# 阳极环面 anode_ring、内陶瓷 inner_wall、外陶瓷 outer_wall。
+#
+# 注入 (参考 Script/3d_hall_init 的 continuous_sources 框架):
+#  - 位置: 阳极面 (z = anode_zmax = 0) 上以通道中心半径
+#    (Rin+Rout)/2 = 42.5 mm (未缩比) 为中线、宽 6 mm (未缩比)
+#    的环形区域, 即 r ∈ [39.5, 45.5] mm / l_factor, 面内面积均匀;
+#  - 速度: 400 K 半麦克斯韦分布 — vx/vy 零均值高斯, vz 为截断
+#    vz>0 的正高斯 (positive_gaussian, 指向 +z 通道深处),
+#    sigma = sqrt(kb*400/m_xe), 温度不随几何缩比改变;
+#  - 流量: 5.32 mg/s 为未缩比物理值, 注入源内部除以 l_factor^2;
+#  - 热化: 中性原子在阳极环面与两面陶瓷壁上以 400 K 漫反射热化。
+#
+# 缩比约定 (与 3d_xe_dsmc 相同): 几何尺寸除以 l_factor; 质量流率
+# 给未缩比值; dt 除以 l_factor 保持气流穿越步数不变; 宏粒子权重
+# 按 l_factor^3 缩比, 使每步注入宏粒子数与未缩比算例一致。
+# ============================================================
+
+#------------------------------------
+# 全局设置
+#------------------------------------
+max_step = 6000                   # 2.5e-5 s: 气流前锋越过点火区 (z=1.4-2.6 mm, 需 ~20-24 us)
+                                  # 并留 ~25% 余量建立密度; 库存 ~6e12 原子封顶点火峰
+my_constants.l_factor = 10        # 几何缩比因子 (与 SPT100 一致)
+my_constants.dt = 5e-8 / l_factor # dt 随 l_factor 缩比, 保持气流穿越步数不变
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.poisson_solver = multigrid
+warpx.self_fields_required_precision = 1e-6
+warpx.use_filter = 0
+warpx.grid_type = collocated
+warpx.sort_intervals = 50
+
+#------------------------------------
+# 物理与几何参数 (几何完全同 SPT100)
+#------------------------------------
+# 物理参数
+my_constants.m_xe = 2.179e-25     # Xe 原子质量 [kg]
+my_constants.m_dot = 5.32e-6/4      # 未缩比物理质量流率 5.32 mg/s [kg/s]
+                                  # (注入源内部除以 l_factor^2, 见 xe_neutral_inlet.l_factor)
+my_constants.Tn = 400             # 注入与壁面热化温度 [K]
+
+# 宏粒子权重: 缩比后 6.25e4 (原 5e5 的 1/8), weight_ratio = 16。
+# 出口密度由流量守恒决定
+#   n_exit = N_dot / (A_ch * vbar) ≈ 2.44e17 / (4.0e-5 * 127) ≈ 4.8e19 m^-3,
+# 对应通道/电离区 ~49 个宏粒子/单元, 全域平均 ~12 个/单元。
+# 稳态域内 ~2e8 个宏粒子; max_step=20000 (2 倍穿越时间) 时约 86% 填充。
+my_constants.xe_weight = 6.25e7 / l_factor**3
+
+# 原尺寸 128 x 128 x 64 mm; 缩尺后 12.8 x 12.8 x 6.4 mm。
+# 横向域为 [0,lx] x [0,ly], 环形通道轴线位于域中心。
+my_constants.lx = 0.128 / l_factor
+my_constants.ly = 0.128 / l_factor
+my_constants.lz = 0.064 / l_factor
+my_constants.anode_center_x = lx / 2
+my_constants.anode_center_y = ly / 2
+my_constants.anode_inner_radius = 0.035 / l_factor
+my_constants.anode_outer_radius = 0.050 / l_factor
+my_constants.channel_top = 0.022 / l_factor
+my_constants.anode_thickness = 0.004 / l_factor
+my_constants.ceramic_base_thickness = 0.008 / l_factor
+my_constants.anode_zmax = 0.0
+my_constants.anode_zmin = -anode_thickness
+my_constants.zmin = anode_zmin - ceramic_base_thickness
+my_constants.zmax = zmin + lz
+
+# 注入环: 中线为通道中心半径 42.5 mm (未缩比), 宽 6 mm (未缩比)。
+my_constants.inlet_r_center = (anode_inner_radius + anode_outer_radius) / 2
+my_constants.inlet_r_min = inlet_r_center - 0.003 / l_factor
+my_constants.inlet_r_max = inlet_r_center + 0.003 / l_factor
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 0
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+#------------------------------------
+# 网格 (同 SPT100: 不随缩比改变; dx=dy=dz=40 um)
+#------------------------------------
+amr.n_cell = 320 320 160
+amr.blocking_factor = 32
+amr.max_grid_size = 320
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 zmin
+geometry.prob_hi = lx ly zmax
+
+#------------------------------------
+# 边界条件: 电势为零, 粒子出域吸收
+#------------------------------------
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+#------------------------------------
+# 粒子: 只有中性氙原子
+#------------------------------------
+algo.particle_shape = 1
+
+particles.species_names = xe_neutral
+
+xe_neutral.mass = m_xe
+# charge=1 仅作密度诊断记账, 不参与场沉积和受力
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+xe_neutral.ndt = 100              # 与 3d_hall 一致
+
+#------------------------------------
+# 解析壁面 (定义同 SPT100):
+# F>0 为粒子可达区域, F<0 为固体。
+# 内陶瓷 F=max(r-Rin,z-channel_top), 法向在侧壁指向 +r、在平台指向 +z。
+# 外陶瓷 F=max(Rout-r,z-channel_top), 法向在侧壁指向 -r、在平台指向 +z。
+# 阳极粒子边界只表示暴露的 z=0 环面。
+#------------------------------------
+insert.analytic_walls = anode_ring inner_wall outer_wall
+analytic_wall.anode_ring.signed_value = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2), z-anode_zmax, 1.0)"
+analytic_wall.anode_ring.normal_x = "0.0"
+analytic_wall.anode_ring.normal_y = "0.0"
+analytic_wall.anode_ring.normal_z = "1.0"
+
+analytic_wall.inner_wall.signed_value = "max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius, z-channel_top)"
+analytic_wall.inner_wall.normal_x = "if(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius > z-channel_top, (x-anode_center_x)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.inner_wall.normal_y = "if(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius > z-channel_top, (y-anode_center_y)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.inner_wall.normal_z = "if(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)-anode_inner_radius > z-channel_top, 0.0, 1.0)"
+
+analytic_wall.outer_wall.signed_value = "max(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), z-channel_top)"
+analytic_wall.outer_wall.normal_x = "if(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) > z-channel_top, -(x-anode_center_x)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.outer_wall.normal_y = "if(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) > z-channel_top, -(y-anode_center_y)/max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), 1e-30), 0.0)"
+analytic_wall.outer_wall.normal_z = "if(anode_outer_radius-sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) > z-channel_top, 0.0, 1.0)"
+
+# 热化: 中性原子在阳极环面与两面陶瓷壁上均以 400 K 漫反射。
+# 中性原子不带电, 关闭壁面电荷沉积 (默认 1, 需要介质泊松路径)。
+xe_neutral.analytic_wall.anode_ring.behaviors = diffuse
+xe_neutral.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_neutral.analytic_wall.anode_ring.deposit_wall_charge = 0
+xe_neutral.analytic_wall.inner_wall.behaviors = diffuse
+xe_neutral.analytic_wall.inner_wall.wall_temperature = 400.0
+xe_neutral.analytic_wall.inner_wall.deposit_wall_charge = 0
+xe_neutral.analytic_wall.outer_wall.behaviors = diffuse
+xe_neutral.analytic_wall.outer_wall.wall_temperature = 400.0
+xe_neutral.analytic_wall.outer_wall.deposit_wall_charge = 0
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# This file generates an initial neutral distribution via continuous injection.
+# ==========================================
+#insert.initial_sources =
+insert.continuous_sources = xe_neutral_inlet
+
+xe_neutral_inlet.species = xe_neutral
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1.0
+xe_neutral_inlet.x_offset = anode_center_x
+xe_neutral_inlet.y_offset = anode_center_y
+
+# 位置: 柱坐标环形注入面 — r 在 [inlet_r_min, inlet_r_max] 内面积均匀
+# (area_uniform), theta 全周均匀, z 固定在阳极面 z = anode_zmax = 0
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = area_uniform
+xe_neutral_inlet.position.r.min = inlet_r_min
+xe_neutral_inlet.position.r.max = inlet_r_max
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = anode_zmax
+
+# 速度: 400 K 半麦克斯韦 — vx/vy 零均值高斯,
+# vz 为截断 vz>0 的正高斯 (无漂移, 纯热运动指向 +z 通道内)
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tn / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Tn / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = 0.0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tn / m_xe)
+
+#输出定义
+FILE = ../../Script/init_diag
+
+# 纯中性算例场为零: particle_diag 只写粒子, 不写 E/B/j 场 (覆盖 init_diag 默认)
+particle_diag.fields_to_plot = none

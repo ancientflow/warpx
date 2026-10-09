@@ -1,0 +1,42 @@
+# B-field read_from_file consistency check (max_step=0, no particles)
+max_step = 0
+
+amr.n_cell = 256 256 320
+amr.max_grid_size = 256
+amr.blocking_factor = 64
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 -0.0025
+geometry.prob_hi = 0.01 0.01 0.01
+
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+warpx.B_ext_grid_init_style = read_from_file
+warpx.read_fields_from_path = /home/ps/warpx/warpx-dev/data/B3D_dielectric.bp5
+
+diagnostics.diags_names = diag_avg diag_raw
+
+diag_avg.diag_type = Full
+diag_avg.intervals = 1
+diag_avg.fields_to_plot = Bx By Bz
+diag_avg.write_species = 0
+diag_avg.format = openpmd
+diag_avg.file_prefix = diags/avg
+
+diag_raw.diag_type = Full
+diag_raw.intervals = 1
+diag_raw.fields_to_plot = Bx By Bz
+diag_raw.write_species = 0
+diag_raw.format = openpmd
+diag_raw.file_prefix = diags/raw
+diag_raw.plot_raw_fields = 1

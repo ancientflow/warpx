@@ -1,21 +1,29 @@
 # SPT100 三维全粒子算例：几何、静电介质与解析壁面配置。
-# 本阶段仅初始化（max_step=0），尚未设置粒子源、磁场和碰撞工况。
+# 已配置：中性入口与初始中性分布、阴极电子源、外加磁场 (SPT_mag.bp5)、
+# 10 倍缩尺碰撞截面 (spt100_mcccoll_x10)、电离区初始等离子体预填充
+# (channel_plasma, z=12-26 mm 未缩尺)；阴极环位于通道半径附近。
 # 所有给定的 mm 尺寸视为缩尺前尺寸；输入中的长度单位为 m，统一除以 10。
 # 阳极电压、时间步和壁面交互参数暂沿用 3d_hall_dielectric_volume_anode。
 
-max_step = 0
+max_step = 10000000
 my_constants.dt = 3e-12
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
 warpx.poisson_solver = multigrid
-warpx.self_fields_required_precision = 1e-4
-warpx.self_fields_absolute_tolerance = 1
+warpx.self_fields_required_precision = 1e-5
+warpx.self_fields_absolute_tolerance = 1e5
 warpx.sort_intervals = 25
 warpx.use_filter = 0
-warpx.grid_type = collocated
+warpx.grid_type = staggered
 warpx.self_fields_phi_extrapolation_order = 2
 warpx.self_fields_phi_extrapolation_alpha = 0.3
 warpx.self_fields_phi_extrapolation_beta = 0.1
+
+warpx.do_initial_div_cleaning = 0
+
+my_constants.m_dot = 5.35e-6
+my_constants.Ic = 4.5
+my_constants.voltage = 300
 
 # 几何：原尺寸 128 x 128 x 64 mm；缩尺后 12.8 x 12.8 x 6.4 mm。
 # 横向域为 [0,lx] x [0,ly]，环形通道轴线位于域中心。
@@ -35,11 +43,19 @@ my_constants.anode_zmin = -anode_thickness
 my_constants.zmin = anode_zmin - ceramic_base_thickness
 my_constants.zmax = zmin + lz
 
+my_constants.xe_weight = 6.25e7 / l_factor**3
+my_constants.elec_weight = xe_weight / 8
+
+# 注入环: 中线为通道中心半径 42.5 mm (未缩比), 宽 6 mm (未缩比)。
+my_constants.inlet_r_center = (anode_inner_radius + anode_outer_radius) / 2
+my_constants.inlet_r_min = inlet_r_center - 0.003 / l_factor
+my_constants.inlet_r_max = inlet_r_center + 0.003 / l_factor
+
 # 网格不随缩尺改变；dx=dy=dz=40 um，共 16,384,000 个单元。
 # blocking_factor=32 同时整除 320 和 160。
 amr.n_cell = 320 320 160
 amr.blocking_factor = 32
-amr.max_grid_size = 160
+amr.max_grid_size = 320
 amr.max_level = 0
 geometry.dims = 3
 geometry.prob_lo = 0.0 0.0 zmin
@@ -77,10 +93,21 @@ xe_ions.species_type = xenon
 xe_ions.charge = q_e
 my_constants.m_xe = 2.179e-25
 xe_neutral.mass = m_xe
+
+
+# 物理参数
+my_constants.Tn = 400             # 注入与壁面热化温度 [K]
+
+
 # 中性原子的 charge=1 仅作密度诊断记账，不参与场沉积和受力。
 xe_neutral.charge = 1
 xe_neutral.do_not_gather = 1
 xe_neutral.do_not_deposit = 1
+
+# 推进子循环: 与 3d_hall 一致 (电子每步, 离子 10 步, 中性 100 步)
+electrons.ndt = 1
+xe_ions.ndt = 10
+xe_neutral.ndt = 100
 
 # 三个解析边界：阳极环面、内壁（含内平台）、外壁（含外平台）。
 # F>0 为粒子可达区域，F<0 为固体；交界处阳极优先。
@@ -120,17 +147,17 @@ xe_neutral.analytic_wall.anode_ring.wall_temperature = 400.0
 # 最后一项 secondary_electron_1 使用余量概率。
 # 注意：参考文件电子漫反射的实际参数为 40000 K，此处照录；
 # 离子复合产物和中性原子漫反射为 400 K，二次电子为 3 eV。
-electrons.analytic_wall.inner_wall.behaviors = absorb diffuse secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.inner_wall.behaviors = absorb specular secondary_electron_2 secondary_electron_1
 electrons.analytic_wall.inner_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
-electrons.analytic_wall.inner_wall.p_diffuse = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.inner_wall.p_specular = "0.5*exp(-(E_eV/30)**2)"
 electrons.analytic_wall.inner_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
 electrons.analytic_wall.inner_wall.wall_temperature = 40000
 electrons.analytic_wall.inner_wall.secondary_electron_species = electrons
 electrons.analytic_wall.inner_wall.secondary_electron_temperature_eV = 3.0
 electrons.analytic_wall.inner_wall.deposit_wall_charge = 1
-electrons.analytic_wall.outer_wall.behaviors = absorb diffuse secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.outer_wall.behaviors = absorb specular secondary_electron_2 secondary_electron_1
 electrons.analytic_wall.outer_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
-electrons.analytic_wall.outer_wall.p_diffuse = "0.5*exp(-(E_eV/30)**2)"
+electrons.analytic_wall.outer_wall.p_specular = "0.5*exp(-(E_eV/30)**2)"
 electrons.analytic_wall.outer_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
 electrons.analytic_wall.outer_wall.wall_temperature = 40000
 electrons.analytic_wall.outer_wall.secondary_electron_species = electrons
@@ -153,6 +180,151 @@ xe_neutral.analytic_wall.inner_wall.wall_temperature = 400.0
 xe_neutral.analytic_wall.outer_wall.behaviors = diffuse
 xe_neutral.analytic_wall.outer_wall.wall_temperature = 400.0
 
-# 待补充 SPT100 工况：阳极电压确认、粒子权重与初始等离子体、阴极电子源、
-# 中性气体入口及流量、外加磁场、碰撞、时间步/子循环和诊断输出。
-# 此阶段不声明 insert.initial_sources / insert.continuous_sources。
+# 待补充 SPT100 工况：阳极电压确认、初始中性气体削减、时间步/子循环。
+
+# 电离区等离子体预填充范围 (缩尺前 mm): 通道后半段至出口外 4 mm。
+# 依据 spt_diag 前期时步 (t<=2.4 us): 等离子体首先在出口/近羽流区出现,
+# 电离前锋由出口向阳极侧推进, 失控前通道内峰值位于 z~1.5 mm (缩尺),
+# 与 SPT-100 文献 (电离率峰在通道内 0.6-0.9 倍通道长度) 一致。
+my_constants.plasma_z_min = 0.012 / l_factor
+my_constants.plasma_z_max = 0.026 / l_factor
+
+insert.initial_sources = channel_plasma
+insert.continuous_sources = xe_neutral_inlet cathode_electron
+
+xe_neutral_inlet.species = xe_neutral
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1.0
+xe_neutral_inlet.x_offset = anode_center_x
+xe_neutral_inlet.y_offset = anode_center_y
+
+# 位置: 柱坐标环形注入面 — r 在 [inlet_r_min, inlet_r_max] 内面积均匀
+# (area_uniform), theta 全周均匀, z 固定在阳极面 z = anode_zmax = 0
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = area_uniform
+xe_neutral_inlet.position.r.min = inlet_r_min
+xe_neutral_inlet.position.r.max = inlet_r_max
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = anode_zmax
+
+# 速度: 400 K 半麦克斯韦 — vx/vy 零均值高斯,
+# vz 为截断 vz>0 的正高斯 (无漂移, 纯热运动指向 +z 通道内)
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * Tn / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * Tn / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = 0.0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tn / m_xe)
+
+cathode_electron.species = electrons
+cathode_electron.rate = current
+cathode_electron.current = Ic
+cathode_electron.macro_weight = elec_weight
+cathode_electron.l_factor = l_factor
+cathode_electron.x_offset = anode_center_x
+cathode_electron.y_offset = anode_center_y
+
+# 阴极环移至通道半径附近 (通道中心 42.5 mm 未缩比, 宽 5 mm),
+# 使注入区与通道磁连通, 更接近真实阴极耦合位置。
+cathode_electron.position.coordinate_system = cylindrical
+cathode_electron.position.r.distribution = area_uniform
+cathode_electron.position.r.min = 0.040 / l_factor
+cathode_electron.position.r.max = 0.045 / l_factor
+cathode_electron.position.theta.distribution = uniform
+cathode_electron.position.theta.min = 0.0
+cathode_electron.position.theta.max = 2*pi
+cathode_electron.position.z.distribution = uniform
+cathode_electron.position.z.min = 0.042 / l_factor
+cathode_electron.position.z.max = 0.046 / l_factor
+
+cathode_electron.velocity.coordinate_system = cartesian
+cathode_electron.velocity.vx.distribution = gaussian
+cathode_electron.velocity.vx.sigma = 592982
+cathode_electron.velocity.vy.distribution = gaussian
+cathode_electron.velocity.vy.sigma = 592982
+cathode_electron.velocity.vz.distribution = gaussian
+cathode_electron.velocity.vz.sigma = 592982
+
+# --- 初始通道等离子体 (electrons + xe_ions), 填充电离区 ---
+# 密度 1e18 m^-3 沿用 3d_hall 的 channel_plasma 取值;
+# 体积为通道环截面 (Rin..Rout) 乘填充轴向厚度, 每物种约 7.2e6 个宏粒子
+# (elec_weight = 7812.5), 折合区域内 ~8 个宏粒子/单元, 与 3d_hall 相当。
+channel_plasma.rate = density_volume
+channel_plasma.density = 1e18
+channel_plasma.volume = ((anode_outer_radius)^2 - (anode_inner_radius)^2) * pi * (plasma_z_max - plasma_z_min)
+channel_plasma.macro_weight = elec_weight
+channel_plasma.shared_species = electrons xe_ions
+channel_plasma.x_offset = anode_center_x
+channel_plasma.y_offset = anode_center_y
+
+# 位置: 柱坐标环形通道 — r 在 [Rin, Rout] 内面积均匀, theta 全周均匀,
+# z 在电离区 [plasma_z_min, plasma_z_max] 内均匀
+channel_plasma.position.coordinate_system = cylindrical
+channel_plasma.position.r.distribution = area_uniform
+channel_plasma.position.r.min = anode_inner_radius
+channel_plasma.position.r.max = anode_outer_radius
+channel_plasma.position.theta.distribution = uniform
+channel_plasma.position.theta.min = 0.0
+channel_plasma.position.theta.max = 2*pi
+channel_plasma.position.z.distribution = uniform
+channel_plasma.position.z.min = plasma_z_min
+channel_plasma.position.z.max = plasma_z_max
+
+channel_plasma.electrons.weight = elec_weight
+channel_plasma.electrons.velocity.coordinate_system = cartesian
+channel_plasma.electrons.velocity.vx.distribution = gaussian
+channel_plasma.electrons.velocity.vx.sigma = 592982
+channel_plasma.electrons.velocity.vy.distribution = gaussian
+channel_plasma.electrons.velocity.vy.sigma = 592982
+channel_plasma.electrons.velocity.vz.distribution = gaussian
+channel_plasma.electrons.velocity.vz.sigma = 592982
+
+channel_plasma.xe_ions.weight = elec_weight
+channel_plasma.xe_ions.velocity.coordinate_system = cartesian
+channel_plasma.xe_ions.velocity.vx.distribution = gaussian
+channel_plasma.xe_ions.velocity.vx.sigma = 1212.41
+channel_plasma.xe_ions.velocity.vy.distribution = gaussian
+channel_plasma.xe_ions.velocity.vy.sigma = 1212.41
+channel_plasma.xe_ions.velocity.vz.distribution = gaussian
+channel_plasma.xe_ions.velocity.vz.sigma = 1212.41
+
+xe_neutral.injection_sources = xeinit
+
+#初始注入
+xe_neutral.xeinit.injection_style = external_file
+xe_neutral.xeinit.injection_file = ../../data/SPT_init.bp5
+
+#碰撞设置 (10 倍缩尺截面, 见 data/Xe2X_x10/)
+FILE = ../../Script/SPT/spt100_mcccoll_x10
+
+warpx.B_ext_grid_init_style = read_from_file
+warpx.read_fields_from_path = ../../data/SPT_mag.bp5
+
+diagnostics.diags_names = ECDI_diag
+
+ECDI_diag.diag_type = Full
+ECDI_diag.intervals = 5000
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions
+ECDI_diag.write_species = 0
+ECDI_diag.format = openpmd
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/spt_diag
+
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.wall_interaction_diag = 1
+my_constants.anode_current_diag = 0
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0

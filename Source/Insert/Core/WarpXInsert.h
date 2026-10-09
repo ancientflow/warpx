@@ -13,6 +13,8 @@ namespace Insert
 {
 
 void BackwardCompatibility ();
+void SetBoundaryPhi ();
+void SetPhiGuards ();
 void Initialize ();
 void BeforeStep ();
 void ParticleInjection ();

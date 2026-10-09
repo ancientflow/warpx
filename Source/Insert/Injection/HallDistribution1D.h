@@ -112,6 +112,21 @@ private:
     amrex::ParticleReal m_sigma;
 };
 
+class HallFluxGaussianDistribution1D final : public HallDistribution1D
+{
+public:
+    explicit HallFluxGaussianDistribution1D (amrex::ParticleReal sigma);
+
+    [[nodiscard]] amrex::ParticleReal
+    sample (amrex::RandomEngine const& engine) const override;
+
+    [[nodiscard]] amrex::ParticleReal min () const noexcept override;
+    [[nodiscard]] amrex::ParticleReal max () const noexcept override;
+
+private:
+    amrex::ParticleReal m_sigma;
+};
+
 class HallSingleSpokeDistribution1D final : public HallDistribution1D
 {
 public:

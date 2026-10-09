@@ -226,6 +226,10 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
 #endif
 
+    // Set the zmin-face ring anode potential, if requested (skipped when the
+    // electrostatic material path owns the anode).
+    Insert::SetBoundaryPhi();
+
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
 
@@ -253,6 +257,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
 #endif
     }
+    // 共置网格 guard cell 处理: MLMG 不填 Dirichlet 面的 ghost 节点 (留 0),
+    // computeE 在边界节点的中心差分会读到, 重填后再算电场
+    Insert::SetPhiGuards();
     // Keep extrapolation history on the uncorrected Poisson potential.
     updatePhiExtrapolationHistory(phi_fp);
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)

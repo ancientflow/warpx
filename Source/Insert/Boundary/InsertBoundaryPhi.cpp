@@ -2,7 +2,9 @@
 
 #include "Fields.H"
 #include "Insert/Config/WarpXFunctionConfig.h"
+#include "Insert/Utils/InsertUtils.h"
 #include "Utils/TextMsg.H"
+#include "Utils/WarpXConst.H"
 #include "WarpX.H"
 
 #include <AMReX_Array4.H>
@@ -22,6 +24,132 @@
 #include <iostream>
 
 namespace Insert {
+
+void
+AnodeVoltage ()
+{
+#if defined(WARPX_DIM_3D)
+    // Runtime switch: insert.zmin_ring_anode = 1 sets the zmin domain-face
+    // nodes inside the Hall anode ring to my_constants.voltage (the rest of
+    // the face keeps boundary.potential_lo_z). Skipped when the electrostatic
+    // material (volume anode) path is active; see Insert::SetBoundaryPhi.
+    static bool const enabled = [] () {
+        amrex::ParmParse const pp_insert("insert");
+        int flag = 0;
+        pp_insert.query("zmin_ring_anode", flag);
+        return flag != 0;
+    }();
+    if (!enabled) {
+        return;
+    }
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+    auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
+    auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(0));
+
+    amrex::Box domain = warpx_instance.Geom(0).Domain();
+    domain.surroundingNodes();
+    int const xlo = domain.smallEnd(0);
+    int const ylo = domain.smallEnd(1);
+    int const zlo = domain.smallEnd(2);
+    amrex::Real const problo_x = warpx_instance.Geom(0).ProbLo(0);
+    amrex::Real const problo_y = warpx_instance.Geom(0).ProbLo(1);
+    amrex::Real const dx = warpx_instance.Geom(0).CellSize(0);
+    amrex::Real const dy = warpx_instance.Geom(0).CellSize(1);
+
+    for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid();
+         ++mfi) {
+        const amrex::Box& box = mfi.tilebox();
+        if (domain.strictly_contains(box)) {
+            continue;
+        }
+        amrex::Array4<amrex::Real> const& phi = phi_field->array(mfi);
+        amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+            if (k == zlo) {
+                amrex::Real const x = problo_x + amrex::Real(i - xlo) * dx;
+                amrex::Real const y = problo_y + amrex::Real(j - ylo) * dy;
+                if (IsHallAnodeRingHit(x, y, config)) {
+                    phi(i, j, k) = config.voltage;
+                }
+            }
+        });
+    }
+    phi_field->FillBoundary(warpx_instance.Geom(0).periodicity());
+#endif
+}
+
+void
+DirichletPhiGuardSet ()
+{
+#if defined(WARPX_DIM_3D)
+    using namespace amrex::literals;
+
+    // MLMG leaves Dirichlet-face ghost nodes at zero for nodal solves
+    // (mlndlap_applybc only fills Neumann faces), and the collocated path
+    // copies them back into phi_fp (setFinalFillBC). computeE reads those
+    // ghost nodes in the centered difference at boundary nodes, so refill
+    // them such that the centered difference becomes the Poisson-consistent
+    // one-sided flux: phi_ghost = 2*phi_bnd - phi_int - rho_bnd*dx^2/eps0.
+    if (WarpX::grid_type != ablastr::utils::enums::GridType::Collocated) {
+        return;
+    }
+
+    WarpX& warpx_instance = WarpX::GetInstance();
+    auto phi = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
+    auto rho = warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, 0);
+
+    amrex::Box domain = warpx_instance.Geom(0).Domain();
+    domain.surroundingNodes();
+    int const xlo = domain.smallEnd(0);
+    int const ylo = domain.smallEnd(1);
+    int const zlo = domain.smallEnd(2);
+    int const xhi = domain.bigEnd(0);
+    int const yhi = domain.bigEnd(1);
+    int const zhi = domain.bigEnd(2);
+
+    amrex::Geometry const& geom = warpx_instance.Geom(0);
+    amrex::Real const cx = geom.CellSize(0) * geom.CellSize(0) / PhysConst::epsilon_0;
+    amrex::Real const cy = geom.CellSize(1) * geom.CellSize(1) / PhysConst::epsilon_0;
+    amrex::Real const cz = geom.CellSize(2) * geom.CellSize(2) / PhysConst::epsilon_0;
+
+    for (amrex::MFIter mfi(*phi, amrex::TilingIfNotGPU()); mfi.isValid();
+         ++mfi) {
+        const amrex::Box& box = mfi.validbox();
+        if (domain.strictly_contains(box)) {
+            continue;
+        }
+        amrex::Array4<amrex::Real> const& phi_arr = phi->array(mfi);
+        amrex::Array4<amrex::Real const> const& rho_arr = rho->const_array(mfi);
+        amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
+            amrex::Real const rho_bc = rho_arr(i, j, k);
+            if (i == xlo) {
+                phi_arr(i - 1, j, k) = 2.0_rt * phi_arr(i, j, k) -
+                                       phi_arr(i + 1, j, k) - rho_bc * cx;
+            }
+            if (i == xhi) {
+                phi_arr(i + 1, j, k) = 2.0_rt * phi_arr(i, j, k) -
+                                       phi_arr(i - 1, j, k) - rho_bc * cx;
+            }
+            if (j == ylo) {
+                phi_arr(i, j - 1, k) = 2.0_rt * phi_arr(i, j, k) -
+                                       phi_arr(i, j + 1, k) - rho_bc * cy;
+            }
+            if (j == yhi) {
+                phi_arr(i, j + 1, k) = 2.0_rt * phi_arr(i, j, k) -
+                                       phi_arr(i, j - 1, k) - rho_bc * cy;
+            }
+            if (k == zlo) {
+                    phi_arr(i, j, k - 1) = 2.0_rt * phi_arr(i, j, k) -
+                                           phi_arr(i, j, k + 1) - rho_bc * cz;
+                }
+            if (k == zhi) {
+                phi_arr(i, j, k + 1) = 2.0_rt * phi_arr(i, j, k) -
+                                       phi_arr(i, j, k - 1) - rho_bc * cz;
+            }
+        });
+    }
+#endif
+}
 
 void
 VoltageAdjustment ()

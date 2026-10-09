@@ -13,6 +13,7 @@ Backtrace.*
 *.vth
 *.sw[opqrs]
 .codex
+runs
 
 ####################
 # AMReX data files #

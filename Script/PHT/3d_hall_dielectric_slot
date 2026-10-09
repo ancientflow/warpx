@@ -11,7 +11,12 @@ warpx.self_fields_required_precision = 1e-5
 warpx.self_fields_absolute_tolerance = 1
 warpx.sort_intervals = 25
 warpx.use_filter = 0
-warpx.grid_type = collocated
+#Yee 网格: phi/rho 仍为节点存储, E 改为棱心紧模板差分 (等效 getGradSolution 通量形式)
+warpx.grid_type = staggered
+#关闭外源磁场的初始散度清洗: 文件未覆盖全域时清洗器会把 z=-2mm 钳制界面
+#的跳变摊开并泄漏进通道 (z=-0.16mm 处 max|dBz|=0.15T); 不清洗时通道区离散
+#散度仅 ~6e-4 相对量级, 误差集中在陶瓷内部钳制界面, 无粒子不受影响
+warpx.do_initial_div_cleaning = 0
 
 ##几何参数定义
 my_constants.L = 0.05
@@ -25,15 +30,9 @@ my_constants.lz = sim_L
 my_constants.m_dot = 0.6e-6
 my_constants.Ic = 0.5
 my_constants.voltage = 300
-my_constants.ifhole = 0
-my_constants.ifhole = 0
-my_constants.Tx = 200
-my_constants.Ty = 200
-my_constants.Tz = 140
-my_constants.vz0 = 240
 
 # 环缝几何: 环心位于 r_ring 环上 (环心由 x_offset/y_offset 给定),
-# 缝宽 0.5mm 为物理尺寸, 不做 l_factor 缩比
+# 缝宽 0.5mm ,做 l_factor 缩比
 my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
 my_constants.slot_width = 0.5e-3 / l_factor
 my_constants.slot_r_in = r_ring - slot_width / 2
@@ -157,14 +156,12 @@ analytic_wall.ceramic_wall.normal_x = "0.0"
 analytic_wall.ceramic_wall.normal_y = "0.0"
 analytic_wall.ceramic_wall.normal_z = "1.0"
 
-# 阳极电子采用不锈钢材料模型：弹性背散射、再扩散和真二次发射。
-# 概率或条件均值不合法的撞击回退为完全吸收。
-electrons.analytic_wall.anode_ring.material = stainless_steel
-electrons.analytic_wall.anode_ring.secondary_electron_species = electrons
-electrons.analytic_wall.anode_ring.binomial_trials = 10
-electrons.analytic_wall.anode_ring.deposit_wall_charge = 1
+# 电子在阳极环上全吸收：不锈钢 Furman–Pivi 材料模型在高入射能量下
+# 会因产额参数超出有效范围而中止 (Invalid stainless-steel wall impact)，
+# 故退回通用路径的单一 absorb 行为 (唯一行为自动取全部概率)。
+electrons.analytic_wall.anode_ring.behaviors = absorb
 
-# 陶瓷电子采用材料特化；离子和中性原子仍使用通用 behaviors 路径。
+# 陶瓷壁面使用材料模型；阳极、离子和中性原子使用通用 behaviors 路径。
 electrons.analytic_wall.ceramic_wall.material = ceramic
 electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0

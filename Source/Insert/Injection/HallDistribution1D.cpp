@@ -389,6 +389,39 @@ HallPositiveGaussianDistribution1D::max () const noexcept
     return std::numeric_limits<amrex::ParticleReal>::max();
 }
 
+HallFluxGaussianDistribution1D::HallFluxGaussianDistribution1D (
+    amrex::ParticleReal sigma)
+    : m_sigma(sigma)
+{
+    ValidateSigma(m_sigma, "HallFluxGaussianDistribution1D");
+}
+
+amrex::ParticleReal
+HallFluxGaussianDistribution1D::sample (
+    amrex::RandomEngine const& engine) const
+{
+    // Flux-weighted half-Maxwellian (Rayleigh) normal component,
+    // p(v) ∝ v exp(-v^2 / (2 sigma^2)) for v >= 0, via exact inverse CDF.
+    // Subtract before converting so a double random draw cannot round to
+    // one in single particle precision and produce log(0).
+    amrex::ParticleReal const uniform = static_cast<amrex::ParticleReal>(
+        amrex::Real(1.0) - amrex::Random(engine));
+    return m_sigma *
+        std::sqrt(-amrex::ParticleReal(2.0) * std::log(uniform));
+}
+
+amrex::ParticleReal
+HallFluxGaussianDistribution1D::min () const noexcept
+{
+    return amrex::ParticleReal(0.0);
+}
+
+amrex::ParticleReal
+HallFluxGaussianDistribution1D::max () const noexcept
+{
+    return std::numeric_limits<amrex::ParticleReal>::max();
+}
+
 HallSingleSpokeDistribution1D::HallSingleSpokeDistribution1D (
     amrex::ParticleReal center, amrex::ParticleReal sigma, int num_bins)
     : m_sampler(MakeSingleSpokeSampler(center, sigma, num_bins))
@@ -640,6 +673,10 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
         return std::make_unique<HallPositiveGaussianDistribution1D>(
             QueryWithParser<amrex::ParticleReal>(
                 pp, prefix, "mean", amrex::ParticleReal(0.0)),
+            GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
+    }
+    if (distribution == "flux_gaussian") {
+        return std::make_unique<HallFluxGaussianDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "single_spoke") {

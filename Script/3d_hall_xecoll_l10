@@ -1,0 +1,7 @@
+collisions.collision_names = xe_coll
+
+xe_coll.species = xe_neutral xe_neutral
+xe_coll.type = dsmc
+xe_coll.ndt_supercycle = 1
+xe_coll.scattering_processes = elastic
+xe_coll.elastic_cross_section = ../../data/Xe2X_x10/Xe_Xe_VHS_elastic_x10.dat

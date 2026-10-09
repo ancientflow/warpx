@@ -1,0 +1,356 @@
+#3d_hall_dielectric_slot 的小孔进气版本：中性气体进气为 48 个
+#直径 0.5mm 周向小孔，孔内按壁面 600K 工况出口径向剖面回灌采样，其余与 slot 版本一致。
+#全局定义
+max_step = 9000000
+my_constants.dt = 3e-12
+
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-5
+warpx.self_fields_absolute_tolerance = 1
+warpx.sort_intervals = 25
+warpx.use_filter = 0
+#Yee 网格: phi/rho 仍为节点存储, E 改为棱心紧模板差分 (等效 getGradSolution 通量形式)
+warpx.grid_type = staggered
+#关闭外源磁场的初始散度清洗: 文件未覆盖全域时清洗器会把 z=-2mm 钳制界面
+#的跳变摊开并泄漏进通道 (z=-0.16mm 处 max|dBz|=0.15T); 不清洗时通道区离散
+#散度仅 ~6e-4 相对量级, 误差集中在陶瓷内部钳制界面, 无粒子不受影响
+warpx.do_initial_div_cleaning = 0
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#工况定义
+my_constants.m_dot = 0.6e-6
+my_constants.Ic = 0.5
+my_constants.voltage = 300
+
+# 小孔几何: 48 个直径 0.5mm 小孔均布在 r_ring 环上 (环心由 x_offset/y_offset 给定)
+my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
+my_constants.hole_radius = (0.0005 / 2) / l_factor
+my_constants.hole_count = 48
+
+# 出口剖面 poly3 拟合系数 (u = r / hole_radius ∈ [0,1], r 为孔内局部半径),
+# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 壁面 600K 工况),
+# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 1
+# flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
+my_constants.jf_c0 = 8.2652e23
+my_constants.jf_c1 = -2.2830e23
+my_constants.jf_c2 = 2.9381e23
+my_constants.jf_c3 = -4.5040e23
+# T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
+my_constants.tx_c0 = 4.6232e2
+my_constants.tx_c1 = 8.8315e0
+my_constants.tx_c2 = -2.1431e0
+my_constants.tx_c3 = 6.5293e1
+my_constants.ty_c0 = 4.6121e2
+my_constants.ty_c1 = 1.6222e1
+my_constants.ty_c2 = -1.7777e1
+my_constants.ty_c3 = 7.4966e1
+my_constants.tz_c0 = 2.9017e2
+my_constants.tz_c1 = -2.6955e1
+my_constants.tz_c2 = 6.2493e1
+my_constants.tz_c3 = -5.0484e1
+my_constants.mvz_c0 = 3.1477e2
+my_constants.mvz_c1 = 2.5567e0
+my_constants.mvz_c2 = -2.3046e1
+my_constants.mvz_c3 = -4.8893e0
+
+
+#粒子参数定义
+my_constants.weight_ratio = 4
+my_constants.w_factor = 8
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+warpx.poisson_solver = multigrid
+
+#几何：z 方向向下扩展 2 mm，保持与横向接近的网格分辨率
+amr.n_cell = 256 256 320
+amr.blocking_factor = 64
+amr.max_grid_size = 320
+amr.max_level = 0
+
+#内存使用
+amrex.the_arena_init_size = 1024*1024*1024*75 # 75GB内存
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 -0.0025
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+#陶瓷介质与体阳极
+#原阳极环的内、外径分别为 21 mm 和 31 mm，并沿用 l_factor 缩放。
+my_constants.ceramic_epsilon_r = 4.0
+my_constants.anode_center_x = lx / 2
+my_constants.anode_center_y = ly / 2
+my_constants.anode_inner_radius = 0.021 / (2 * l_factor)
+my_constants.anode_outer_radius = 0.031 / (2 * l_factor)
+my_constants.anode_zmin = -0.00125
+my_constants.anode_zmax = 0.0
+my_constants.anode_voltage = voltage
+
+insert.use_electrostatic_materials = 1
+
+#z < 0 为陶瓷。体阳极内部保持有限正介电常数，由 overset mask 排除其节点。
+insert.relative_permittivity_function(x,y,z) = "if(z < 0.0, ceramic_epsilon_r, 1.0)"
+
+#<= 0 表示体阳极：原环形阳极沿 z 负方向延伸 1 mm。
+insert.anode_implicit_function(x,y,z) = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2) * (z >= anode_zmin) * (z <= anode_zmax), -1.0, 1.0)"
+insert.anode_potential_function(x,y,z) = "anode_voltage"
+
+warpx.self_fields_phi_extrapolation_order = 2
+warpx.self_fields_phi_extrapolation_alpha = 0.3
+warpx.self_fields_phi_extrapolation_beta = 0.1
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = electrons xe_ions xe_neutral
+
+electrons.species_type = electron
+
+xe_ions.species_type = xenon
+xe_ions.charge = q_e
+
+xe_neutral.mass = m_xe
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+
+# z=0 上的解析边界分为两个互不重叠区域：阳极环及其余陶瓷平面。
+
+# 两个 signed_value 均只在各自区域使用 z，因此零面是 z=0，法向指向 +z。
+insert.analytic_walls = anode_ring ceramic_wall
+analytic_wall.anode_ring.signed_value = "if(((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2), z, 1.0)"
+analytic_wall.anode_ring.normal_x = "0.0"
+analytic_wall.anode_ring.normal_y = "0.0"
+analytic_wall.anode_ring.normal_z = "1.0"
+analytic_wall.ceramic_wall.signed_value = "if(min(((x-anode_center_x)**2 + (y-anode_center_y)**2) - anode_inner_radius**2, anode_outer_radius**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2)) < 0.0, z, 1.0)"
+analytic_wall.ceramic_wall.normal_x = "0.0"
+analytic_wall.ceramic_wall.normal_y = "0.0"
+analytic_wall.ceramic_wall.normal_z = "1.0"
+
+# 电子在阳极环上全吸收：不锈钢 Furman–Pivi 材料模型在高入射能量下
+# 会因产额参数超出有效范围而中止 (Invalid stainless-steel wall impact)，
+# 故退回通用路径的单一 absorb 行为 (唯一行为自动取全部概率)。
+electrons.analytic_wall.anode_ring.behaviors = absorb
+
+# 陶瓷壁面使用材料模型；阳极、离子和中性原子使用通用 behaviors 路径。
+electrons.analytic_wall.ceramic_wall.material = ceramic
+electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
+electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
+
+# 离子在两面均中性化；中性原子在两面均按 400 K 漫反射。
+# xe_neutral.charge = 1 仅用于经电荷沉积获得中性密度场；中性化的壁面电荷
+# 账目必须使用物理产物电荷 0。
+xe_ions.analytic_wall.anode_ring.behaviors = convert
+xe_ions.analytic_wall.anode_ring.product_species = xe_neutral
+xe_ions.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_ions.analytic_wall.anode_ring.product_charge = 0.0
+xe_ions.analytic_wall.ceramic_wall.behaviors = convert
+xe_ions.analytic_wall.ceramic_wall.product_species = xe_neutral
+xe_ions.analytic_wall.ceramic_wall.wall_temperature = 400.0
+xe_ions.analytic_wall.ceramic_wall.product_charge = 0.0
+xe_neutral.analytic_wall.anode_ring.behaviors = diffuse
+xe_neutral.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_neutral.analytic_wall.ceramic_wall.behaviors = diffuse
+xe_neutral.analytic_wall.ceramic_wall.wall_temperature = 400.0
+
+###重采样
+electrons.save_particles_at_zlo = 1
+electrons.ndt = 1
+
+xe_ions.save_particles_at_xlo = 1
+xe_ions.save_particles_at_xhi = 1
+xe_ions.save_particles_at_ylo = 1
+xe_ions.save_particles_at_yhi = 1
+xe_ions.save_particles_at_zlo = 1
+xe_ions.save_particles_at_zhi = 1
+xe_ions.ndt = 10
+
+xe_neutral.ndt = 100
+
+my_constants.hall_diag_interval = 10
+my_constants.thrust_diag_path = "thrust.dat"
+my_constants.beam_divergence_path = "beam_divergence.dat"
+my_constants.iedf_path = "iedf.dat"
+my_constants.iedf_bins = 200
+my_constants.iedf_min_eV = 0
+my_constants.iedf_max_eV = 500
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.wall_interaction_diag = 1
+my_constants.anode_current_diag = 1
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# ==========================================
+insert.initial_sources = channel_plasma
+insert.continuous_sources = cathode_electron xe_neutral_inlet
+
+# --- Initial channel plasma (electrons + xe_ions) ---
+channel_plasma.rate = density_volume
+channel_plasma.density = 1e18
+channel_plasma.volume = ((0.0155/l_factor)^2 - (0.0105/l_factor)^2) * pi * (0.003/l_factor)
+channel_plasma.macro_weight = elec_weight
+channel_plasma.shared_species = electrons xe_ions
+channel_plasma.x_offset = 0.025 / l_factor
+channel_plasma.y_offset = 0.025 / l_factor
+
+channel_plasma.position.coordinate_system = cylindrical
+channel_plasma.position.r.distribution = area_uniform
+channel_plasma.position.r.min = 0.0105 / l_factor
+channel_plasma.position.r.max = 0.0155 / l_factor
+channel_plasma.position.theta.distribution = uniform
+channel_plasma.position.theta.min = 0.0
+channel_plasma.position.theta.max = 2*pi
+channel_plasma.position.z.distribution = uniform
+channel_plasma.position.z.min = 0.001 / l_factor
+channel_plasma.position.z.max = 0.004 / l_factor
+
+channel_plasma.electrons.weight = elec_weight
+channel_plasma.electrons.velocity.coordinate_system = cartesian
+channel_plasma.electrons.velocity.vx.distribution = gaussian
+channel_plasma.electrons.velocity.vx.sigma = 592982
+channel_plasma.electrons.velocity.vy.distribution = gaussian
+channel_plasma.electrons.velocity.vy.sigma = 592982
+channel_plasma.electrons.velocity.vz.distribution = gaussian
+channel_plasma.electrons.velocity.vz.sigma = 592982
+
+channel_plasma.xe_ions.weight = elec_weight
+channel_plasma.xe_ions.velocity.coordinate_system = cartesian
+channel_plasma.xe_ions.velocity.vx.distribution = gaussian
+channel_plasma.xe_ions.velocity.vx.sigma = 1212.41
+channel_plasma.xe_ions.velocity.vy.distribution = gaussian
+channel_plasma.xe_ions.velocity.vy.sigma = 1212.41
+channel_plasma.xe_ions.velocity.vz.distribution = gaussian
+channel_plasma.xe_ions.velocity.vz.sigma = 1212.41
+
+# --- Cathode electron continuous injection ---
+cathode_electron.species = electrons
+cathode_electron.rate = current
+cathode_electron.current = Ic
+cathode_electron.macro_weight = elec_weight
+cathode_electron.l_factor = l_factor
+cathode_electron.x_offset = 0.025 / l_factor
+cathode_electron.y_offset = 0.025 / l_factor
+
+cathode_electron.position.coordinate_system = cylindrical
+cathode_electron.position.r.distribution = area_uniform
+cathode_electron.position.r.min = 0.016 / l_factor
+cathode_electron.position.r.max = 0.020 / l_factor
+cathode_electron.position.theta.distribution = uniform
+cathode_electron.position.theta.min = 0.0
+cathode_electron.position.theta.max = 2*pi
+cathode_electron.position.z.distribution = uniform
+cathode_electron.position.z.min = 0.042 / l_factor
+cathode_electron.position.z.max = 0.046 / l_factor
+
+cathode_electron.velocity.coordinate_system = cartesian
+cathode_electron.velocity.vx.distribution = gaussian
+cathode_electron.velocity.vx.sigma = 592982
+cathode_electron.velocity.vy.distribution = gaussian
+cathode_electron.velocity.vy.sigma = 592982
+cathode_electron.velocity.vz.distribution = gaussian
+cathode_electron.velocity.vz.sigma = 592982
+
+# --- Xe neutral continuous inlet: 小孔阵列 (孔分派 + 坐标偏移, 本身不实现分布);
+# 底层柱坐标分布定义孔内圆斑, r 按 P(r) ∝ r * flux(u) 采样, u = r/hole_radius
+# (parser 任意一维 CDF, 几何权重 r 显式写在表达式中); theta 均匀, z 固定在 zmin 面
+xe_neutral_inlet.species = xe_neutral
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 100.0
+xe_neutral_inlet.x_offset = 0.025 / l_factor
+xe_neutral_inlet.y_offset = 0.025 / l_factor
+
+xe_neutral_inlet.position.coupled_distribution = hole_array_plane
+xe_neutral_inlet.hole_count = hole_count
+xe_neutral_inlet.hole_ring_radius = r_ring
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = parser
+xe_neutral_inlet.position.r.min = 0.0
+xe_neutral_inlet.position.r.max = hole_radius
+xe_neutral_inlet.position.r.num_bins = 1024
+xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*(r/hole_radius) + jf_c2*(r/hole_radius)**2 + jf_c3*(r/hole_radius)**3)
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = 0.0
+
+# 速度: 各分量参数为孔内局部半径 r 的函数 (sigma(r)/mean(r), 逐粒子求值,
+# 局部坐标原点随孔分派偏移到孔中心, 即 r 相对于孔中心);
+# 剖面坐标归一化为 u = r/hole_radius;
+# vx/vy 全高斯, vz 截断 vz > 0 的漂移高斯 (截断尾部约 1%)
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*(r/hole_radius) + tx_c2*(r/hole_radius)**2 + tx_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*(r/hole_radius) + ty_c2*(r/hole_radius)**2 + ty_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*(r/hole_radius) + mvz_c2*(r/hole_radius)**2 + mvz_c3*(r/hole_radius)**3
+xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*(r/hole_radius) + tz_c2*(r/hole_radius)**2 + tz_c3*(r/hole_radius)**3) / m_xe)
+
+
+xe_neutral.injection_sources = xeinit
+
+#初始注入
+xe_neutral.xeinit.injection_style = external_file
+xe_neutral.xeinit.injection_file = ../../data/hall_start_256_600K_hole.bp5
+
+#碰撞设置
+FILE = ../../Script/3d_hall_mcccoll
+
+#电场 磁场定义
+warpx.B_ext_grid_init_style = read_from_file
+warpx.read_fields_from_path = ../../data/B3D_dielectric.bp5
+
+#场诊断
+diagnostics.diags_names = ECDI_diag
+
+ECDI_diag.diag_type = Full
+ECDI_diag.intervals = 5000
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions
+ECDI_diag.write_species = 0
+ECDI_diag.format = openpmd
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/try_hole
+
+#ECDI抑制
+insert.ecdi_control.enabled = 0
+
+
+#宏观统计
+warpx.reduced_diags_names = particle_number_dielectric
+
+particle_number_dielectric.type = ParticleNumber
+particle_number_dielectric.intervals = 100

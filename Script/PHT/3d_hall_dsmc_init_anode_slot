@@ -1,0 +1,195 @@
+# 3d_hall_dsmc_init_slot 的一体化环缝版本: 为 3d_hall_dielectric_anode_slot
+# 生成初始中性气体分布。几何、网格与主算例完全一致 (z 向下扩展到 -2.5mm,
+# 包含环缝缝道), 中性气体在缝底 z = z_slot_bottom 以 slot_T 半麦克斯韦
+# 通量注入, 缝底与缝内/外侧壁按 slot_T 漫反射热化, 阳极环面与陶瓷面按
+# 400 K 漫反射 (与主算例的粒子壁面策略一致)。
+# 只有 xe_neutral 一个组分, ndt = 1; 电势求解保留 (rho 恒零, 开销可忽略)。
+# 输出的粒子诊断文件作为主算例 xe_neutral.xeinit.injection_file 的输入
+# (运行后从 diags 目录取出重命名, 如 hall_start_256_600K_anode_slot.bp5)。
+
+#全局定义
+max_step = 50000
+my_constants.dt = 5.6e-10
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-06
+warpx.sort_intervals = 50
+amrex.the_arena_init_size = 1024*1024*1024*8
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+my_constants.z_lo = -0.0025
+
+#工况定义
+my_constants.m_dot = 0.6e-6
+
+# 环缝几何: 缝心位于 r_ring 环上, 缝宽 0.5mm (未缩比), 做 l_factor 缩比;
+# 槽深 slot_depth (模拟单位, 0.5mm 即未缩比 2.5mm), 缝底位于 z_slot_bottom;
+# 缝区气体/壁面温度 (注入与热化共用)
+my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
+my_constants.slot_width = 0.5e-3 / l_factor
+my_constants.slot_r_in = r_ring - slot_width / 2
+my_constants.slot_r_out = r_ring + slot_width / 2
+my_constants.slot_depth = 0.5e-3
+my_constants.z_slot_bottom = -slot_depth
+my_constants.slot_T = 600.0
+
+#粒子参数定义
+my_constants.rho_init = 2.5e18
+my_constants.w_factor = 2
+my_constants.weight_ratio = 1
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.wall_interaction_diag = 1
+my_constants.anode_current_diag = 0
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+warpx.poisson_solver = multigrid
+
+#几何 (与主算例一致: z 向下扩展 2.5mm 以包含环缝缝道)
+
+my_constants.n_cell = 256
+
+amr.n_cell = n_cell n_cell 320
+amr.blocking_factor = 64
+amr.max_grid_size = 320
+amr.max_level = 0
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 z_lo
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo =  pec pec pec
+boundary.field_hi =  pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+
+#阳极几何常量 (解析墙使用; 电势求解不启用材料路径)
+my_constants.anode_center_x = lx / 2
+my_constants.anode_center_y = ly / 2
+my_constants.anode_inner_radius = 0.021 / (2 * l_factor)
+my_constants.anode_outer_radius = 0.031 / (2 * l_factor)
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = xe_neutral
+
+xe_neutral.mass = m_xe
+xe_neutral.charge = 1
+xe_neutral.do_not_gather = 1
+xe_neutral.do_not_deposit = 1
+xe_neutral.ndt = 1
+
+# 解析边界: 与主算例相同的五面墙。未启用 electrostatic materials,
+# 必须 deposit_wall_charge = 0 (否则断言要求材料泊松路径的 wall_charge 场)。
+# 各墙 signed_value < 0 的区域互不重叠; 棱边按声明顺序兜底。
+insert.analytic_walls = anode_ring ceramic_wall slot_bottom slot_inner_wall slot_outer_wall
+
+analytic_wall.anode_ring.signed_value = "if(((((x-anode_center_x)**2 + (y-anode_center_y)**2 >= anode_inner_radius**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= slot_r_in**2)) + (((x-anode_center_x)**2 + (y-anode_center_y)**2 >= slot_r_out**2) * ((x-anode_center_x)**2 + (y-anode_center_y)**2 <= anode_outer_radius**2))) > 0, z, 1.0)"
+analytic_wall.anode_ring.normal_x = "0.0"
+analytic_wall.anode_ring.normal_y = "0.0"
+analytic_wall.anode_ring.normal_z = "1.0"
+
+analytic_wall.ceramic_wall.signed_value = "if(min(((x-anode_center_x)**2 + (y-anode_center_y)**2) - anode_inner_radius**2, anode_outer_radius**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2)) < 0.0, z, 1.0)"
+analytic_wall.ceramic_wall.normal_x = "0.0"
+analytic_wall.ceramic_wall.normal_y = "0.0"
+analytic_wall.ceramic_wall.normal_z = "1.0"
+
+analytic_wall.slot_bottom.signed_value = "max(max(z - z_slot_bottom, slot_r_in**2 - ((x-anode_center_x)**2 + (y-anode_center_y)**2)), ((x-anode_center_x)**2 + (y-anode_center_y)**2) - slot_r_out**2)"
+analytic_wall.slot_bottom.normal_x = "0.0"
+analytic_wall.slot_bottom.normal_y = "0.0"
+analytic_wall.slot_bottom.normal_z = "1.0"
+
+analytic_wall.slot_inner_wall.signed_value = "max(sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2) - slot_r_in, z)"
+analytic_wall.slot_inner_wall.normal_x = "(x-anode_center_x)/sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)"
+analytic_wall.slot_inner_wall.normal_y = "(y-anode_center_y)/sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)"
+analytic_wall.slot_inner_wall.normal_z = "0.0"
+
+analytic_wall.slot_outer_wall.signed_value = "max(slot_r_out - sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2), z)"
+analytic_wall.slot_outer_wall.normal_x = "-(x-anode_center_x)/sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)"
+analytic_wall.slot_outer_wall.normal_y = "-(y-anode_center_y)/sqrt((x-anode_center_x)**2 + (y-anode_center_y)**2)"
+analytic_wall.slot_outer_wall.normal_z = "0.0"
+
+# 中性原子: 缝区三面壁按 slot_T 漫反射热化 (不吸收, 保证净流量 = m_dot),
+# 阳极环面与陶瓷面按 400 K 漫反射 (同主算例)
+xe_neutral.analytic_wall.anode_ring.behaviors = diffuse
+xe_neutral.analytic_wall.anode_ring.wall_temperature = 400.0
+xe_neutral.analytic_wall.anode_ring.deposit_wall_charge = 0
+xe_neutral.analytic_wall.ceramic_wall.behaviors = diffuse
+xe_neutral.analytic_wall.ceramic_wall.wall_temperature = 400.0
+xe_neutral.analytic_wall.ceramic_wall.deposit_wall_charge = 0
+xe_neutral.analytic_wall.slot_bottom.behaviors = diffuse
+xe_neutral.analytic_wall.slot_bottom.wall_temperature = 600.0
+xe_neutral.analytic_wall.slot_bottom.deposit_wall_charge = 0
+xe_neutral.analytic_wall.slot_inner_wall.behaviors = diffuse
+xe_neutral.analytic_wall.slot_inner_wall.wall_temperature = 600.0
+xe_neutral.analytic_wall.slot_inner_wall.deposit_wall_charge = 0
+xe_neutral.analytic_wall.slot_outer_wall.behaviors = diffuse
+xe_neutral.analytic_wall.slot_outer_wall.wall_temperature = 600.0
+xe_neutral.analytic_wall.slot_outer_wall.deposit_wall_charge = 0
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# This file generates an initial neutral distribution via continuous injection.
+# ==========================================
+#insert.initial_sources =
+insert.continuous_sources = xe_neutral_inlet
+
+# --- Xe neutral continuous inlet: 缝底热化注入 ---
+# 位置: 柱坐标, r 在缝区 [slot_r_in, slot_r_out] 内面积均匀, theta 全周均匀,
+# z 固定在缝底 z = z_slot_bottom (与 slot_bottom 墙零面重合, vz > 0 保证离面)
+xe_neutral_inlet.species = xe_neutral
+xe_neutral_inlet.rate = mass_flow
+xe_neutral_inlet.mass_flow = m_dot
+xe_neutral_inlet.mass = m_xe
+xe_neutral_inlet.macro_weight = xe_weight
+xe_neutral_inlet.l_factor = l_factor
+xe_neutral_inlet.batch_multiplier = 1.0
+xe_neutral_inlet.x_offset = 0.025 / l_factor
+xe_neutral_inlet.y_offset = 0.025 / l_factor
+
+xe_neutral_inlet.position.coordinate_system = cylindrical
+xe_neutral_inlet.position.r.distribution = area_uniform
+xe_neutral_inlet.position.r.min = slot_r_in
+xe_neutral_inlet.position.r.max = slot_r_out
+xe_neutral_inlet.position.theta.distribution = uniform
+xe_neutral_inlet.position.theta.min = 0.0
+xe_neutral_inlet.position.theta.max = 2*pi
+xe_neutral_inlet.position.z.distribution = constant
+xe_neutral_inlet.position.z.value = z_slot_bottom
+
+# 速度: slot_T 半麦克斯韦通量 — vx/vy 零均值高斯,
+# vz 为截断 vz > 0 的正高斯 (无漂移, 纯热运动指向 +z 缝道内)
+xe_neutral_inlet.velocity.coordinate_system = cartesian
+xe_neutral_inlet.velocity.vx.distribution = gaussian
+xe_neutral_inlet.velocity.vx.sigma = sqrt(kb * slot_T / m_xe)
+xe_neutral_inlet.velocity.vy.distribution = gaussian
+xe_neutral_inlet.velocity.vy.sigma = sqrt(kb * slot_T / m_xe)
+xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
+xe_neutral_inlet.velocity.vz.mean = 0.0
+xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * slot_T / m_xe)
+
+
+#碰撞定义
+FILE = ../../Script/3d_hall_xecoll
+
+#输出定义
+FILE = ../../Script/init_diag

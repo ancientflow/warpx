@@ -244,6 +244,23 @@ cd Source/Insert/tool
 ./bin/ZmaxRadialExitAnalyzer zmax_radial
 ```
 
+### 数据目录
+
+`zmax_radial` 诊断输出由 DSMC 入口算例 `Script/3d_xe_dsmc` 产生，位于该算例的**运行目录**下，即构建目录的 `bin/` 中：
+
+```
+cmake-build-release/bin/zmax_radial/   (density.dat, vdist.dat)
+```
+
+注意 `paths.conf` 默认指向 `build/bin`，而当前实际构建目录为 `cmake-build-release/bin`，因此对上述目录需显式传路径：
+
+```bash
+cd Source/Insert/tool
+./bin/ZmaxRadialExitAnalyzer ../../../cmake-build-release/bin/zmax_radial
+```
+
+拟合得到的 poly3 系数按工况编号记录于 **`Script/inlet_gas_poly_coeffs.md`**（含各工况的温度/流量/缩比设置与拟合精度），接入输入文件时更新对应 deck 中的 `my_constants.jf_c*/tx_c*/ty_c*/tz_c*/mvz_c*`。
+
 ### 输出列
 
 `r_center_m  weight  num_macro  mean_vx  mean_vy  mean_vz  drift_speed  T_x  T_y  T_z  T_avg  TV_x  TV_y  TV_z  KL_x  KL_y  KL_z`
