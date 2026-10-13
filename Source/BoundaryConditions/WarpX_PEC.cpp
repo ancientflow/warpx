@@ -767,6 +767,9 @@ PEC::ApplyReflectiveBoundarytoRhofield (
                                ||  (field_boundary_hi[idim] == FieldBoundaryType::PEC)
                                ||  (field_boundary_hi[idim] == FieldBoundaryType::PEC_Insulator) );
 
+        //考虑到阳极面实质上为金属导体，因此这个条件物理上是合适的
+        //经过进一步验证，当前为阳极电流较小
+        //而阳极主要为电子电流，因此这个密度条件实质上会阻碍电子电流
         // Set psign on lo side
         psign[idim][0] = ( (particle_boundary_lo[idim] == ParticleBoundaryType::Reflecting)
                        ||  (particle_boundary_lo[idim] == ParticleBoundaryType::Thermal)

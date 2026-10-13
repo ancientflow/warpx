@@ -12,7 +12,6 @@
 
 #include <AMReX_GpuContainers.H>
 #include <AMReX_TypeTraits.H>
-
 /**
  * \brief Apply a filter, copy, and transform operation to the particles
  * in src, in that order, writing the result to dst, starting at dst_index.
@@ -328,4 +327,92 @@ Index filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1, DstTi
                                         std::forward<TransFunc>(transform));
 }
 
+/**
+ * \brief Apply a filter, copy, and transform operation to the particles
+ * in src, in that order, writing the result to dst, starting at dst_index.
+ * The dst tile will be extended so all the particles will fit, if needed.
+ *
+ * Note that the transform function operates on both the src and the dst,
+ * so both can be modified.
+ *
+ * This version of the function takes as inputs a mask which can be obtained
+ * using another version of filterCopyTransformParticles that takes a filter
+ * function as input.
+ *
+ * \tparam N number of particles created in the dst(s) for each filtered src
+ * particle
+ * \tparam DstTile the dst particle tile type
+ * \tparam SrcTile the src particle tile type
+ * \tparam Index the index type, e.g. unsigned int
+ * \tparam TransFunc the transform function type
+ * \tparam CopyFunc the copy function type
+ *
+ * \param pc  the destination particle container
+ * \param dst the destination tile
+ * \param src the source tile
+ * \param mask pointer to the mask: 1 means copy, 0 means don't copy
+ * \param dst_index the location at which to starting writing the result to dst
+ * \param copy callable that defines what will be done for the "copy" step.
+ * src.
+ *
+ *        The form of the callable should model:
+ *            template <typename DstData, typename SrcData>
+ *            AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+ *            void operator() (DstData& dst, SrcData& src, int i_src, int
+ * i_dst);
+ *
+ *        where dst and src refer to the destination and source tiles and
+ *        i_src and i_dst and the particle indices in each tile.
+ *
+ * \return num_added the number of particles that were written to dst.
+ */
+template <int N, typename DstPC, typename DstTile, typename SrcTile,
+          typename Index, typename CopyFunc,
+          amrex::EnableIf_t<std::is_integral_v<Index>, int> foo = 0>
+Index filterCopyTransformParticles (DstPC& pc, DstTile& dst, SrcTile& src,
+                              Index* mask, Index dst_index, CopyFunc&& copy) noexcept {
+    using namespace amrex;
+
+    const auto np = src.numParticles();
+    if (np == 0) {
+        return 0;
+    }
+
+    Gpu::DeviceVector<Index> offsets(np);
+    auto total = amrex::Scan::ExclusiveSum(np, mask, offsets.data());
+    const Index num_added = N * total;
+    auto old_np = dst.size();
+    auto new_np = std::max(dst_index + num_added, dst.numParticles());
+    dst.resize(new_np);
+
+    auto* const p_offsets = offsets.dataPtr();
+
+    const auto src_data = src.getParticleTileData();
+    const auto dst_data = dst.getParticleTileData();
+
+    amrex::ParallelForRNG(
+        np, [=] AMREX_GPU_DEVICE(int i,
+                                 amrex::RandomEngine const& engine) noexcept {
+            if (mask[i]) {
+                for (int j = 0; j < N; ++j) {
+                    copy(dst_data, src_data, i,
+                         N * p_offsets[i] + dst_index + j, engine);
+                }
+            }
+        });
+
+    ParticleCreation::DefaultInitializeRuntimeAttributes(
+        dst, 0, 0, pc.getUserRealAttribs(), pc.getUserIntAttribs(),
+        pc.GetRealSoANames(), pc.GetIntSoANames(), pc.getUserRealAttribParser(),
+        pc.getUserIntAttribParser(),
+#ifdef WARPX_QED
+        false, // do not initialize QED quantities, since they were initialized
+               // when calling the CopyFunc functor
+        pc.get_breit_wheeler_engine_ptr(), pc.get_quantum_sync_engine_ptr(),
+#endif
+        pc.getIonizationInitialLevel(), old_np, new_np);
+
+    Gpu::synchronize();
+    return num_added;
+}
 #endif //WARPX_FILTER_COPY_TRANSFORM_H_

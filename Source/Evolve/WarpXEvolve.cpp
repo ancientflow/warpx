@@ -24,6 +24,8 @@
 #   endif
 #endif
 #include "FieldSolver/ImplicitSolvers/ImplicitSolver.H"
+#include "Insert/Boundary/AnalyticBoundaryInteraction.h"
+#include "Insert/Core/WarpXInsert.h"
 #include "Parallelization/GuardCellManager.H"
 #include "Particles/MultiParticleContainer.H"
 #include "Fluids/MultiFluidContainer.H"
@@ -165,6 +167,9 @@ WarpX::Evolve (int numsteps)
     static Real evolve_time = 0;
 
     const int step_begin = istep[0];
+
+    Insert::Initialize();
+
     for (int step = istep[0]; step < numsteps_max && cur_time < stop_time; ++step)
     {
         ABLASTR_PROFILE("WarpX::Evolve::step");
@@ -187,6 +192,7 @@ WarpX::Evolve (int numsteps)
 
         }
 
+        Insert::BeforeStep();
         // Start loop on time steps
         if (verbose_step) {
             amrex::Print() << "STEP " << step+1 << " starts ...\n";
@@ -237,7 +243,7 @@ WarpX::Evolve (int numsteps)
 
         // perform particle injection
         ExecutePythonCallback("particleinjection");
-
+        Insert::ParticleInjection();
         // perform collisions and advance fields and particles by one time step
         OneStep(cur_time, dt[0], step, verbose_step);
 
@@ -369,6 +375,9 @@ WarpX::Evolve (int numsteps)
         // execute afterdiagnostic callbacks
         ExecutePythonCallback("afterdiagnostics");
 
+        // 自定义输出
+        Insert::AfterDiagnostics();
+
         // inputs: unused parameters (e.g. typos) check after step 1 has finished
         if (!early_params_checked) {
             ::checkEarlyUnusedParams();
@@ -447,7 +456,9 @@ void WarpX::OneStep (
 
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
+                Insert::BeforeCollision(a_step);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
+                Insert::AfterCollision(a_step);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and half momentum)
@@ -462,7 +473,9 @@ void WarpX::OneStep (
             else {
                 // perform particle collisions
                 ExecutePythonCallback("beforecollisions");
+                Insert::BeforeCollision(a_step);
                 mypc->doCollisions(a_step, a_cur_time, a_dt);
+                Insert::AfterCollision(a_step);
                 ExecutePythonCallback("aftercollisions");
 
                 // push particles (full position and full momentum)
@@ -746,6 +759,7 @@ void WarpX::HandleParticlesAtBoundaries (int step, amrex::Real cur_time, int num
     ExecutePythonCallback("particlescraper");
 
     mypc->ApplyBoundaryConditions();
+    Insert::AnalyticBoundaryInteraction();
     m_particle_boundary_buffer->gatherParticlesFromDomainBoundaries(*mypc, cur_time);
 
     // Without mesh refinement, use a local redistribute when particles can only

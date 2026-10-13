@@ -1,0 +1,516 @@
+#include "Insert/Fields/HallElectrostaticMaterial.H"
+
+#include "EmbeddedBoundary/Enabled.H"
+#include "Python/callbacks.H"
+#include "Utils/Parser/ParserUtils.H"
+#include "Utils/TextMsg.H"
+#include "WarpX.H"
+
+#include <ablastr/fields/PoissonSolver.H>
+
+#include <AMReX_CoordSys.H>
+#include <AMReX_Gpu.H>
+#include <AMReX_MFIter.H>
+#include <AMReX_ParallelDescriptor.H>
+#include <AMReX_ParmParse.H>
+#include <AMReX_Print.H>
+#include <AMReX_Reduce.H>
+
+#include <algorithm>
+#include <limits>
+#include <string>
+
+namespace Insert {
+
+namespace {
+
+/**
+ * Initialize and validate the static electrostatic material fields on one level.
+ *
+ * The relative permittivity expression is evaluated at cell centers. The anode
+ * implicit and potential expressions are evaluated at nodes, where a non-positive
+ * implicit value produces an overset-mask value of zero. The routine also returns
+ * the permittivity range, masked-node count, and masked z-index range used by the
+ * caller to enforce the material invariants once when the cache is rebuilt.
+ */
+void
+InitializeMaterialLevel (
+    amrex::MultiFab& epsilon_r,
+    amrex::iMultiFab& anode_mask,
+    amrex::MultiFab& anode_phi,
+    amrex::Geometry const& geom,
+    amrex::ParserExecutor<3> const relative_permittivity,
+    amrex::ParserExecutor<3> const anode_implicit,
+    amrex::ParserExecutor<3> const anode_potential,
+    amrex::Real& epsilon_min,
+    amrex::Real& epsilon_max,
+    int& min_masked_k,
+    int& max_masked_k,
+    amrex::Long& masked_nodes)
+{
+    auto const prob_lo = geom.ProbLoArray();
+    auto const cell_size = geom.CellSizeArray();
+    amrex::Dim3 const domain_lo = amrex::lbound(geom.Domain());
+
+    for (amrex::MFIter mfi(epsilon_r, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        amrex::Box const& box = mfi.tilebox();
+        auto const epsilon = epsilon_r.array(mfi);
+        amrex::ParallelFor(
+            box,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+            {
+                amrex::Real const x =
+                    prob_lo[0] +
+                    (i - domain_lo.x + static_cast<amrex::Real>(0.5)) * cell_size[0];
+                amrex::Real const y =
+                    prob_lo[1] +
+                    (j - domain_lo.y + static_cast<amrex::Real>(0.5)) * cell_size[1];
+                amrex::Real const z =
+                    prob_lo[2] +
+                    (k - domain_lo.z + static_cast<amrex::Real>(0.5)) * cell_size[2];
+                epsilon(i, j, k) = relative_permittivity(x, y, z);
+            });
+    }
+
+    for (amrex::MFIter mfi(anode_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        amrex::Box const& box = mfi.tilebox();
+        auto const mask = anode_mask.array(mfi);
+        auto const fixed_phi = anode_phi.array(mfi);
+        amrex::ParallelFor(
+            box,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+            {
+                amrex::Real const x = prob_lo[0] + (i - domain_lo.x) * cell_size[0];
+                amrex::Real const y = prob_lo[1] + (j - domain_lo.y) * cell_size[1];
+                amrex::Real const z = prob_lo[2] + (k - domain_lo.z) * cell_size[2];
+                bool const inside_anode = anode_implicit(x, y, z) <= 0.0;
+                mask(i, j, k) = inside_anode ? 0 : 1;
+                fixed_phi(i, j, k) = inside_anode ? anode_potential(x, y, z) : 0.0;
+            });
+    }
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        epsilon_r.is_finite(0, 1, 0),
+        "insert.relative_permittivity_function produced NaN or infinity.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        anode_phi.is_finite(0, 1, 0),
+        "insert.anode_potential_function produced NaN or infinity inside the anode.");
+    epsilon_min = epsilon_r.min(0);
+    epsilon_max = epsilon_r.max(0);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        epsilon_min > 0.0,
+        "insert.relative_permittivity_function must be strictly positive everywhere.");
+
+    amrex::ReduceOps<amrex::ReduceOpMin, amrex::ReduceOpMax, amrex::ReduceOpSum>
+        reduce_ops;
+    amrex::ReduceData<int, int, amrex::Long> reduce_data(reduce_ops);
+    using ReduceTuple = decltype(reduce_data)::Type;
+    constexpr int no_masked_min = std::numeric_limits<int>::max();
+    constexpr int no_masked_max = std::numeric_limits<int>::lowest();
+
+    for (amrex::MFIter mfi(anode_mask, amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+        amrex::Box const& box = mfi.tilebox();
+        auto const mask = anode_mask.const_array(mfi);
+        reduce_ops.eval(
+            box, reduce_data,
+            [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept -> ReduceTuple
+            {
+                bool const is_masked = mask(i, j, k) == 0;
+                return {is_masked ? k : no_masked_min,
+                        is_masked ? k : no_masked_max,
+                        is_masked ? amrex::Long{1} : amrex::Long{0}};
+            });
+    }
+
+    ReduceTuple const reduced = reduce_data.value();
+    min_masked_k = amrex::get<0>(reduced);
+    max_masked_k = amrex::get<1>(reduced);
+    masked_nodes = amrex::get<2>(reduced);
+    amrex::ParallelDescriptor::ReduceIntMin(min_masked_k);
+    amrex::ParallelDescriptor::ReduceIntMax(max_masked_k);
+    amrex::ParallelDescriptor::ReduceLongSum(masked_nodes);
+}
+
+} // namespace
+
+HallElectrostaticMaterial&
+HallElectrostaticMaterial::GetInstance ()
+{
+    static HallElectrostaticMaterial material;
+    return material;
+}
+
+bool
+HallElectrostaticMaterial::enabled ()
+{
+    readParametersOnce();
+    return m_enabled;
+}
+
+void
+HallElectrostaticMaterial::readParametersOnce ()
+{
+    if (m_parameters_read) {
+        return;
+    }
+
+    amrex::ParmParse const pp("insert");
+    int use_electrostatic_materials = 0;
+    pp.query("use_electrostatic_materials", use_electrostatic_materials);
+    m_enabled = use_electrostatic_materials != 0;
+
+    if (!m_enabled) {
+        m_parameters_read = true;
+        return;
+    }
+
+#ifndef WARPX_DIM_3D
+    WARPX_ABORT_WITH_MESSAGE(
+        "insert.use_electrostatic_materials is currently supported only in 3D Cartesian geometry.");
+#endif
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        WarpX::electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame ||
+            WarpX::electrostatic_solver_id ==
+                ElectrostaticSolverAlgo::LabFrameElectroMagnetostatic,
+        "insert.use_electrostatic_materials requires a lab-frame electrostatic solver.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        WarpX::poisson_solver_id == PoissonSolverAlgo::Multigrid,
+        "insert.use_electrostatic_materials requires warpx.poisson_solver = multigrid.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        !EB::enabled(),
+        "insert.use_electrostatic_materials cannot be combined with embedded boundaries.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        !IsPythonCallbackInstalled("poissonsolver"),
+        "insert.use_electrostatic_materials cannot be combined with a Python "
+        "poissonsolver callback.");
+
+    utils::parser::Store_parserString(
+        pp, "relative_permittivity_function(x,y,z)", m_relative_permittivity_expression);
+    utils::parser::Store_parserString(
+        pp, "anode_implicit_function(x,y,z)", m_anode_implicit_expression);
+    utils::parser::Store_parserString(
+        pp, "anode_potential_function(x,y,z)", m_anode_potential_expression);
+
+    m_relative_permittivity_parser = std::make_unique<amrex::Parser>(
+        utils::parser::makeParser(m_relative_permittivity_expression, {"x", "y", "z"}));
+    m_anode_implicit_parser = std::make_unique<amrex::Parser>(
+        utils::parser::makeParser(m_anode_implicit_expression, {"x", "y", "z"}));
+    m_anode_potential_parser = std::make_unique<amrex::Parser>(
+        utils::parser::makeParser(m_anode_potential_expression, {"x", "y", "z"}));
+
+    m_relative_permittivity =
+        utils::parser::compileParser<3>(m_relative_permittivity_parser.get());
+    m_anode_implicit = utils::parser::compileParser<3>(m_anode_implicit_parser.get());
+    m_anode_potential = utils::parser::compileParser<3>(m_anode_potential_parser.get());
+
+    m_parameters_read = true;
+}
+
+void
+HallElectrostaticMaterial::prepare (
+    ablastr::fields::MultiLevelScalarField const& rho,
+    ablastr::fields::MultiLevelScalarField const& phi,
+    int const max_level)
+{
+    readParametersOnce();
+    if (!m_enabled) {
+        return;
+    }
+
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        static_cast<int>(rho.size()) == max_level + 1 &&
+            static_cast<int>(phi.size()) == max_level + 1,
+        "Electrostatic material preparation received an inconsistent number of grid levels.");
+    WarpX const& warpx = WarpX::GetInstance();
+    for (int lev = 0; lev <= max_level; ++lev) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            rho[lev] && phi[lev] && phi[lev]->ixType().nodeCentered() &&
+            warpx.Geom(lev).Coord() == amrex::CoordSys::cartesian,
+            "Electrostatic materials require nodal fields in Cartesian geometry on every level.");
+    }
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        !warpx.get_load_balance_intervals().isActivated(),
+        "Cached electrostatic materials require algo.load_balance_intervals = 0.");
+    int regrid_interval = -1;
+    amrex::ParmParse("warpx").query("regrid_int", regrid_interval);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        regrid_interval <= 0 && !WarpX::do_moving_window,
+        "Cached electrostatic materials require a static mesh (no regrid or moving window).");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        !m_defined || m_anode_mask.size() == phi.size(),
+        "Electrostatic material level count changed after initialization.");
+
+    if (!m_defined) {
+        initialize(phi, max_level);
+    }
+
+    for (int lev = 0; lev <= max_level; ++lev) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            rho[lev]->boxArray().CellEqual(m_anode_mask[lev]->boxArray()) &&
+                rho[lev]->DistributionMap() == m_anode_mask[lev]->DistributionMap(),
+            "The volume-anode mask requires rho to share its grid layout and distribution.");
+
+        for (amrex::MFIter mfi(*m_anode_mask[lev], amrex::TilingIfNotGPU());
+             mfi.isValid(); ++mfi)
+        {
+            amrex::Box const& box = mfi.tilebox();
+            auto const mask = m_anode_mask[lev]->const_array(mfi);
+            auto const rho_array = rho[lev]->array(mfi);
+            amrex::ParallelFor(
+                box,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                {
+                    if (mask(i, j, k) == 0) {
+                        rho_array(i, j, k) = 0.0;
+                    }
+                });
+        }
+    }
+}
+
+void
+HallElectrostaticMaterial::initialize (
+    ablastr::fields::MultiLevelScalarField const& phi,
+    int const max_level)
+{
+    WarpX const& warpx = WarpX::GetInstance();
+    int const number_of_levels = max_level + 1;
+
+    m_epsilon_r.resize(number_of_levels);
+    m_anode_mask.resize(number_of_levels);
+    m_anode_phi.resize(number_of_levels);
+
+    amrex::Real epsilon_min = std::numeric_limits<amrex::Real>::max();
+    amrex::Real epsilon_max = std::numeric_limits<amrex::Real>::lowest();
+    amrex::Long masked_nodes = 0;
+
+    for (int lev = 0; lev < number_of_levels; ++lev) {
+        amrex::Geometry const& geom = warpx.Geom(lev);
+        amrex::BoxArray const epsilon_ba = warpx.boxArray(lev);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            epsilon_ba.ixType().cellCentered(),
+            "The relative permittivity cache requires a cell-centered WarpX grid.");
+
+        m_epsilon_r[lev] = std::make_unique<amrex::MultiFab>(
+            epsilon_ba, warpx.DistributionMap(lev), 1, 0);
+        m_anode_mask[lev] = std::make_unique<amrex::iMultiFab>(
+            phi[lev]->boxArray(), phi[lev]->DistributionMap(), 1, 0);
+        m_anode_phi[lev] = std::make_unique<amrex::MultiFab>(
+            phi[lev]->boxArray(), phi[lev]->DistributionMap(), 1, 0);
+
+        amrex::Real level_epsilon_min;
+        amrex::Real level_epsilon_max;
+        int level_min_masked_k;
+        int level_max_masked_k;
+        amrex::Long level_masked_nodes;
+        InitializeMaterialLevel(
+            *m_epsilon_r[lev], *m_anode_mask[lev], *m_anode_phi[lev], geom,
+            m_relative_permittivity, m_anode_implicit, m_anode_potential,
+            level_epsilon_min, level_epsilon_max, level_min_masked_k,
+            level_max_masked_k, level_masked_nodes);
+
+        for (amrex::MFIter mfi(*m_anode_mask[lev], amrex::TilingIfNotGPU());
+             mfi.isValid(); ++mfi)
+        {
+            amrex::Box const& box = mfi.tilebox();
+            auto const mask = m_anode_mask[lev]->const_array(mfi);
+            auto const fixed_phi = m_anode_phi[lev]->const_array(mfi);
+            auto const phi_array = phi[lev]->array(mfi);
+            amrex::ParallelFor(
+                box,
+                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
+                {
+                    if (mask(i, j, k) == 0) {
+                        phi_array(i, j, k) = fixed_phi(i, j, k);
+                    }
+                });
+        }
+        epsilon_min = std::min(epsilon_min, level_epsilon_min);
+        epsilon_max = std::max(epsilon_max, level_epsilon_max);
+        masked_nodes += level_masked_nodes;
+
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            level_masked_nodes > 0,
+            "insert.anode_implicit_function did not select any nodal point.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            level_max_masked_k > level_min_masked_k,
+            "The volume anode must cover at least two nodal layers in z.");
+    }
+
+    m_epsilon_r_ptrs.resize(number_of_levels);
+    m_anode_mask_ptrs.resize(number_of_levels);
+    m_anode_phi_ptrs.resize(number_of_levels);
+    for (int lev = 0; lev < number_of_levels; ++lev) {
+        m_epsilon_r_ptrs[lev] = m_epsilon_r[lev].get();
+        m_anode_mask_ptrs[lev] = m_anode_mask[lev].get();
+        m_anode_phi_ptrs[lev] = m_anode_phi[lev].get();
+    }
+    m_defined = true;
+
+    if (warpx.Verbose()) {
+        amrex::Print() << "Hall electrostatic material initialized: epsilon_r in ["
+                       << epsilon_min << ", " << epsilon_max << "], "
+                       << masked_nodes << " masked nodal entries.\n"
+                       << "  relative permittivity (dimensionless): "
+                       << m_relative_permittivity_expression << "\n"
+                       << "  anode implicit function: " << m_anode_implicit_expression << "\n"
+                       << "  anode potential [V]: " << m_anode_potential_expression << "\n";
+    }
+}
+
+ablastr::fields::ConstMultiLevelScalarField const*
+HallElectrostaticMaterial::relativePermittivity () const noexcept
+{
+    return m_enabled && m_defined ? &m_epsilon_r_ptrs : nullptr;
+}
+
+amrex::Vector<amrex::iMultiFab const*> const*
+HallElectrostaticMaterial::anodeMasks () const noexcept
+{
+    return m_enabled && m_defined ? &m_anode_mask_ptrs : nullptr;
+}
+
+ablastr::fields::ConstMultiLevelScalarField const*
+HallElectrostaticMaterial::anodePotentials () const noexcept
+{
+    return m_enabled && m_defined ? &m_anode_phi_ptrs : nullptr;
+}
+
+void
+HallElectrostaticMaterial::fillPhiGhosts (
+    ablastr::fields::MultiLevelScalarField const& phi) const
+{
+    if (!m_enabled || WarpX::grid_type != ablastr::utils::enums::GridType::Collocated) {
+        return;
+    }
+    auto const& warpx = WarpX::GetInstance();
+    for (int lev = 0; lev < static_cast<int>(phi.size()); ++lev) {
+        auto& field = *phi[lev];
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(field.nGrowVect().min() >= 1,
+            "Collocated material fields need at least one phi ghost node.");
+        if (lev > 0) {
+            amrex::MultiFab coarse_phi(field.boxArray(), field.DistributionMap(), 1, 1);
+            ablastr::fields::interpolatePhiBetweenLevels(
+                phi[lev-1], &coarse_phi, warpx.Geom(lev-1),
+                WarpX::do_single_precision_comms, warpx.refRatio(lev-1), 1, 1);
+            for (amrex::MFIter mfi(field); mfi.isValid(); ++mfi) {
+                auto const valid = mfi.validbox();
+                auto const dst = field.array(mfi);
+                auto const src = coarse_phi.const_array(mfi);
+                amrex::ParallelFor(amrex::grow(valid, 1),
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                        if (!valid.contains(amrex::IntVect(AMREX_D_DECL(i,j,k)))) {
+                            dst(i,j,k) = src(i,j,k);
+                        }
+                    });
+            }
+        }
+        field.FillBoundary();
+        auto const domain = amrex::surroundingNodes(warpx.Geom(lev).Domain());
+        // Second-order one-sided differentiation at physical Dirichlet faces.
+        // This does not assume constant permittivity in the boundary cell.
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            for (amrex::MFIter mfi(field); mfi.isValid(); ++mfi) {
+                auto const arr = field.array(mfi);
+                for (int side = 0; side < 2; ++side) {
+                    int const node = side == 0 ? domain.smallEnd(d) : domain.bigEnd(d);
+                    int const inward = side == 0 ? 1 : -1;
+                    auto face = mfi.validbox() & domain;
+                    if (face.isEmpty() || node < face.smallEnd(d) || node > face.bigEnd(d)) {
+                        continue;
+                    }
+                    face.setSmall(d, node);
+                    face.setBig(d, node);
+                    amrex::ParallelFor(face,
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                            amrex::IntVect p(AMREX_D_DECL(i,j,k));
+                            auto ghost = p; ghost[d] -= inward;
+                            auto p1 = p; p1[d] += inward;
+                            auto p2 = p; p2[d] += 2*inward;
+                            arr(ghost) = 3*arr(p) - 3*arr(p1) + arr(p2);
+                        });
+                }
+            }
+        }
+    }
+}
+
+void
+HallElectrostaticMaterial::fillElectricFieldGhosts (
+    ablastr::fields::MultiLevelVectorField const& field) const
+{
+    if (!m_enabled) { return; }
+    auto const& warpx = WarpX::GetInstance();
+    for (int lev = 0; lev < static_cast<int>(field.size()); ++lev) {
+        for (int dir = 0; dir < 3; ++dir) {
+            auto& fine = *field[lev][dir];
+            auto const ng = fine.nGrowVect();
+            auto const type = fine.ixType().toIntVect();
+            auto const domain = amrex::convert(warpx.Geom(lev).Domain(), type);
+            if (lev > 0) {
+                auto const ratio = warpx.refRatio(lev-1);
+                auto ba = fine.boxArray();
+                ba.coarsen(ratio);
+                amrex::IntVect coarse_ng;
+                for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                    coarse_ng[d] = (ng[d]+ratio[d]-1)/ratio[d]+1;
+                }
+                amrex::MultiFab coarse(ba, fine.DistributionMap(), 1, coarse_ng);
+                coarse.setVal(0.0);
+                coarse.ParallelCopy(*field[lev-1][dir], 0, 0, 1,
+                    field[lev-1][dir]->nGrowVect(), coarse_ng);
+                for (amrex::MFIter mfi(fine); mfi.isValid(); ++mfi) {
+                    auto const valid = mfi.validbox();
+                    auto const dst = fine.array(mfi);
+                    auto const src = coarse.const_array(mfi);
+                    amrex::ParallelFor(mfi.fabbox(),
+                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                            amrex::IntVect p(AMREX_D_DECL(i,j,k));
+                            if (valid.contains(p)) { return; }
+                            amrex::IntVect left;
+                            amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> w;
+                            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                                amrex::Real const shift = 0.5*(1-type[d]);
+                                amrex::Real const u = (p[d]+shift)/ratio[d]-shift;
+                                left[d] = static_cast<int>(amrex::Math::floor(u));
+                                w[d] = u-left[d];
+                            }
+                            amrex::Real value = 0.0;
+                            for (int corner = 0; corner < (1 << AMREX_SPACEDIM); ++corner) {
+                                auto q = left;
+                                amrex::Real weight = 1.0;
+                                for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                                    bool const high = (corner & (1 << d)) != 0;
+                                    q[d] += high ? 1 : 0;
+                                    weight *= high ? w[d] : 1.0-w[d];
+                                }
+                                value += weight*src(q);
+                            }
+                            dst(p) = value;
+                        });
+                }
+            }
+            // Prefer same-level neighbors over interpolated coarse ghost values.
+            fine.FillBoundary();
+            // Supply exterior values for particle stencils at physical boundaries;
+            // AddExternalFields subsequently applies the configured E boundary policy.
+            for (amrex::MFIter mfi(fine); mfi.isValid(); ++mfi) {
+                auto const arr = fine.array(mfi);
+                amrex::ParallelFor(mfi.fabbox(),
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                        amrex::IntVect p(AMREX_D_DECL(i,j,k));
+                        if (domain.contains(p)) { return; }
+                        auto q = p;
+                        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                            q[d] = amrex::min(amrex::max(p[d], domain.smallEnd(d)),
+                                             domain.bigEnd(d));
+                        }
+                        if (p != q) { arr(p) = arr(q); }
+                    });
+            }
+        }
+    }
+}
+
+} // namespace Insert

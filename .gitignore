@@ -12,6 +12,8 @@ AMReX_buildInfo.cpp
 Backtrace.*
 *.vth
 *.sw[opqrs]
+.codex
+runs
 
 ####################
 # AMReX data files #
@@ -62,7 +64,7 @@ cmake-build-*/
 # VsCode #
 ##########
 .vscode
-
+.cache
 #################
 # Warp terminal #
 #################
@@ -77,3 +79,5 @@ WARP.md
 .DS_Store
 .AppleDouble
 .LSOverride
+
+data/

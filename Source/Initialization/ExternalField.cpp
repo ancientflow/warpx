@@ -20,6 +20,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <numeric>
 #include <vector>
@@ -194,13 +195,14 @@ ExternalFieldReader::ExternalFieldReader (
     std::string F_name, std::string F_component,
     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& problo,
     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& pdx,
-    amrex::Box const& dombox, bool distributed)
+    amrex::Box const& dombox, bool distributed, bool require_full_coverage)
     : m_file(std::move(read_fields_from_path)),
       m_name(std::move(F_name)),
       m_component(std::move(F_component)),
       m_problo(problo),
       m_probdx(pdx),
       m_dombox(dombox),
+      m_require_full_coverage(require_full_coverage),
       m_distributed(distributed)
 {}
 
@@ -277,6 +279,19 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
 
     // Load the first component if m_component is empty
     auto FC = m_component.empty() ? F.begin()->second : F[m_component];
+    // Keep the established single-level coordinate convention for existing maps.
+    if (m_require_full_coverage) {
+        auto const position = FC.position<double>();
+        auto const grid_unit = F.gridUnitSI();
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            int const axis = xyz_order ? d : AMREX_SPACEDIM-1-d;
+            m_offset[d] = static_cast<amrex::Real>(
+                (m_offset[d] + position.at(axis)*m_dx[d]) * grid_unit);
+            m_dx[d] *= static_cast<amrex::Real>(grid_unit);
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(std::isfinite(m_dx[d]) && m_dx[d] > 0.0 &&
+                std::isfinite(m_offset[d]), "External field map has invalid grid coordinates.");
+        }
+    }
     const auto extent = FC.getExtent();
     for (auto ex : extent) {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(ex < decltype(ex)(std::numeric_limits<int>::max()),
@@ -310,6 +325,20 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
     for (int idim = 0; idim < AMREX_SPACEDIM; ++idim) {
         m_domain.setLo(idim, m_offset[idim]);
         m_domain.setHi(idim, m_offset[idim]+(m_size[idim]-1)*m_dx[idim]);
+    }
+
+    // MR may expose regions beyond a formerly single-level field map. Never
+    // silently return zero there: require both samples of each interpolation
+    // stencil, including all requested ghost cells and component staggering.
+    if (m_require_full_coverage) {
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            auto const first = std::floor((pbox.lo(d)-m_offset[d])/m_dx[d]);
+            auto const last = std::floor((pbox.hi(d)-m_offset[d])/m_dx[d]) + 1;
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(first >= 0 && last < m_size[d],
+                "External field map " + m_file + " (" + m_name + "/" + m_component +
+                ") does not cover the MR target and its ghost interpolation stencil in axis " +
+                std::to_string(d) + ". Extend the field map before using mesh refinement.");
+        }
     }
 
     // Determine the full extent of the data we need

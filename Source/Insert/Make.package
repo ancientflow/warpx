@@ -1,0 +1,11 @@
+CEXE_sources += WarpXInsert.cpp
+CEXE_sources += BackgroundCoupledDensity.cpp
+CEXE_sources += CoupledBackgroundMCCCollision.cpp
+CEXE_sources += InsertUtils.cpp
+CEXE_sources += IonizationSourceTable.cpp
+
+VPATH_LOCATIONS   += $(WARPX_HOME)/Source/Insert
+VPATH_LOCATIONS   += $(WARPX_HOME)/Source/Insert/Background
+VPATH_LOCATIONS   += $(WARPX_HOME)/Source/Insert/Collisions
+VPATH_LOCATIONS   += $(WARPX_HOME)/Source/Insert/Core
+VPATH_LOCATIONS   += $(WARPX_HOME)/Source/Insert/Utils
