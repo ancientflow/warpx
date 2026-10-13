@@ -120,6 +120,42 @@ Insert 模块处理。
 staggering 从粗层插值并执行同层通信，供粒子 gather 使用。
 内部体阳极的固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
 
+### 单层单极 Robin 初始化求解
+
+`insert.electrostatic_boundary` 默认为 `dirichlet`，保持上述材料求解路径。
+选择 `monopole` 后，由独立节点算子施加六面单极 Robin 条件，内部阳极仍固定电势：
+
+```text
+max_step = 0
+amr.max_level = 0
+warpx.grid_type = staggered
+insert.use_electrostatic_materials = 1
+insert.electrostatic_boundary = monopole
+# 可省略，默认取物理域中心；坐标必须严格位于域内
+insert.robin_center = 0.005 0.005 0.00375
+insert.robin_phi_infinity = 0
+insert.robin_diagnostics = 1
+```
+
+本阶段仅支持 3D Cartesian、完整非周期静态域、单层、staggered，以及域内统一电压
+阳极。沿用材料路径对 EB、Python Poisson 回调、重网格、负载均衡和 moving window
+的限制。`robin_center` 和 `robin_phi_infinity` 支持参数表达式；后者默认 0 V。
+阳极不得接触外域边界，空间变化的阳极电压会明确报错。
+
+入口复用材料 rho/epsilon/mask，但不对外面执行旧 PEC rho 镜像和 Dirichlet phi 设置。
+物理 rho 保持不变，独立 RHS 副本仅缩放一次为 `-rho/epsilon0`；算子自行加入 Robin 源。
+算子与 MLMG 持久缓存，网格、材料/mask 对象或层次选项变化时拒绝继续使用旧缓存。
+粗化上限通过实际 mask 的逐级节点注入确定，并遵守 `self_fields_max_coarsening_level`；
+为确保各 Box 可安全二倍粗化，所选上限可能随 Box 划分而更保守。
+关闭半粗化，仅支持原生 smoother/Krylov 底层求解器。
+
+`robin_diagnostics=1` 输出粗化上限、求解次数、材料层次构建次数和
+`compPhysicalResidual` 的最大范数。它不使用遗漏非齐次 Robin 源的普通残差接口。
+诊断默认关闭，不额外分配残差场。
+
+完整 PIC 的外侧 E ghost/gather 边界链路属于下一阶段，当前强制 `max_step=0`。
+本阶段输出可用于检查初始化电势和有效区差分电场，不代表粒子边界取场已验收。
+
 ## 解析壁面粒子相互作用
 
 解析壁面由全局列表声明，列表顺序为交界处的优先级。无效区域必须由输入保证不相交。

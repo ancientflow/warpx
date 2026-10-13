@@ -21,12 +21,37 @@
 #include "Insert/Fields/HallWallCharge.H"
 #endif
 
+#include <AMReX_ParmParse.H>
+
 #include <algorithm>
+#include <string>
 
 using namespace amrex;
 
 void LabFrameExplicitES::InitData() {
     auto & warpx = WarpX::GetInstance();
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    m_robin_solver.readParameters(warpx.Geom(0));
+    if (m_robin_solver.enabled()) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1 && warpx.maxLevel() == 0 &&
+            warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
+            "Monopole Robin requires one full nonperiodic Cartesian AMR level.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(Insert::HallElectrostaticMaterial::GetInstance().enabled(),
+            "Monopole Robin requires insert.use_electrostatic_materials = 1.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            WarpX::grid_type == ablastr::utils::enums::GridType::Staggered,
+            "Monopole Robin currently requires warpx.grid_type = staggered.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(warpx.maxStep() == 0,
+            "Monopole Robin is currently limited to max_step = 0 initialization solves; "
+            "the outer-boundary E/gather chain must be validated before PIC evolution.");
+        return;
+    }
+#else
+    std::string boundary = "dirichlet";
+    amrex::ParmParse("insert").query("electrostatic_boundary", boundary);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(boundary == "dirichlet",
+        "insert.electrostatic_boundary = monopole requires 3D.");
+#endif
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
 }
 
@@ -176,6 +201,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     using warpx::fields::FieldType;
 
     bool const skip_lev0_coarse_patch = true;
+    bool const use_robin =
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        m_robin_solver.enabled();
+#else
+        false;
+#endif
 
     const MultiLevelScalarField rho_fp = fields.get_mr_levels(FieldType::rho_fp, max_level);
     const MultiLevelScalarField rho_cp = fields.get_mr_levels(FieldType::rho_cp, max_level, skip_lev0_coarse_patch);
@@ -204,7 +235,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     warpx.SyncRho( rho_fp, rho_cp, amrex::GetVecOfPtrs(rho_buf) );
 
 #ifndef WARPX_DIM_RZ
-    for (int lev = 0; lev < num_levels; lev++) {
+    for (int lev = 0; lev < num_levels && !use_robin; lev++) {
         // Reflect density over PEC boundaries, if needed.
         warpx.ApplyRhofieldBoundary(lev, rho_fp[lev], PatchType::fine);
     }
@@ -219,7 +250,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     preparePhiExtrapolatedInitialGuess(phi_fp);
 
     // set the boundary potentials appropriately
-    setPhiBC(phi_fp, warpx.gett_new(0));
+    if (!use_robin) { setPhiBC(phi_fp, warpx.gett_new(0)); }
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
     std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
     ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr;
@@ -255,14 +286,25 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         // Use the AMREX MLMG or the FFT (IGF) solver otherwise
         ablastr::fields::MLMGOptions mlmg_options = m_mlmg_options;
         mlmg_options.verbosity = verbose_step ? m_mlmg_options.verbosity : 0;
-        computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                   Efield_fp
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-                   , anode_masks, relative_permittivity,
-                   relative_permittivity ? &m_material_solver_cache : nullptr,
-                   electrostatic_material.anodePotentials()
+        if (use_robin) {
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0 && warpx.maxStep() == 0,
+                "Monopole Robin currently supports only single-level initialization solves.");
+            m_robin_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
+                *anode_masks->at(0), *electrostatic_material.anodePotentials()->at(0),
+                warpx.Geom(0), mlmg_options);
+        } else
 #endif
-        );
+        {
+            computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
+                       Efield_fp
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+                       , anode_masks, relative_permittivity,
+                       relative_permittivity ? &m_material_solver_cache : nullptr,
+                       electrostatic_material.anodePotentials()
+#endif
+            );
+        }
 #endif
     }
     // 共置网格 guard cell 处理: MLMG 不填 Dirichlet 面的 ghost 节点 (留 0),

@@ -10,6 +10,9 @@
 #define WARPX_LABFRAMEEXPLICITES_H_
 
 #include "ElectrostaticSolver.H"
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
+#endif
 
 #include <AMReX_MultiFab.H>
 #include <AMReX_Vector.H>
@@ -66,6 +69,7 @@ private:
 
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
     Insert::MaterialPoissonCache m_material_solver_cache;
+    Insert::NodeRobinSolver m_robin_solver;
 #endif
 
 };

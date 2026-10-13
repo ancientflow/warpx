@@ -33,6 +33,7 @@ foreach(D IN LISTS WarpX_DIMS)
         target_sources(lib_${SD}
           PRIVATE
             Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp
+            Fields/NodeRobin/NodeRobinSolver.cpp
         )
     endif()
 endforeach()
