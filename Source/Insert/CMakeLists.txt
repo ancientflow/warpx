@@ -29,4 +29,10 @@ foreach(D IN LISTS WarpX_DIMS)
         Injection/InsertInjection.cpp
         Utils/InsertUtils.cpp
     )
+    if(D STREQUAL "3")
+        target_sources(lib_${SD}
+          PRIVATE
+            Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp
+        )
+    endif()
 endforeach()
