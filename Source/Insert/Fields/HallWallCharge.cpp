@@ -1,5 +1,8 @@
 #include "Insert/Fields/HallWallCharge.H"
 
+#if defined(WARPX_DIM_3D)
+#include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
+#endif
 #include "Utils/TextMsg.H"
 #include "WarpX.H"
 
@@ -15,6 +18,7 @@
 #include <fstream>
 #include <iomanip>
 #include <numeric>
+#include <string>
 
 namespace Insert {
 
@@ -227,6 +231,14 @@ HallWallCharge::compositeCharge () const
     // Never write assembly/restriction results back into the persistent source.
     // Report before PEC image-charge processing and conductor rho removal.
     warpx.SyncRho(amrex::GetVecOfPtrs(fine), amrex::GetVecOfPtrs(coarse), buffer);
+#if defined(WARPX_DIM_3D)
+    std::string boundary = "dirichlet";
+    amrex::ParmParse("insert").query("electrostatic_boundary", boundary);
+    if (boundary == "monopole") {
+        // Match the private Robin RHS's boundary dual-volume normalization.
+        NodeRobinSolver::normalizeBoundarySource(*fine[0], warpx.Geom(0));
+    }
+#endif
     amrex::Real result = 0.0;
     for (int lev = 0; lev < nlev; ++lev) {
         amrex::iMultiFab uncovered(warpx.boxArray(lev), warpx.DistributionMap(lev), 1, 0);

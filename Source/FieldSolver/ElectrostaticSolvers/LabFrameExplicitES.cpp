@@ -33,17 +33,35 @@ void LabFrameExplicitES::InitData() {
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
     m_robin_solver.readParameters(warpx.Geom(0));
     if (m_robin_solver.enabled()) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            WarpX::electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame &&
+            warpx.evolve_scheme == EvolveScheme::Explicit,
+            "Monopole Robin currently requires explicit lab-frame electrostatic evolution.");
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1 && warpx.maxLevel() == 0 &&
             warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
             "Monopole Robin requires one full nonperiodic Cartesian AMR level.");
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(Insert::HallElectrostaticMaterial::GetInstance().enabled(),
             "Monopole Robin requires insert.use_electrostatic_materials = 1.");
+        for (int d = 0; d < 3; ++d) {
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+                WarpX::field_boundary_lo[d] == FieldBoundaryType::None &&
+                WarpX::field_boundary_hi[d] == FieldBoundaryType::None,
+                "Monopole Robin requires boundary.field_lo/hi = none none none; "
+                "the Robin solver owns the electrostatic outer boundary.");
+        }
+        bool ecdi_enabled = false;
+        amrex::ParmParse("insert.ecdi_control").query("enabled", ecdi_enabled);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(WarpX::nox == 1 && !WarpX::use_filter && !ecdi_enabled,
+            "Monopole Robin currently requires algo.particle_shape = 1, "
+            "warpx.use_filter = 0 and insert.ecdi_control.enabled = 0.");
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-            WarpX::grid_type == ablastr::utils::enums::GridType::Staggered,
-            "Monopole Robin currently requires warpx.grid_type = staggered.");
-        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(warpx.maxStep() == 0,
-            "Monopole Robin is currently limited to max_step = 0 initialization solves; "
-            "the outer-boundary E/gather chain must be validated before PIC evolution.");
+            WarpX::field_gathering_algo == GatheringAlgo::EnergyConserving,
+            "Monopole Robin requires algo.field_gathering = energy-conserving; "
+            "momentum-conserving gathering is not supported.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            WarpX::grid_type == ablastr::utils::enums::GridType::Collocated ||
+            WarpX::galerkin_interpolation,
+            "Staggered monopole Robin requires interpolation.galerkin_scheme = 1.");
         return;
     }
 #else
@@ -288,8 +306,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         mlmg_options.verbosity = verbose_step ? m_mlmg_options.verbosity : 0;
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
         if (use_robin) {
-            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0 && warpx.maxStep() == 0,
-                "Monopole Robin currently supports only single-level initialization solves.");
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0,
+                "Monopole Robin currently supports only single-level solves.");
             m_robin_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
                 *anode_masks->at(0), *electrostatic_material.anodePotentials()->at(0),
                 warpx.Geom(0), mlmg_options);
@@ -307,12 +325,11 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         }
 #endif
     }
-    // 共置网格 guard cell 处理: MLMG 不填 Dirichlet 面的 ghost 节点 (留 0),
-    // computeE 在边界节点的中心差分会读到, 重填后再算电场
-    Insert::SetPhiGuards();
+    Insert::FillPhiGhosts(phi_fp
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    electrostatic_material.fillPhiGhosts(phi_fp);
+                          , &m_robin_solver
 #endif
+    );
     // Keep extrapolation history on the uncorrected Poisson potential.
     updatePhiExtrapolationHistory(phi_fp);
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
@@ -321,12 +338,15 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     // Compute the electric field. Note that if an EB is used the electric
     // field will be calculated in the computePhi call.
-    if (!EB::enabled()) { computeE( Efield_fp, phi_fp, beta ); }
-    else {
-        if (IsPythonCallbackInstalled("poissonsolver")) { computeE(Efield_fp, phi_fp, beta); }
+    if (!EB::enabled() || IsPythonCallbackInstalled("poissonsolver")) {
+        computeE(Efield_fp, phi_fp, beta);
     }
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    electrostatic_material.fillElectricFieldGhosts(Efield_fp);
+    if (use_robin) {
+        for (auto* field : Efield_fp[0]) { field->FillBoundary(); }
+    } else {
+        electrostatic_material.fillElectricFieldGhosts(Efield_fp);
+    }
 #endif
 }
 

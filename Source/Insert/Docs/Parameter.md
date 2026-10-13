@@ -116,19 +116,28 @@ Insert 模块处理。
 按 `phi_ghost = 2*phi_bnd - phi_int - rho_bnd*dx^2/eps0` 重填六个 PEC 面的 ghost
 节点，使中心差分退化为 Poisson 一致的单边通量。材料路径使用逐层的独立处理：
 粗层电势插值提供细区 ghost，同层通信覆盖内部 box 边界；物理 Dirichlet 面使用
-二阶单边导数对应的二次外推；当前材料路径仅使用第一类物理边界。电场 ghost 按分量实际
+二阶单边导数对应的二次外推；默认 Dirichlet 材料路径仅使用第一类物理边界。电场 ghost 按分量实际
 staggering 从粗层插值并执行同层通信，供粒子 gather 使用。
 内部体阳极的固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
 
-### 单层单极 Robin 初始化求解
+### 单层单极 Robin 求解
 
 `insert.electrostatic_boundary` 默认为 `dirichlet`，保持上述材料求解路径。
 选择 `monopole` 后，由独立节点算子施加六面单极 Robin 条件，内部阳极仍固定电势：
 
 ```text
-max_step = 0
+max_step = 5
 amr.max_level = 0
 warpx.grid_type = staggered
+algo.particle_shape = 1
+algo.field_gathering = energy-conserving
+interpolation.galerkin_scheme = 1
+warpx.use_filter = 0
+insert.ecdi_control.enabled = 0
+boundary.field_lo = none none none
+boundary.field_hi = none none none
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
 insert.use_electrostatic_materials = 1
 insert.electrostatic_boundary = monopole
 # 可省略，默认取物理域中心；坐标必须严格位于域内
@@ -137,13 +146,18 @@ insert.robin_phi_infinity = 0
 insert.robin_diagnostics = 1
 ```
 
-本阶段仅支持 3D Cartesian、完整非周期静态域、单层、staggered，以及域内统一电压
-阳极。沿用材料路径对 EB、Python Poisson 回调、重网格、负载均衡和 moving window
+本阶段支持 3D Cartesian、完整非周期静态域、单层、staggered 或 collocated、
+一阶粒子形状、
+关闭 rho/ECDI 滤波，以及域内统一电压阳极。支持显式 labframe 静电多步 PIC 演化；
+静磁耦合与隐式演化尚未接入此边界模式。沿用材料路径对 EB、Python Poisson 回调、重网格、负载均衡和 moving window
 的限制。`robin_center` 和 `robin_phi_infinity` 支持参数表达式；后者默认 0 V。
 阳极不得接触外域边界，空间变化的阳极电压会明确报错。
 
 入口复用材料 rho/epsilon/mask，但不对外面执行旧 PEC rho 镜像和 Dirichlet phi 设置。
-物理 rho 保持不变，独立 RHS 副本仅缩放一次为 `-rho/epsilon0`；算子自行加入 Robin 源。
+输出 rho 保持原沉积 `q/ΔV` 约定。在独立 RHS 副本上，对外域面/棱/角节点分别
+乘 2/4/8，匹配节点算子的半/四分之一/八分之一控制体积，再乘 `-1/epsilon0`；
+算子自行加入 Robin 源。此过程不改写 rho 或持久壁电荷。壁电荷复合诊断的临时副本
+在 Robin 模式下使用同一控制体积修正；默认 Dirichlet 诊断不变。
 算子与 MLMG 持久缓存，网格、材料/mask 对象或层次选项变化时拒绝继续使用旧缓存。
 粗化上限通过实际 mask 的逐级节点注入确定，并遵守 `self_fields_max_coarsening_level`；
 为确保各 Box 可安全二倍粗化，所选上限可能随 Box 划分而更保守。
@@ -153,8 +167,31 @@ insert.robin_diagnostics = 1
 `compPhysicalResidual` 的最大范数。它不使用遗漏非齐次 Robin 源的普通残差接口。
 诊断默认关闭，不额外分配残差场。
 
-完整 PIC 的外侧 E ghost/gather 边界链路属于下一阶段，当前强制 `max_step=0`。
-本阶段输出可用于检查初始化电势和有效区差分电场，不代表粒子边界取场已验收。
+六个场边界必须显式设为 `none`；这使通用场处理不再执行 PEC/PMC 镜像或切向场清零，
+真正的静电边界由 Robin 算子负责。粒子吸收/反射仍由 `boundary.particle_*` 独立控制。
+外加 E/B 仍按现有顺序叠加，外加 E 不经过 PEC 截断。
+
+Robin 模式只允许 `algo.field_gathering=energy-conserving`（默认值），拒绝
+`momentum-conserving`。交错网格必须保持 `interpolation.galerkin_scheme=1`；
+共置网格按 WarpX 原有规则使用同阶节点形函数。此设置约束取场算法，不意味着
+含吸收边界、碰撞或外加场的整个系统严格守恒能量。
+
+`Insert::FillPhiGhosts` 统一分派旧边界、材料 Dirichlet 和 Robin 的电势 ghost 处理。
+Robin 直接使用原 `phi_fp`，执行同层通信，不再分配宽电势副本或计算域外 E。
+公共 `ElectrostaticSolver::computeE` 仅计算有效区，E 的同层通信仍保留。
+
+一阶交错 Galerkin 取场在 E 法向使用零阶形函数，不经过交错到节点的场居中；
+域内粒子不需要物理域外 E。有效区前向差分只使用物理域内及边界电势节点，
+因此交错模式不再填充 Robin 域外电势。
+共置网格的一阶取场也不需要物理域外 E，但边界节点的中心差分需要第一层 phi ghost：
+`phi_ghost = phi_interior - 2*dx*q*(phi_boundary-phi_infinity)`，其中 q 使用外法向。
+只填充各面紧邻的这一层、其余坐标处于物理域内的节点，覆盖有效区面/棱/角求导。
+这使中心差分自然满足 `E_n=q*(phi-phi_infinity)`；其他域外 phi ghost 不作物理延拓。
+
+当前仍拒绝高阶粒子形状和 rho 滤波：它们需要独立的外域沉积处理。
+单极延拓是远场近似，不保证任意近场分布或延伸至外边界的陶瓷都适合这个模型。
+32³/64³ 真空球体验证显示误差随网格细化下降；分段介质算例已验证运行、缓存和 MPI
+一致性，但实际羽流仍须分别检查域大小、展开中心及介质外延的敏感性。
 
 ## 解析壁面粒子相互作用
 

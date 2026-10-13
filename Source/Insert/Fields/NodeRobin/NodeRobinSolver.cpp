@@ -190,6 +190,7 @@ void NodeRobinSolver::solve (
             });
     }
     amrex::MultiFab::Copy(*c.rhs, rho, 0, 0, 1, 0);
+    normalizeBoundarySource(*c.rhs, geom);
     c.rhs->mult(-1.0/ablastr::constant::SI::epsilon_0);
     c.rhs->OverrideSync(geom.periodicity());
     ablastr::fields::applyMLMGOptions(*c.mlmg, options);
@@ -203,6 +204,70 @@ void NodeRobinSolver::solve (
         amrex::Print() << "Robin solve " << c.solves
                        << ": physical residual = " << c.residual->norm0()
                        << ", coefficient builds = " << c.op->coefficientBuilds() << '\n';
+    }
+}
+
+void NodeRobinSolver::normalizeBoundarySource (
+    amrex::MultiFab& source, amrex::Geometry const& geom)
+{
+    // Linear deposition stores q/dV at nodes. The nodal Robin operator uses
+    // half/quarter/eighth dual volumes on physical faces/edges/corners.
+    // Normalize this private source, never the persistent deposition or rho.
+    auto const domain = amrex::surroundingNodes(geom.Domain());
+    auto const lo = amrex::lbound(domain);
+    auto const hi = amrex::ubound(domain);
+    for (amrex::MFIter mfi(source); mfi.isValid(); ++mfi) {
+        auto const rhs = source.array(mfi);
+        amrex::ParallelFor(mfi.validbox(),
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                int const faces = int(i == lo.x || i == hi.x) +
+                                  int(j == lo.y || j == hi.y) +
+                                  int(k == lo.z || k == hi.z);
+                rhs(i,j,k) *= amrex::Real(1 << faces);
+            });
+    }
+}
+
+void NodeRobinSolver::fillPhiGhosts (
+    amrex::MultiFab& phi, amrex::Geometry const& geom) const
+{
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(phi.nGrowVect().min() >= 1,
+        "Collocated Robin fields require one phi ghost layer.");
+    auto const domain = amrex::surroundingNodes(geom.Domain());
+    auto const problo = geom.ProbLoArray();
+    auto const dx = geom.CellSizeArray();
+    auto const center = m_center;
+    auto const far_phi = m_phi_infinity;
+    for (amrex::MFIter mfi(phi); mfi.isValid(); ++mfi) {
+        auto const p = phi.array(mfi);
+        for (int d = 0; d < 3; ++d) {
+            for (int sign : {-1, 1}) {
+                auto face = domain;
+                int const boundary = sign < 0 ? domain.smallEnd(d) : domain.bigEnd(d);
+                face.setSmall(d, boundary + sign);
+                face.setBig(d, boundary + sign);
+                face &= mfi.fabbox();
+                // Only one coordinate is outside: these are precisely the phi
+                // nodes read by centered gradients on valid faces, edges and corners.
+                amrex::ParallelFor(face,
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                        amrex::IntVect b(i,j,k);
+                        b[d] = boundary;
+                        auto inward = b;
+                        inward[d] -= sign;
+                        amrex::Real radius2 = 0;
+                        amrex::Real rd = 0;
+                        for (int axis = 0; axis < 3; ++axis) {
+                            auto const r = problo[axis] +
+                                (b[axis]-domain.smallEnd(axis))*dx[axis] - center[axis];
+                            radius2 += r*r;
+                            if (axis == d) { rd = r; }
+                        }
+                        // (phi_g-phi_in)/(2*h) = -q*(phi_b-phi_inf), q = n.r/r^2.
+                        p(i,j,k) = p(inward) - 2*dx[d]*sign*rd/radius2*(p(b)-far_phi);
+                    });
+            }
+        }
     }
 }
 
