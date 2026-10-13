@@ -144,16 +144,17 @@ public:
     void SyncMassMatrices ();
     void SaveParticlesAtImplicitStepStart ();
     void FinishImplicitParticleUpdate (amrex::Real a_time);
-    void SetElectricFieldAndApplyBCs ( const WarpXSolverVec& a_E, amrex::Real a_time );
-    void UpdateMagneticFieldAndApplyBCs ( ablastr::fields::MultiLevelVectorField const& a_Bn,
-                                          amrex::Real a_thetadt, amrex::Real start_time );
-    void SpectralSourceFreeFieldAdvance ( amrex::Real start_time);
-    void FinishMagneticFieldAndApplyBCs ( ablastr::fields::MultiLevelVectorField const& a_Bn,
-                                          amrex::Real a_theta, amrex::Real a_time );
-    void FinishImplicitField ( const ablastr::fields::MultiLevelVectorField& Field_fp,
-                               const ablastr::fields::MultiLevelVectorField& Field_n,
-                               amrex::Real theta );
-    void DepositMassMatrices ();
+    void ResetImplicitParticleData ();
+    void SetElectricFieldAndApplyBCs (const WarpXSolverVec& a_E, amrex::Real a_time);
+    void UpdateMagneticFieldAndApplyBCs (ablastr::fields::MultiLevelVectorField const& a_Bn,
+                                         amrex::Real a_thetadt, amrex::Real start_time);
+    void SpectralSourceFreeFieldAdvance (amrex::Real start_time);
+    void FinishMagneticFieldAndApplyBCs (amrex::Real a_theta, amrex::Real a_time);
+    void FinishElectricFieldAndApplyBCs (amrex::Real a_theta, amrex::Real a_time);
+    void FinishImplicitField (const ablastr::fields::MultiLevelVectorField& Field_fp,
+                              const ablastr::fields::MultiLevelVectorField& Field_n,
+                              amrex::Real theta);
+    void DepositMassMatrices (amrex::Real a_dt);
     void ImplicitComputeRHSE (         amrex::Real dt, WarpXSolverVec& a_Erhs_vec);
     void ImplicitComputeRHSE (int lev, amrex::Real dt, WarpXSolverVec& a_Erhs_vec);
     void ImplicitComputeRHSE (int lev, PatchType patch_type, amrex::Real dt, WarpXSolverVec& a_Erhs_vec);
@@ -162,6 +163,8 @@ public:
     MultiFluidContainer& GetFluidContainer () { return *myfl; }
     ElectrostaticSolver& GetElectrostaticSolver () {return *m_electrostatic_solver;}
     [[nodiscard]] HybridPICModel * get_pointer_HybridPICModel () const { return m_hybrid_pic_model.get(); }
+    /** Return the implicit solver, or nullptr when the evolve scheme is explicit */
+    [[nodiscard]] ImplicitSolver * get_pointer_ImplicitSolver () const { return m_implicit_solver.get(); }
     MultiDiagnostics& GetMultiDiags () {return *multi_diags;}
     ParticleBoundaryBuffer& GetParticleBoundaryBuffer () { return *m_particle_boundary_buffer; }
     amrex::Vector<std::array< std::unique_ptr<amrex::iMultiFab>,3 > >& GetEBUpdateEFlag() { return m_eb_update_E; }
@@ -656,12 +659,24 @@ public:
     void PushParticlesandDeposit (int lev, amrex::Real cur_time, SubcyclingHalf subcycling_half=SubcyclingHalf::None, bool skip_deposition=false,
                                   PositionPushType position_push_type=PositionPushType::Full,
                                   MomentumPushType momentum_push_type=MomentumPushType::Full,
+                                  amrex::Real dt_scale=static_cast<amrex::Real>(1.),
                                   ImplicitOptions const * implicit_options = nullptr);
 
     void PushParticlesandDeposit (amrex::Real cur_time, bool skip_deposition=false,
                                   PositionPushType position_push_type=PositionPushType::Full,
                                   MomentumPushType momentum_push_type=MomentumPushType::Full,
+                                  amrex::Real dt_scale=static_cast<amrex::Real>(1.),
                                   ImplicitOptions const * implicit_options = nullptr);
+
+    /** Perform essential particle house keeping at boundaries
+     *
+     * Inject, communicate, scrape and sort particles.
+     *
+     * @param step current step
+     * @param cur_time current time
+     * @param num_moved number of cells the moving window moved
+     */
+    void HandleParticlesAtBoundaries (int step, amrex::Real cur_time, int num_moved);
 
     // This function does aux(lev) = fp(lev) + I(aux(lev-1)-cp(lev)).
     // Caller must make sure fp and cp have ghost cells filled.
@@ -1479,7 +1494,7 @@ private:
 
 
     //! If true, particles will be sorted in the order x -> y -> z -> ppc for faster deposition
-#if defined(AMREX_USE_CUDA)
+#if defined(AMREX_USE_CUDA) || defined(AMREX_USE_HIP)
     bool m_sort_particles_for_deposition = true;
 #else
     bool m_sort_particles_for_deposition = false;
@@ -1516,16 +1531,6 @@ private:
      */
     [[nodiscard]]
     bool checkStopSimulation (amrex::Real cur_time);
-
-    /** Perform essential particle house keeping at boundaries
-     *
-     * Inject, communicate, scrape and sort particles.
-     *
-     * @param step current step
-     * @param cur_time current time
-     * @param num_moved number of cells the moving window moved
-     */
-    void HandleParticlesAtBoundaries (int step, amrex::Real cur_time, int num_moved);
 
     /** Update the E and B fields in the explicit em PIC scheme.
      *
