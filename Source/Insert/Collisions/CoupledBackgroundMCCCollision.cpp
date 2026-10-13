@@ -18,6 +18,7 @@
 #include "Particles/ParticleCreation/SmartCopy.H"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/ParticleUtils.H"
+#include "Utils/ScatteringUtils.H"
 #include "Utils/TextMsg.H"
 #include "Utils/WarpXAlgorithmSelection.H"
 #include "WarpX.H"
@@ -754,7 +755,11 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
                     // TwoProductComputeProductMomenta expects the *released*
                     // energy here, hence the negative sign; the energy penalty
                     // is also converted from eV to Joules.
-                    scattering_process.m_scattering_angle_model, engine);
+                    scattering_process.m_scattering_angle_model,
+                    // Background MCC does not support Legendre-based scattering.
+                    ScatteringUtils::AnisotropicCoefficientTable{},
+                    /*energy_range_status=*/nullptr,
+                    engine);
 
                 // update projectile velocity with new components in labframe
                 // (the background-gas recoil u2*_out is discarded)

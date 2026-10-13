@@ -162,9 +162,6 @@ public:
      *  input parameters
      */
     ablastr::fields::MLMGOptions m_mlmg_options;
-    int self_fields_verbosity = 2;
-    /** MLGM number of smoothing sweeps */
-    int self_fields_num_final_sweeps = 8;
     /** Extrapolation order for the phi initial guess: 0, 1, or 2 */
     int self_fields_phi_extrapolation_order = 0;
     /** First-order extrapolation coefficient for the phi initial guess */
