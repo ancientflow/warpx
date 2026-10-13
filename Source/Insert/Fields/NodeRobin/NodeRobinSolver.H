@@ -29,6 +29,12 @@ public:
                 amrex::MultiFab const& voltage, amrex::Geometry const& geom,
                 ablastr::fields::MLMGOptions const& options);
 
+    /** Fill one exterior phi layer for centered differences at physical boundary nodes. */
+    void fillPhiGhosts (amrex::MultiFab& phi, amrex::Geometry const& geom) const;
+
+    /** Convert an assembled q/dV copy to density per nodal boundary dual volume. */
+    static void normalizeBoundarySource (amrex::MultiFab& source, amrex::Geometry const& geom);
+
 private:
     struct Cache;
     std::unique_ptr<Cache> m_cache;
