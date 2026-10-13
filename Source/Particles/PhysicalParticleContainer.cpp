@@ -466,6 +466,28 @@ PhysicalParticleContainer::BackwardCompatibility ()
             WARPX_ABORT_WITH_MESSAGE(msg);
         }
     }
+
+    std::string mom_dist_s;
+    if (pp_species_name.query("momentum_distribution_type", mom_dist_s) &&
+        mom_dist_s == "maxwell_juttner") {
+        const std::string juttner_temp_msg =
+            "Maxwell-Juttner thermal spread is now specified with temperature_in_eV. "
+            "Use <species>.maxwell_juttner_temperature_in_eV_distribution_type = constant "
+            "(default), parser, or read_from_file, and provide <species>.temperature_in_eV, "
+            "<species>.temperature_in_eV_function(x,y,z), or "
+            "<species>.read_temperature_in_eV_from_path. "
+            "Requires species_type or mass.";
+        for (const std::string old_param :
+             {"theta", "theta_distribution_type", "theta_function(x,y,z)"}) {
+            if (pp_species_name.query(old_param, backward_string)) {
+                std::string msg = "<species>.";
+                msg += old_param;
+                msg += " is no longer supported. ";
+                msg += juttner_temp_msg;
+                WARPX_ABORT_WITH_MESSAGE(msg);
+            }
+        }
+    }
 }
 
 void PhysicalParticleContainer::InitData ()
@@ -1739,13 +1761,14 @@ void PhysicalParticleContainer::resample (const amrex::Vector<amrex::Geometry>& 
                          blp_resample_actual);
 
     ABLASTR_PROFILE_VAR_START(blp_resample_synchronization);
-    const amrex::Real global_numparts = TotalNumberOfParticles();
+    amrex::Real global_numparts = TotalNumberOfParticles();
     ABLASTR_PROFILE_VAR_STOP(blp_resample_synchronization);
 
     ABLASTR_PROFILE_VAR_START(blp_resample_actual);
     if (m_resampler.triggered(timestep, global_numparts))
     {
         Redistribute();
+        global_numparts = TotalNumberOfParticles();
         for (int lev = 0; lev <= maxLevel(); lev++)
         {
             for (WarpXParIter pti(*this, lev); pti.isValid(); ++pti)
@@ -1755,10 +1778,15 @@ void PhysicalParticleContainer::resample (const amrex::Vector<amrex::Geometry>& 
         }
         deleteInvalidParticles();
         if (verbose) {
+            const amrex::Long new_global_numparts = TotalNumberOfParticles();
             amrex::Print() << Utils::TextMsg::Info(
                 "Resampled " + species_name + " at step " + std::to_string(timestep)
                 + ": macroparticle count decreased by "
-                + std::to_string(static_cast<int>(global_numparts - TotalNumberOfParticles()))
+                + std::to_string(static_cast<int>(global_numparts - new_global_numparts))
+                + " from "
+                + std::to_string(static_cast<int>(global_numparts))
+                + " to "
+                + std::to_string(new_global_numparts)
             );
         }
     }
