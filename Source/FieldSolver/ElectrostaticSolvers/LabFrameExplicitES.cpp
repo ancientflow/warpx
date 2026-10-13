@@ -16,7 +16,6 @@
 #include "Insert/Fields/ECDIChargeFilter.h"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#include "Insert/Fields/ECDIChargeFilter.h"
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 #include "Insert/Fields/HallElectrostaticMaterial.H"
 #include "Insert/Fields/HallWallCharge.H"
@@ -257,16 +256,13 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         ablastr::fields::MLMGOptions mlmg_options = m_mlmg_options;
         mlmg_options.verbosity = verbose_step ? m_mlmg_options.verbosity : 0;
         computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                   Efield_fp);
-
+                   Efield_fp
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-                   mlmg_options.verbosity, is_igf_2d_slices, Efield_fp,
-                   anode_masks, relative_permittivity,
+                   , anode_masks, relative_permittivity,
                    relative_permittivity ? &m_material_solver_cache : nullptr,
-                   electrostatic_material.anodePotentials());
-#else
-                   verbosity, is_igf_2d_slices, Efield_fp);
+                   electrostatic_material.anodePotentials()
 #endif
+        );
 #endif
     }
     // 共置网格 guard cell 处理: MLMG 不填 Dirichlet 面的 ghost 节点 (留 0),

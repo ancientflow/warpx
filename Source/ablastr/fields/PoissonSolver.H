@@ -376,10 +376,13 @@ computePhi (
         amrex::MLNodeLinOp* linop = nullptr;
         bool configure_linop = true;
         if (relative_permittivity != nullptr) {
-            // The volume-anode overset mask remains valid for at most four
-            // multigrid coarsening levels.  Set this before constructing the
+            // Preserve the material path's existing coarsening cap while
+            // honoring a stricter user limit. Set this before constructing the
             // operator: the material operator and its MLMG instance are cached.
-            info.setMaxCoarseningLevel(4);
+            int const material_max_coarsening_level =
+                mlmg_options.max_coarsening_level >= 0
+                    ? std::min(4, mlmg_options.max_coarsening_level) : 4;
+            info.setMaxCoarseningLevel(material_max_coarsening_level);
 
             amrex::MultiFab const* const epsilon_r = (*relative_permittivity)[lev];
             ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
@@ -576,17 +579,15 @@ computePhi (
         amrex::MLMG& mlmg = *selected_mlmg;
 #else
         amrex::MLMG mlmg(*linop); // actual solver defined here
-        applyMLMGOptions(mlmg, mlmg_options);
 #endif
 
-        mlmg.setMaxIter(max_iters);
+        applyMLMGOptions(mlmg, mlmg_options);
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
         if (relative_permittivity != nullptr) {
             mlmg.setPreSmooth(1);
             mlmg.setPostSmooth(2);
         }
 #endif
-        mlmg.setFinalSmooth(num_final_sweeps.value_or(8));
         mlmg.setConvergenceNormType(amrex::MLMGNormType::greater);
         mlmg.setNoGpuSync(true);
 
