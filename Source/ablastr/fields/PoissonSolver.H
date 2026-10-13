@@ -18,6 +18,9 @@
 #include <ablastr/profiler/ProfilerWrapper.H>
 
 #include "Insert/Config/HallElectrostaticConfig.H"
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/MaterialPoissonCache.H"
+#endif
 
 #if defined(ABLASTR_USE_FFT) && defined(WARPX_DIM_3D)
 #include <ablastr/fields/IntegratedGreenFunctionSolver.H>
@@ -228,8 +231,8 @@ computePhi (
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
     , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr,
-    std::unique_ptr<amrex::MLNodeLaplacian>* material_linop_cache = nullptr,
-    std::unique_ptr<amrex::MLMG>* material_mlmg_cache = nullptr
+    Insert::MaterialPoissonCache* material_solver_cache = nullptr,
+    ablastr::fields::ConstMultiLevelScalarField const* fixed_potential = nullptr
 #endif
 )
 {
@@ -256,18 +259,26 @@ computePhi (
             }),
             "Variable relative permittivity is supported only for a lab-frame solve.");
     }
-    bool const use_material_solver_cache = material_linop_cache != nullptr ||
-                                           material_mlmg_cache != nullptr;
+    bool const use_material_solver_cache = material_solver_cache != nullptr;
     ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-        (material_linop_cache == nullptr) == (material_mlmg_cache == nullptr),
-        "The material Poisson operator and MLMG caches must be supplied together.");
+        !use_material_solver_cache || relative_permittivity != nullptr,
+        "The material Poisson cache requires relative permittivity.");
+    if (use_material_solver_cache) {
+        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+            !overset_masks || overset_masks->size() == rho.size(),
+            "Material Poisson cache masks must match the number of levels.");
+        if (material_solver_cache->empty()) {
+            material_solver_cache->resize(finest_level + 1);
+        }
+        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+            static_cast<int>(material_solver_cache->size()) == finest_level + 1,
+            "Material Poisson cache level count changed after initialization.");
+    }
     ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-        !use_material_solver_cache ||
-            (relative_permittivity != nullptr && finest_level == 0),
-        "The material Poisson solver cache requires a single-level variable-permittivity solve.");
-    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
-        !use_material_solver_cache || !(*material_mlmg_cache) || *material_linop_cache,
-        "A cached material MLMG instance requires its cached linear operator.");
+        fixed_potential == nullptr ||
+            (overset_masks && fixed_potential->size() == rho.size() &&
+             overset_masks->size() == rho.size()),
+        "Fixed material potentials require a matching mask on every level.");
 #endif
     if (!rel_ref_ratio.has_value()) {
         ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(finest_level == 0u,
@@ -381,17 +392,45 @@ computePhi (
                 "Relative permittivity must use the Poisson grid layout.");
 
             if (use_material_solver_cache) {
-                if (!(*material_linop_cache)) {
-                    *material_linop_cache = std::make_unique<amrex::MLNodeLaplacian>(
+                auto& cached = (*material_solver_cache)[lev];
+                auto const* mask = overset_masks ? overset_masks->at(lev) : nullptr;
+                if (!cached) {
+                    cached = std::make_unique<Insert::MaterialPoissonLevelCache>();
+                    cached->m_geometry = geom[lev];
+                    cached->m_grids = grids[lev];
+                    cached->m_distribution = dmap[lev];
+                    cached->m_epsilon = epsilon_r;
+                    cached->m_mask = mask;
+                    cached->m_grid_type = grid_type;
+                    cached->m_linop = std::make_unique<amrex::MLNodeLaplacian>(
                         amrex::Vector<amrex::Geometry>{geom[lev]},
                         amrex::Vector<amrex::BoxArray>{grids[lev]},
-                        amrex::Vector<amrex::DistributionMapping>{dmap[lev]},
-                        info);
-                    (*material_linop_cache)->setSigma(0, *epsilon_r);
+                        amrex::Vector<amrex::DistributionMapping>{dmap[lev]}, info);
+                    cached->m_linop->setSigma(0, *epsilon_r);
                 } else {
+                    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                        cached->m_linop && cached->m_mlmg &&
+                        cached->m_grids == grids[lev] && cached->m_distribution == dmap[lev] &&
+                        cached->m_epsilon == epsilon_r && cached->m_mask == mask &&
+                        cached->m_grid_type == grid_type &&
+                        cached->m_geometry.Domain() == geom[lev].Domain(),
+                        "Material Poisson cache operator, material or layout changed.");
+                    for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+                        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                            cached->m_geometry.ProbLo(d) == geom[lev].ProbLo(d) &&
+                            cached->m_geometry.ProbHi(d) == geom[lev].ProbHi(d) &&
+                            cached->m_geometry.isPeriodic(d) == geom[lev].isPeriodic(d),
+                            "Material Poisson cache geometry changed.");
+                    }
+                    if constexpr (!std::is_same_v<T_BoundaryHandler, std::nullopt_t>) {
+                        ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                            cached->m_linop->m_lobc_orig[0] == boundary_handler.lobc &&
+                            cached->m_linop->m_hibc_orig[0] == boundary_handler.hibc,
+                            "Material Poisson cache boundary types changed.");
+                    }
                     configure_linop = false;
                 }
-                linop = material_linop_cache->get();
+                linop = cached->m_linop.get();
             } else {
                 auto linop_nodelap = std::make_unique<amrex::MLNodeLaplacian>(
                     amrex::Vector<amrex::Geometry>{geom[lev]},
@@ -522,10 +561,11 @@ computePhi (
         std::unique_ptr<amrex::MLMG> owned_mlmg;
         amrex::MLMG* selected_mlmg = nullptr;
         if (use_material_solver_cache) {
-            if (!(*material_mlmg_cache)) {
-                *material_mlmg_cache = std::make_unique<amrex::MLMG>(*linop);
+            auto& cached = *(*material_solver_cache)[lev];
+            if (!cached.m_mlmg) {
+                cached.m_mlmg = std::make_unique<amrex::MLMG>(*linop);
             }
-            selected_mlmg = material_mlmg_cache->get();
+            selected_mlmg = cached.m_mlmg.get();
         } else
         {
             owned_mlmg = std::make_unique<amrex::MLMG>(*linop);
@@ -543,9 +583,7 @@ computePhi (
             mlmg.setPostSmooth(2);
         }
 #endif
-        if (num_final_sweeps) {
-            mlmg.setFinalSmooth(*num_final_sweeps);
-        }
+        mlmg.setFinalSmooth(num_final_sweeps.value_or(8));
         mlmg.setConvergenceNormType(amrex::MLMGNormType::greater);
         mlmg.setNoGpuSync(true);
 
@@ -558,6 +596,30 @@ computePhi (
 
         rho[lev]->OverrideSync(geom[lev].periodicity());
 
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        // Coarse-to-fine interpolation overwrites the fine initial guess.
+        // Restore the prescribed anode potential here, on every solve.
+        if (fixed_potential != nullptr) {
+            auto const* fixed = fixed_potential->at(lev);
+            auto const* mask = overset_masks->at(lev);
+            ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+                fixed && mask && fixed->nComp() == 1 &&
+                fixed->boxArray() == phi[lev]->boxArray() &&
+                mask->boxArray() == phi[lev]->boxArray() &&
+                fixed->DistributionMap() == phi[lev]->DistributionMap() &&
+                mask->DistributionMap() == phi[lev]->DistributionMap(),
+                "Fixed anode potentials and mask must share the phi layout.");
+            for (amrex::MFIter mfi(*phi[lev], amrex::TilingIfNotGPU()); mfi.isValid(); ++mfi) {
+                auto const p = phi[lev]->array(mfi);
+                auto const v = fixed->const_array(mfi);
+                auto const m = mask->const_array(mfi);
+                amrex::ParallelFor(mfi.tilebox(),
+                    [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
+                        if (m(i,j,k) == 0) { p(i,j,k) = v(i,j,k); }
+                    });
+            }
+        }
+#endif
         // Solve Poisson equation at lev
         mlmg.solve( {phi[lev]}, {rho[lev]},
                      relative_tolerance, absolute_tolerance );

@@ -1,214 +1,426 @@
 # WarpX 原生 AMR 改造实施计划
 
-> 目标：用 WarpX 原生 AMR（2 层静态网格）替代自研双层远场泊松（`HallFarFieldPoisson`），
-> 粗层（level 0）覆盖扩展域并携带粒子，解决远场电势自洽问题。
+> 目标：从当前单层 Hall 静电实现出发，引入两层静态网格细化（MR），
+> 让 level 0 覆盖扩展域并携带羽流粒子，level 1 保留通道附近的细网格。
 >
-> 本文基于 2026-10 对 `Source/Insert/` 及 fork 主代码改动的盘点结论。
+> 实施基线：分支 `AMR-support`，HEAD `b50110b2b`。
+> 阶段 0 实施时实际分支为 `Amr-support`，HEAD 为 `01f1b2bfca2566e56164b8c008636a724885f946`。
+> 下列复选框记录实施状态；阶段 0 的外部数据版本仍待补齐。
 
-## 1. 现状评估摘要
+> 2026-10-13 调整：阶段 0 的配置与阶段 1 的功能代码作为独立提交保存，
+> 构建及数值验收状态不因此改为完成。暂缓阶段 2 及后续 AMR 开发，
+> 当前优先保留单层求解行为，并规划单层单极 Robin 远场边界；见第 6 节。
+> 第 3 节保留改造前的问题清单，实际实现状态以第 4 节记录为准。
 
-### 1.1 有利条件
+## 1. 当前实现基础
 
-- **fork 对主代码污染很轻**：相对上游基线（`36c582069`，BLAST-WarpX development）
-  仅改 21 个文件、+735/−22 行，且集中在静电求解器一条线
-  （`LabFrameExplicitES.cpp`、`PoissonSolver.H`、`ElectrostaticSolver.*`）。
-- **上游原生支持 labframe 静电 + MR**，且有 CI 回归测试：
-  `Examples/Tests/electrostatic_sphere/inputs_test_3d_electrostatic_sphere_lab_frame_mr_emass_10`
-  （`amr.max_level = 1` + `warpx.do_electrostatic = labframe`）。
-- **多层骨架现成可用（零改动）**：
-  多层电荷沉积 + average-down（`WarpXParticleContainer.cpp:1825-1898`）、
-  `SyncRho` 粗细同步（`Source/Parallelization/WarpXComm.cpp:1354-1420`）、
-  逐层 push/gather（`WarpXEvolve.cpp:1408-1428`）、逐层边界/scrape、
-  逐层泊松求解 + `interpolatePhiBetweenLevels`
-  （粗层先解，插值为细层 Dirichlet 边界 + 初值，`PoissonSolver.H:532-540`）
-  ——这正是自研远场方案的官方等价物。
-- **Insert 各模块的层级意识比预期好**：壁面交互的粒子遍历已逐层
-  （`AnalyticBoundaryInteraction.cpp:668`），背景密度 CALC 主路径已逐层，
-  材料介电初始化/prepare 已逐层（`HallElectrostaticMaterial.cpp:204-259`），
-  壁电荷存储/synchronize 已 per-level（`HallWallCharge.cpp:59-109`）。
-- **网格静态**：WarpX 的 Evolve 从不调 `regrid`，层级由初始 tagging 决定、
-  运行期不变。Insert 各模块的一次性缓存（`m_defined`）因此不会因 regrid 失效。
+- 当前主算例是 `Script/PHT/3d_hall_dielectric_slot`：`labframe`、MLMG、staggered、
+  `amr.max_level = 0`，包含介电材料、体阳极、解析墙和耦合 MCC。
+  原计划的 collocated 描述与当前输入不一致；阶段 0 沿用 staggered，
+  后续场计算、ghost 和 gather 适配需覆盖实际使用的布局。
+- 当前域为 `[0, 10] × [0, 10] × [-2.5, 10] mm`，网格 `256×256×320`，
+  各方向间距均为 `39.0625 μm`；六面电势为零，粒子边界为 absorbing。
+- `Source/FieldSolver/ElectrostaticSolvers/LabFrameExplicitES.cpp` 已使用多层
+  `rho_fp`、`phi_fp`，包含粒子沉积、`SyncRho`、逐层求解和 `computeE`。
+- `Source/ablastr/fields/PoissonSolver.H::computePhi` 是逐层求解：先解粗层，
+  再由 `interpolatePhiBetweenLevels` 为细层提供边界数据及初值。
+- 材料存储、壁电荷存储和解析墙遍历有逐层骨架，但仍有明确的单层断言或索引假设。
+- `LabFrameExplicitES` 的电势初值外推已逐层存储，改造时保留。
 
-### 1.2 关键设计决策：几何语义反转
+## 2. 几何与物理约定
 
-AMR 下 level 0 必须是**覆盖扩展域的粗层**：
+level 0 为完整扩展域，level 1 为局部细化区；初版使用 `amr.max_level = 1`
+和 `amr.ref_ratio_vect = 2 2 2`，不启用动态 regrid 或 AMR subcycling。
+层数、Geometry、BoxArray、DistributionMapping、介电系数、阳极 mask、边界类型
+及算子构造参数在初始化后固定，材料数据和求解器缓存按此约定持续复用。
+静电不支持 `warpx.do_subcycling = 1`；算例的 species `ndt` 按独立的物种推进路径处理。
 
-- `geometry.prob_lo/hi` 从细通道域（10×10×12.5 mm）改为扩展域
-  （20×20×25 mm，与现远场粗层范围一致，`ff_xc±lx` 等）；
-- level 0 网格 256×256×320、间距为现细层 2 倍；
-- 细通道区通过初始 tagging（`warpx.refine_patch` parser 或 `fine_tag_lo/hi`）
-  生成 level 1，分辨率与现细层一致；
-- **fork 中所有 `Geom(0)`/`rho_fp[0]`/`phi_fp[0]` 写死处的语义随之从
-  "细通道网格"变为"扩展粗网格"**——这是改造中最容易出错的全局性变化。
+阶段 0 选定的扩展域保持旧域中心，将每个方向长度加倍：
+`[-5, 15] × [-5, 15] × [-8.75, 16.25] mm`。
+level 0 取 `256×256×320`，粗层间距为 `78.125 μm`，level 1 恢复原分辨率。
+细化区选为原计算域，z 向覆盖体阳极及全部解析注入源；外场覆盖与羽流截断影响
+仍须在阶段 1–2 验证，不能由几何配置推断其物理收敛性。
 
-### 1.3 已知限制（与本改造相关的上游约束）
+- 保持 `lx/ly/lz`、阳极中心、环缝、注入面等物理参数含义，单独定义扩展域端点，
+  不通过放大这些共享常数隐式改变装置尺寸、粒子权重或注入位置。
+- 初始 tagging 使用 `warpx.ref_patch_function(x,y,z)`，
+  或 `warpx.fine_tag_lo/hi`。
+  结合 blocking factor 和网格聚类确定最终 BoxArray 的 patch 覆盖范围。
+  各层 Geometry 共享同一物理域，局部细化范围由该层 BoxArray 决定。
+- 细区覆盖阳极、主要介质界面、注入区、主要电离区及必要的下游缓冲，
+  将主要电离区与细化边界隔开，留出背景密度沉积和采样模板所需的距离。
+  粗层主要承载低密度羽流；本工况采用细化界面附近背景密度缺项对电离影响可忽略的近似。
+- 当前 `relative_permittivity_function` 对所有 `z < 0` 都给陶瓷介电常数；
+  `ceramic_wall.signed_value` 对阳极环之外的整个平面生效。
+  扩展域后，同一物理壁面同时穿过粗层独占区和细化区。两层使用相同的物理坐标、
+  墙面表达式和材料参数，分别处理各自粒子的撞壁、吸收、反射、转化和二次发射。
+  细化边界是数值分区，壁面及其物理响应在此保持连续。
+  初版沿用当前平面模型在扩展域内的定义，覆盖新增粗层壁面区域。
+- 外边界初版沿用有限距离接地电势和粒子吸收条件。
 
-- subcycling 不支持静电（`WarpX.cpp:770-779`）：粗细层同 dt，无影响。
-- `MakeNewLevelFromCoarse` 是 abort 桩（`WarpX.cpp:2326-2330`）：
-  动态升层不可用，但初始 tagging 路径可用（上游 MR 测试为证）；实施前需在
-  阶段 0 验证确认。
-- 外部场文件读取要求 `max_level==0`（`WarpX.cpp:745`）——**本算例外加磁场
-  从文件读取，这是一个必须解决的硬冲突**（见第 5 节风险 R2）。
+## 3. 当前阻塞点与必须处理的耦合
 
-## 2. 开启 `max_level=1` 后的故障清单（改造的完整工作集）
+### 3.1 明确的硬限制
 
-### 2.1 立即崩溃（硬断言）
-
-| # | 位置 | 内容 |
+| 位置（相对仓库根目录） | 当前行为 | 初版处理 |
 |---|---|---|
-| A1 | `HallWallCharge.cpp:46-48` | `max_level==0` 断言（材料开关打开即触发） |
-| A2 | `ECDIChargeFilter.cpp:360-365` | 单层 + 单 MPI rank + 单 box 断言（仅 `insert.ecdi_control.enabled` 时） |
-| A3 | `IonizationSourceTable.cpp:45-51` | 单层 + 单 rank 断言（仅平均电离源表模式） |
+| `Source/Insert/Fields/HallWallCharge.cpp::prepare` | `max_level == 0` | 实现跨层壁电荷语义后解除 |
+| `Source/Insert/Fields/HallElectrostaticMaterial.cpp::prepare` | `max_level == 0` | 材料、阳极掩码和求解链路一起适配 |
+| `Source/ablastr/fields/PoissonSolver.H::computePhi` | 材料 cache 要求 `finest_level == 0` | 直接实现逐层 linop/MLMG 缓存，按当前求解层复用对应对象 |
+| `Source/Insert/Collisions/CoupledBackgroundMCCCollision.cpp::doCollisions` | `flvl == 0` | 属于主算例必改项，不能仅删除断言 |
+| `Source/WarpX.cpp` 外部 grid 场读取检查 | 文件 E/B grid 场要求 `max_level == 0` | 主算例确用 `warpx.B_ext_grid_init_style = read_from_file`，必须适配 |
+| `Source/Insert/Fields/ECDIChargeFilter.cpp` | 单层、单 rank、单 box 限制 | 初版保持禁用及明确报错 |
+| `Source/Insert/Collisions/IonizationSourceTable.cpp` | 单层、单 rank 限制 | 相关可选模式初版保持禁用及明确报错 |
 
-### 2.2 不报错但结果错误（隐性单层假设）
+材料求解直接采用 per-level cache，连同 `LabFrameExplicitES`、`ElectrostaticSolver`
+和 ablastr 的接口一起改。每层保存一组配对的 `MLNodeLaplacian` 与 `MLMG`，
+首次求解时创建，后续时间步复用。
 
-| # | 位置 | 内容 |
-|---|---|---|
-| B1 | `LabFrameExplicitES.cpp:256-263, 298, 311` | 远场耦合点全部只吃 `rho_fp[0]`/`phi_fp[0]`（AMR 下语义倒置） |
-| B2 | `PoissonSolver.H:347-358` | 材料 linop cache 用 level-0 算子解所有层（`m_material_linop/m_material_mlmg`，`LabFrameExplicitES.H:78-79`） |
-| B3 | `AnalyticBoundaryInteraction.cpp:815-817` | 壁电荷只沉积到 `get(0)`、`MakeWallChargeGrid(Geom(0))`；lev>0 tile 会错位/越界（:710） |
-| B4 | `CoupledBackgroundMCCCollision.cpp:256-258, 346-348, 392-395, 620` | `Geom(0)`/`ncell` 写死、`flvl==0` 断言、`LowerCorner(...,0,...)` |
-| B5 | `WarpXFunc.h:83, 91` | `ParticlesAt(0, pti)`、`LowerCorner(box, 0, ...)` |
-| B6 | `InsertInjection.cpp` / `HallInjectionSource.cpp:204` | 全部 `AddNParticles(0, ...)`（原生实现忽略 lev，先放 level 0 tile(0,0,0) 再 Redistribute） |
-| B7 | `BackgroundCoupledDensity.cpp:167, 244-250` | AVERAGE_USE 模式写死 `flvl=0` |
-| B8 | `ZmaxRadialExitStats.cpp:60-73`、`InsertInjection.cpp:60` | 诊断/配置用 `Geom(0)` 的 dx/zmax/prob 做分箱 |
-| B9 | `LabFrameExplicitES.cpp` 的 `ExtendPhysicalGhosts`/`fillElectricFieldGhosts` | 只处理 `phi_fp[0]`/`Efield_fp[0]` |
-| B10 | `WarpXFieldBoundaries.cpp:56-64` | 远场模式下跳过 PEC E 边界的逻辑，需随远场模块退役重新审视 |
+- [ ] 将单组 `m_material_linop/m_material_mlmg` 改为按层管理的缓存，
+  在 `computePhi` 的层循环中访问当前 `lev` 的对象。缓存接口约束改为层数匹配、
+  每层 linop/MLMG 配对及布局一致。
+- [ ] 首次创建时使用该层 Geometry、BoxArray、DistributionMapping、介电系数和阳极 mask，
+  配置算子、边界类型及多重网格参数，再构造引用该算子的 MLMG。
+- [ ] 每次求解更新 RHS、phi 初值、指定电势以及可变的求解控制参数。
+  粗到细插值后恢复该层阳极电势；固定电势数值的更新与算子缓存分开处理。
+- [ ] 随时间变化的粒子电荷与壁电荷仅更新 RHS，各层算子及 MLMG 持续复用。
+- [ ] 程序结束释放缓存时，每层先销毁 MLMG，再销毁其 linop。
+  缓存结构应保证引用的算子对象在 MLMG 使用期间保持有效。
 
-## 3. 总体方案
+### 3.2 材料与体阳极：插值后必须恢复约束
 
+`HallElectrostaticMaterial::initialize` 写入固定阳极电势，`prepare` 中重新写
+`phi` 的语句当前被注释，只清零掩码内 `rho`。粗层求解后的
+`interpolatePhiBetweenLevels` 会重写细层初值，可能覆盖细层掩码内的固定电势。
+
+- [ ] 在每层实际求解前、粗到细插值之后，按该层 mask 恢复阳极指定电势。
+  仅在整个 `computePhi` 调用之前恢复一次不足以处理后续插值。
+- [ ] 适配两层介电系数、阳极 mask、薄结构离散与局部细区边界条件。
+- [ ] 完善 collocated 布局下两层 phi ghost 填充、E 计算与粒子 gather，
+  处理物理边界和粗细界面的数据衔接。
+
+### 3.3 壁电荷：统一 RHS 同步与两层壁面归属
+
+多层壁电荷采用统一电荷同步路径：各层持久壁电荷以原始沉积状态保存，
+每次求解将其副本加入本步粒子 `rho_fp`，共同经过一次 `SyncRho`。
+复用其中的 fine-to-coarse 限制、共享节点处理和 MPI 求和；
+电势继续由 `interpolatePhiBetweenLevels` 从粗层插值到细层。
+
+单层兼容路径保留原有装配顺序：粒子 rho 完成同步、滤波及 PEC 处理后，
+才加入独立同步的壁电荷副本，不将壁电荷送入粒子 PEC 镜像处理。
+
+```text
+各层粒子本步沉积 ──────────┐
+                          ├→ 本步 rho_fp → SyncRho → 电荷边界处理
+各层持久壁电荷的原始贡献副本 ┘                         → 材料约束 → 泊松求解
 ```
-level 0（粗层）：扩展域 20×20×25 mm，256×256×320，间距 2×现细层
-                 携带粒子（羽流），六面接地 Dirichlet
-level 1（细层）：tagging 出的通道区，分辨率与现细层一致
-                 解析墙/注入/MCC/材料/壁电荷均在此层为主
-求解：原生逐层泊松（粗层先解 → interpolatePhiBetweenLevels 给细层
-      Dirichlet 边界 + 初值），完全替代 HallFarFieldPoisson 的职责
-```
 
-退役对象：`HallFarFieldPoisson.*` 整体、`DefineExternalDirichletBCs`
-（`PoissonBoundaryHandler.cpp:155-161`）、`WARPX_USE_HALL_FAR_FIELD` 相关分支。
-粗层电荷现在由粗层粒子自洽沉积产生，`restrictCharge`/frozen-boundary
-插值/时序外推历史（`HallFarFieldPoisson.cpp:432-650`）全部不再需要。
+- [ ] 在首次撞壁处理前初始化各层持久壁电荷。将 `ApplyWallPolicy` 中的
+  `get(0)`、`MakeWallChargeGrid(Geom(0))` 改为匹配实际沉积层的访问，
+  同时匹配粒子 tile、box、DistributionMapping 和该层的体积归一化。
+- [ ] 持久存储保留各 FAB 的原始沉积贡献，包括共享节点和 ghost 上尚未求和的贡献。
+  调整 `HallWallCharge::addTo/synchronize` 接口，使加入本步 RHS 前的数据状态
+  与粒子原始沉积一致；现有 `SumBoundary` 和清 ghost 操作应从持久存储路径移出。
+  `SyncRho` 仅作用于本步工作场，其同步、滤波和粗层限制结果均不回写持久存储。
+- [ ] 每次求解重新装配粒子电荷与累计壁电荷，核对回调的执行顺序和数据语义。
+  粗层 RHS 同时包含粗层真实撞壁贡献和细层壁电荷的限制贡献，
+  每项在本步装配中只加入一次。
+- [ ] 粗层独占区和细化区均执行完整壁面策略，每次撞壁只生成一份净留存电荷
+  （入射电荷减去出射产物电荷），并只计一次壁电流/事件统计。
+  持久电荷按撞击位置的最细覆盖层归属；对粒子在推进中跨越细化边界后撞壁的情形，
+  核查墙处理与 `Redistribute` 的时序，必要时将撞击沉积路由到对应层和 box。
+  产物粒子按产生位置归入对应层级，保证粗细两侧采用相同的材料模型。
+- [ ] 核查撞击沉积模板跨越 box、MPI 或细化边界时的归属与传递，保留完整净电荷。
+  粗层中由细层限制得到的电荷是求解副本，独立于粗层真实撞壁的持久贡献。
+  总壁电荷诊断使用同步后的临时副本、节点积分权重和粗细覆盖掩码，
+  排除共享节点与限制副本的重复计数，并与累计撞击净电荷核对。
+- [ ] 明确统一装配后普通 rho 滤波、PEC 电荷边界处理及 ECDI 对壁电荷的作用。
+  初版保持 `warpx.use_filter = 0` 并禁用 ECDI，处理 PEC 附近的壁电荷边界语义；
+  后续启用滤波时明确其适用源项。
 
-## 4. 分阶段计划
+### 3.4 外加磁场、MCC、注入与诊断
 
-### 阶段 0：基线验证（1–2 天）
+- **文件磁场**：`Source/Initialization/WarpXInitData.cpp::ReadExternalFieldFromFile`
+  内部写死 `Geom(0)`。需传入层号或 Geometry，检查所有调用点和所需 fine/coarse patch
+  场的初始化。读取器使用目标 nodal/cell 布局及 ghost 范围，必须核查
+  `../../data/B3D_dielectric.bp5` 的实际覆盖域及域外处理，
+  确保文件数据覆盖扩展域和所需 ghost 范围后适配读取检查。
+- **MCC**：`doCollisions` 的 `base_lev = 0`、`ncell/inv_gap` 和背景密度最大值
+  `m_background_density_fabs[0].max(0)` 均需处理。
+  碰撞率上界要覆盖被处理层的密度（逐层上界或全层上界），否则可能漏采碰撞。
+  同时修正 ionization 路径 `LowerCorner(box, 0, ...)` 和
+  `Source/Insert/Core/WarpXFunc.h` 的 `ParticlesAt(0, pti)` / `LowerCorner(...,0,...)`。
+- **背景密度**：各层只沉积本层中性粒子，供同层 MCC 使用，
+  采用层内密度和 bins 完成电离消耗及产物创建。粗层在细区覆盖下的背景密度允许为零，
+  本轮省略背景密度的跨层限制和细化界面补齐，保留同层跨 box/MPI 同步及空 tile 处理。
+  粗层仍按本层密度执行 MCC，电荷与壁电荷继续通过统一 `SyncRho` 做跨层同步。
+  `MCC_DENSITY_AVERAGE_USE`
+  写死层 0 且读单 FAB，初版遇 MR 应明确报错。CALC 的文件输出布局需按层适配。
+- **注入**：`WarpXParticleContainer::AddNParticles` 忽略 lev 参数，先写层 0
+  的临时 tile，末尾调用 `Redistribute()`。沿用该路径，
+  按粒子位置完成细区、粗区及跨 rank 的归属分配。
+- **诊断**：`ZmaxRadialExitStats` 的 `Geom(0).ProbHi(2)` 表示整个计算域出口。
+  明确需要的是扩展域出口还是原通道截面；后者需要独立的截面穿越诊断，
+  径向 bin 间距应显式约定。
+  `InsertInjection.cpp` 的 2D 配置及 `InsertBoundaryPhi.cpp::VoltageAdjustment`
+  是另行适配项，不算入首版 3D 完成范围。
 
-- [ ] 在本 fork 上运行上游回归测试
-  `electrostatic_sphere_lab_frame_mr_emass_10`（CPU 构建即可），
-  确认多层沉积/SyncRho/逐层求解/插值链路未被 fork 破坏。
-  （忽略 checksum 差异，只看物理合理性与不崩溃。）
-- [ ] 确认初始 tagging 生成 level 1 的路径在 `MakeNewLevelFromCoarse`
-  abort 桩存在的情况下可用（上游测试通过即说明可用；记录实际调用路径）。
-- [ ] 极简对比算例：均匀等离子体块 + 接地边界，分别用
-  ① 现有双层远场、② 2 层原生 AMR 求解，对比 phi 场，
-  确认两种"粗层边界"语义物理等价后再动主算例。
+### 3.5 初始化与时间推进
 
-**验收**：① ② 的 phi 全场相对偏差在求解容差量级。
+- 初始建层路径为 `WarpX::InitFromScratch` → `AmrCore::InitFromScratch`
+  → `MakeNewLevelFromScratch`。
+- 初版显式关闭动态负载均衡（`algo.load_balance_intervals = 0`）。
+  按初始化确定的网格布局创建材料、持久壁电荷、求解器和背景 bins。
+- 协调当前 species `ndt` 下跨层粒子移动、MCC 和场更新时序。
 
-### 阶段 1：最小可用版（约 1 周）
+## 4. 分阶段实施
 
-目标：`3d_hall_dielectric_slot_farfield` 在 2 层 AMR 下跑通，
-10 万步内 phi/rho 演化与现方案一致。
+### 阶段 0：配置与几何准备
 
-- [ ] **几何切换**：`geometry.prob_*` 改扩展域；新增 tagging 配置圈出
-  细通道区（x/y 全域中心 ±5 mm、z 从 z_lo 到通道出口稍下游）；
-  核对 level 1 box 布局与 MPI 划分（沿用现 2×2 半域约束的对应要求）。
-- [ ] **外加磁场冲突（R2）**：`WarpX.cpp:745` 的 `max_level==0` 限制——
-  将 B 场文件读取/插值扩展到逐层（先按最简方案：两层都从同一文件
-  按各自 Geom 采样；粗层分辨率减半对通道区无影响，通道区在 level 1）。
-- [ ] **退役远场**：删除/旁路 B1 全部耦合点与 `DefineExternalDirichletBCs`；
-  细层边界改由原生 `setPhiBC`（`ElectrostaticSolver.cpp:98`）
-  + `interpolatePhiBetweenLevels` 提供。
-  保留 `HallFarFieldPoisson` 源码与编译开关以便回退对比。
-- [ ] **B2 材料 linop cache 逐层化**：`m_material_linop/m_material_mlmg`
-  改为 per-level vector（或先走非 cache 分支 `PoissonSolver.H:360-368`，
-  性能换正确性，后续再优化）。
-- [ ] **A1 + B3 壁电荷逐层化**：放开断言；`get(lev)`、
-  `MakeWallChargeGrid(Geom(lev))`；`ApplyWallPolicy` 的 lev 贯穿到底；
-  定义粗细重叠区壁电荷归属（壁面几何都在 level 1 区域内，
-  预期粗层无壁电荷，验证即可）。
-- [ ] **B4/B5 MCC 修正**：`Geom(lev)`、`ncell` 按层、放开 `flvl==0` 断言、
-  修 `LowerCorner(...,0,...)` 与 `ParticlesAt(0,pti)`；
-  背景中性气 bins 在粗层的分布语义按"同一物理数密度、按层网格分箱"实现。
-- [ ] **B9**：`ExtendPhysicalGhosts`/`fillElectricFieldGhosts` 改到最细层
-  （或逐层），与原生 aux 填充流程对齐。
-- [ ] **B8 等诊断**：`Geom(0)` → `Geom(finest_level)`，逐处几行。
-- [ ] **ECDI / 电离源表 / AVERAGE_USE（A2/A3/B7）**：本阶段一律在初始化时
-  检测 `max_level>0` 给出明确 `amrex::Abort` 提示（不允许静默错误），
-  功能本身推迟到阶段 3。
-- [ ] **B6 注入验证**：原生 `AddNParticles` 放 level 0 后经 Redistribute
-  按位置分配层级——用一个小算例验证生于细区的粒子确实落到 level 1；
-  若 WarpX 的 per-level Redistribute 不跨层迁移，则注入时按位置显式
-  路由到最细覆盖层。
+- [ ] 记录 HEAD、编译选项、Insert 宏、输入和磁场文件版本。
+- [x] 确定扩展域端点、粗层网格及静态细化区，保持装置尺寸和注入参数的物理含义。
+- [x] 配置两层网格，关闭 AMR subcycling 和动态负载均衡。
 
-**验收**：2 层 AMR 下 10 万步，phi max 稳定 ~300–400 V 量级、
-通道区密度/电势剖面与现双层方案一致（定性 + 关键截面定量）。
+#### 阶段 0 实施记录（2026-10-10）
 
-### 阶段 2：物理语义与性能调通（1–2 周）
+新增配置入口 [`Script/PHT/3d_hall_dielectric_slot_amr`](Script/PHT/3d_hall_dielectric_slot_amr)，
+通过 `FILE` 继承单层主算例及其 MCC 输入，随后覆盖几何和静态 MR 参数。
+相对路径以仓库内 `<build>/bin` 为工作目录解析，与原主算例一致。
+阶段 2 完成后可从该目录传入 `../../Script/PHT/3d_hall_dielectric_slot_amr`。
+当前阶段仅准备配置；材料、壁电荷、外场及 MCC 的单层限制仍然存在。
 
-- [ ] **粗层粒子**：确认粗层 push/gather 使用粗层 E 场（原生
-  `Efield_aux` 逐层已有）；检查粗细界面处粒子跨层迁移时 gather/deposit
-  无双计、无漏计（SyncRho 的 OwnerMask 路径）。
-- [ ] **壁面交互在粗层**：通道壁面几何全在 level 1 内，预期粗层无撞壁；
-  验证扩展域外边界的粒子吸收（`boundary.particle_* = absorbing`）
-  在粗层正常工作。
-- [ ] **阳极电流/壁电荷诊断跨层汇总**：累加器本身层级无关，
-  验证数值与单层基线连续。
-- [ ] **性能摸底**：粗层新增 ~10⁸ 宏粒子（前期估算：0.3–0.4 μs 渡越
-  × 3.4×10¹⁴ 宏粒子/s 注入率，电子+离子合计 ~2.4×10⁸，~15 GB 内存），
-  测量每步耗时增量（预期粒子部分 5–6×），评估 arena/显存预算
-  （注意本机另一进程长期占 ~78 GB 显存）。
-- [ ] **启动暂态拉长**：粗层灌满需 ~10 万步（0.3 μs），确认物理判稳
-  时间点相应后移，必要时延长初始化算例或采用密度渐变启动。
+**代码与构建基线**
 
-**验收**：稳态段（10–15 万步）阳极电流、壁电荷、推力等物理量与
-双层方案基线在合理偏差内；无 22.5 万步 6 kV 类失控（配合 SEE 配置）。
+- 分支 `Amr-support`，HEAD `01f1b2bfca2566e56164b8c008636a724885f946`。
+  主输入最后修改提交同为该 HEAD。实施开始时已有计划文件的未提交修改和
+  暂存的 `不锈钢SEE模型_Furman-Pivi.md`，本次保留这些改动。
+- CLion Release 配置来自 `.idea/workspace.xml`：
+  `-DBUILD_TESTING:BOOL=OFF -DWarpX_COMPUTE:STRING=CUDA`
+  `-DCMAKE_CUDA_COMPILER:FILEPATH=/usr/local/cuda-13.2/bin/nvcc -DWarpX_FFT:BOOL=ON`，
+  构建参数 `-j 8`，匹配目标为 `app_3d`。
+- 下表读取现有 CMake cache，表示配置记录，未声称本轮重建了可执行文件。
 
-### 阶段 3：全功能对齐（可选，2 周以上）
-
-- [ ] **ECDI 滤波器多层重设计**（A2，算法级）：最细层做 (r,z) 投影 →
-  限制到粗层，或逐层独立滤波；同时解除单 rank/单 box 限制。
-- [ ] **IonizationSourceTable 多层化**（A3）。
-- [ ] **AVERAGE_USE 背景模式**（B7）：per-level FAB 输入约定。
-- [ ] **regrid 生命周期挂钩**（防御性）：若未来启用动态 regrid，
-  材料/壁电荷/背景密度/诊断缓存需挂到 `RemakeLevel` 重建。
-  当前静态网格下仅留 TODO 注释。
-- [ ] **3D 以外的维度**：`HallElectrostaticConfig.H:5-10` 的编译开关
-  与 2D benchmark 路径（`InsertInjection.cpp:60`）适配。
-
-**验收**：全部 Insert 功能在 `max_level=1` 下可用，无 Abort 占位。
-
-## 5. 风险与对策
-
-| # | 风险 | 影响 | 对策 |
-|---|---|---|---|
-| R1 | `Geom(0)` 语义反转导致隐性错误（注入偏移、诊断分箱、阳极几何判断用了错误层的 dx） | 结果错误且不报错 | 全库 grep `Geom(0)`/`geom(0)`/`[0]` 硬编码清单逐项过；阶段 0 对比算例兜底 |
-| R2 | 外加磁场文件读取 `max_level==0` 限制 | 初始化即失败 | 阶段 1 第一项解决；粗层从同文件按粗 Geom 采样 |
-| R3 | 注入粒子层级归属不符预期 | 粒子消失或层级错位 | 阶段 1 专项小算例验证；必要时显式路由 |
-| R4 | 粗层粒子开销超预期（~10⁸ 宏粒子、显存、每步 5–6×） | 性能不可接受 | 阶段 2 摸底后决策：提高粗层粒子权重（仅粗层）、缩小扩展域、或回退中间路线 |
-| R5 | 粗细界面电荷/粒子归属双计或漏计 | 界面处 rho/phi 假结构 | 依赖原生 SyncRho/OwnerMask；界面附近画 rho 剖面专项核查 |
-| R6 | 初始 tagging 路径与 abort 桩冲突 | level 1 无法生成 | 阶段 0 用上游 MR 测试先行确认实际调用路径 |
-| R7 | 与"去 SEE"等物理实验配置叠加后难以归因 | 物理结论混淆 | AMR 切换与物理配置变更分开验证，每次只动一个变量 |
-
-## 6. 备选中间路线（不改造也可缓解远场问题）
-
-保留现有双层电势结构，**把穿过细层边界的离子通量折算为电荷注入粗层 rho**
-（粒子本身不进粗层）。工作量约 3–5 天，可把羽流电荷的主导项补进粗层
-泊松解。若阶段 2 性能摸底不通过，回退到此方案。
-
-## 7. 工作量汇总
-
-| 阶段 | 内容 | 估时 |
+| 选项 | `cmake-build-release` | `build-codex` |
 |---|---|---|
-| 0 | 基线验证 + 物理等价性对比 | 1–2 天 |
-| 1 | 最小可用版（主算例 2 层 AMR 跑通） | ~1 周 |
-| 2 | 物理语义与性能调通 | 1–2 周 |
-| 3 | 全功能对齐（ECDI/电离源表/USE 模式，可选） | 2 周+ |
-| 合计（最小可用） | 阶段 0–2 | **2–3 周** |
-| 合计（全功能） | 阶段 0–3 | **4–6 周** |
+| `CMAKE_BUILD_TYPE` / `WarpX_DIMS` | Release / 3 | Release / 3 |
+| `WarpX_COMPUTE` | CUDA | OMP |
+| `WarpX_MPI` / `WarpX_OPENPMD` | ON / ON | ON / ON |
+| `WarpX_EB` / `WarpX_QED` | ON / ON | ON / ON |
+| `WarpX_FFT` / `WarpX_PYTHON` | ON / OFF | OFF / ON |
+| `WarpX_PRECISION` / `WarpX_PARTICLE_PRECISION` | DOUBLE / DOUBLE | DOUBLE / DOUBLE |
+| `CMAKE_CXX_COMPILER` | `/usr/bin/c++` | `/usr/bin/c++` |
 
-主要风险不在代码量（主代码骨架现成、Insert 已半多层级化），
-而在物理验证：粗细界面的电荷/粒子归属、粗层分辨率减半对羽流
-自洽电势的影响、以及 10⁸ 量级粗层粒子带来的性能与显存压力。
+Release 的 CUDA 架构为 `native`，C++/CUDA Release flags 均为 `-O3 -DNDEBUG`；
+`WarpX_FASTMATH=OFF`、`AMReX_CUDA_FASTMATH=ON`、`WarpX_IPO=OFF`。
+依赖配置为 AMReX `66028f892b7d0e0902ffe821e10fcc0915ab1cda`、
+openPMD `0.17.1`、PICSAR `26.05`。
+
+Insert 启用宏为 `NUMP`、`BENCHMARK_2D`、`MCC_DENSITY`、`MCC_DELETE`，
+3D 条件下另启用 `HALL3D` 和 `WARPX_USE_HALL_ELECTROSTATIC_MATERIALS`。
+`FIELDSIZE`、`COLLISION_RECORD`、`MCC_DENSITY_AVERAGE_CALC/USE`、
+`MCC_EXCITATION`、`IONIZATION_SOURCE_RECORD/INJECT`、`MCC_ION_CACHED_RHO`、
+`HALL3D_INIT` 均未启用。
+
+以下为修改前文件内容的 SHA-256，便于后续区分输入或构建配置漂移：
+
+| 文件 | SHA-256 |
+|---|---|
+| `Script/PHT/3d_hall_dielectric_slot` | `a28a0501973873f5eb7c993631ad524f29a9e71e24106985a92d20300e381853` |
+| `Script/3d_hall_mcccoll` | `4884b2f43cd5b26a5b684db0eb6ded7604436ea4a0f7543f34b1213b5a93fc60` |
+| `Source/Insert/Config/HallElectrostaticConfig.H` | `93be8137618824a1bc6b9c101d2f321c8632b025699fad208ce41db186c2bcd8` |
+| `Source/Insert/Config/WarpXFunctionConfig.h` | `54c66b1e62ca357bb95f1192c9e82d9c95b5b6d54079c665b32b032da6109e8c` |
+| `Source/Insert/Config/WarpXOptimizationConfig.h` | `d325dd69b814539312009c7d7e969d784dab3ae851bf5c493e44416e5c127383` |
+| `Source/Insert/Config/WarpXSimulationConfig.h` | `f42008ccfaf68423765b4be7fa337e704d6b732bffa2d6ad2e21cad8ff2c01bb` |
+| `cmake-build-release/CMakeCache.txt` | `3e62ad4c1616d583c8d884ec22df38ec231f1c97dbde28448813359bc732f125` |
+| `build-codex/CMakeCache.txt` | `fc3d405da67462a50c8e175734eba6354e63dfd8bddaed94be43185920b315f2` |
+
+**外部数据待补项**
+
+磁场引用为 `../../data/B3D_dielectric.bp5`，从约定工作目录解析到
+`<repo>/data/B3D_dielectric.bp5`；初始中性粒子引用为
+`../../data/hall_start_256_600K_slot.bp5`。本工作区没有这两个数据集，
+因此不能记录其实际内容版本、openPMD 元数据或确认磁场对扩展域及 ghost 的覆盖。
+第一个复选框保留未完成：数据可用后记录 BP5 目录内各文件的内容哈希、
+iteration、轴顺序、网格 spacing/offset、单位及各分量 extent/position；
+不得仅凭文件名或沿用原路径认定覆盖已经满足。
+
+**几何决策与检查**
+
+| 项目 | 阶段 0 配置 |
+|---|---|
+| level 0 物理域（mm） | `[-5,15] × [-5,15] × [-8.75,16.25]` |
+| level 0 网格 / 间距 | `256×256×320` / `78.125 μm` |
+| level 1 tagging 区（mm） | `[0,10] × [0,10] × [-2.5,10]` |
+| 细化率 / level 1 间距 | `2×2×2` / `39.0625 μm` |
+| 粗层 tagging 半开索引 | `[64,192) × [64,192) × [80,240)` |
+| 对应细层半开索引 | `[128,384) × [128,384) × [160,480)` |
+| blocking factor / max grid size / tag buffer | `32` / `128` / `0` |
+| 静态控制 | `warpx.regrid_int=-1`、`warpx.do_subcycling=0`、`algo.load_balance_intervals=0` |
+
+各层 Geometry 仍共享扩展物理域；表中 level 1 范围是局部细化覆盖目标。
+按 `WarpX::ErrorEst` 的 cell-center 判据核对了 tagging 索引，细层各边界与
+blocking factor 对齐，目标细区包含 `256×256×320` 个细胞。
+实际 BoxArray 的分块及 DistributionMapping 需在后续可初始化的构建中确认。
+设置 `n_error_buf=0` 避免默认 tag 膨胀；源区缓冲由显式选定的细区提供。
+
+装置中心仍为 `(5,5) mm`；阳极半径 `2.1–3.1 mm`、z 范围 `[-1.25,0] mm`；
+初始等离子体 z 为 `0.2–0.8 mm`，环缝在 z=0，阴极源半径 `3.2–4 mm`、
+z 为 `8.4–9.2 mm`，均位于细区内部。阴极源距细区 z 上边界至少 `0.8 mm`，
+初始通道等离子体距该边界至少 `9.2 mm`；演化后主要电离区的范围留待阶段 2 核查。
+上外边界位于 `16.25 mm`，下外边界位于 `-8.75 mm`。
+`lx/ly/lz`、粒子权重、SEE、流量、注入、碰撞以及 species `ndt=1/10/100` 均继承主输入。
+陶瓷平面模型延续至新增粗层壁面区域，六面保持接地电势及粒子吸收。
+使用 `Geom(0).ProbHi(2)` 的出口统计将对应 `z=16.25 mm`，不是旧的 `z=10 mm` 截面。
+
+验证：使用 Python 递归解析两个 `FILE` include，核对覆盖项只涉及域及网格控制，
+检查了粗细间距、细化边界对齐、解析源区包含关系及关闭 subcycling/负载均衡的参数，全部通过。
+未运行完整 Hall 算例或声称验证实际 BoxArray；外部数据缺失且后续阶段的单层断言仍在。
+本轮没有 C++ 修改，也没有编译；当前会话未提供 CLion MCP 构建工具。
+
+### 阶段 1：材料、阳极、壁电荷和外场
+
+- [ ] 完成逐层材料 linop/MLMG 缓存及全链路接口调整，实现首次创建与后续复用。
+- [ ] 完成两层材料准备和插值后阳极电势恢复，将每层材料数据接入对应缓存算子。
+- [ ] 完成持久原始壁电荷存储及 RHS 装配接口，将两层壁电荷接入统一 `SyncRho`。
+- [ ] 完成粗层、细层和跨细化边界撞壁的电荷归属、产物迁移及统计去重。
+- [ ] 将文件磁场读取改为按目标层 Geometry 采样，处理扩展域及 ghost 数据覆盖。
+
+#### 阶段 1 实现记录（2026-10-10，待构建及运行验收）
+
+阶段 1 的功能代码已写入工作区；按用户要求不提供测试相关实现，由用户另行测试。
+上面的验收项暂不勾选，
+因为本会话没有 CLion MCP 构建工具，未能按仓库要求重建 `app_3d`，
+也未运行修改后的 WarpX。旧可执行文件不能验证本次 C++ 修改。
+生产磁场文件仍然缺失，因此其实际扩展域/ghost 覆盖尚未验证。
+
+- **材料求解缓存**：新增 `Source/Insert/Fields/MaterialPoissonCache.H`，
+  每层拥有独立的 `MLNodeLaplacian`/`MLMG`，结构成员顺序保证先释放 MLMG。
+  `LabFrameExplicitES` → `ElectrostaticSolver` → ablastr 接口已贯通，
+  复用前核对层数、布局、Geometry、材料/mask 对象、网格布局及边界类型；
+  RHS、初值、求解容差和迭代控制逐次更新。
+- **材料与阳极**：移除单层限制，保留逐层介电常数正定性、阳极薄结构检查。
+  每层求解之前恢复固定电势，位置位于粗到细插值之后，避免细层 mask 中的
+  电势被粗层初值覆盖。缓存只允许静态网格，显式拒绝负载均衡、regrid 和 moving window。
+- **phi/E ghost**：材料路径逐层填充 collocated 电势 ghost；物理 Dirichlet 面
+  使用二次外推，同层通信优先于粗层插值。按用户范围仅处理第一类物理边界，
+  已移除材料 ghost 路径的 Neumann 和周期专门处理。
+  E ghost 插值按各分量实际 nodal/cell staggering 处理，支持当前主算例的 staggered
+  及原计划中的 collocated。静电 aux 路径直接复制各层 fine-patch 场，
+  不使用电磁求解器的 coarse-patch 差值修正。
+- **壁电荷装配**：持久场保留原始 FAB/ghost 贡献，删除持久场上的 `SumBoundary`
+  和 ghost 清零。多层在粒子沉积及 `afterdeposition` 回调后加入本步 rho，
+  然后统一 `SyncRho` → PEC 电荷处理 → 材料掩码 → 求解，拒绝普通 rho 滤波和 ECDI。
+  单层在粒子 rho 处理后，将独立 `SumBoundary` 并清 ghost 的壁电荷副本加入 RHS，
+  保留原有源项处理顺序及滤波适用范围。两条路径均不回写持久原始数据。
+- **撞击路由**：每次事件仅记录一份净留存电荷，由 GPU kernel 直接追加到临时
+  AMReX 粒子容器，已移除主机撞击队列和对应 OpenMP 并行/临界区处理。容器将交点路由到
+  最细覆盖层及所属 MPI box，再使用该层体积归一化沉积。
+  净电荷记录与事件/电流统计不重复执行材料策略。
+  产物沿用物种创建路径并由 `HandleParticlesAtBoundaries` 中随后的全层
+  `Redistribute` 按最终位置分配；壁电荷在首次撞壁之前可以按现有 rho 布局初始化。
+- **诊断**：`insert.wall_charge_diagnostic=1` 输出 `wall_charge.dat`。
+  包含累计撞击净电荷、持久原始存储总量及各层分量，以及在独立临时副本上
+  同步后的复合节点积分和差值。复合积分排除粗层被细网格覆盖的单元，
+  用单元角点积分权重避免共享节点重复计数；不对持久数据做同步。
+  粗细界面附近复合积分与原始沉积账目的差异会显式输出，仍需运行时定量检查，
+  不把原始账目守恒当作复合求解链路已经验收。
+- **文件外场**：`ReadExternalFieldFromFile` 改为显式接收 `lev`，
+  所有 grid/particle E/B 和 hybrid 外部矢势调用点已更新。
+  使用目标层 Geometry、各分量布局及 ghost 范围采样；仅 MR 完整覆盖路径处理
+  openPMD `gridUnitSI` 和 component `position`。
+  3D MR 要求文件覆盖全部请求的插值模板；不足时明确报错，不在域外默默置零。
+  单层路径保留原有坐标解释及域外零值策略。按用户要求不增加场幅值 `unitSI` 换算，
+  避免改变既有磁场文件的解释。静电外场仅持有 `*_fp_external`，
+  `AddExternalFields(lev)` 将其逐层加回 fine-patch 场，aux 从该场更新。
+
+按用户要求，已移除本次新增的回归输入、分析脚本、合成外场生成脚本、
+CTest 注册及临时验证环境。阶段 1 功能实现和壁电荷运行诊断保留，
+后续测试由用户自行安排。本次 C++ 修改尚未经编译或运行验收；
+生产输入仍需阶段 2 的 MCC 多层适配及阶段 0 所缺的数据集。
+
+### 阶段 2：MCC、粒子跨层与主算例接入（暂缓）
+
+- [ ] 完成按层独立背景密度的 MCC、逐层碰撞率上界、同层消耗/产物和辅助复制路径。
+- [ ] 衔接注入、双向跨层迁移、gather/deposit、外边界吸收及墙面产物粒子的处理时序。
+- [ ] 在 Hall 主算例中引入扩展域和静态 fine patch，沿用扩展域内的墙/材料定义，
+  使粗层新增壁面区域与细区壁面同时参与粒子交互和电荷反馈。
+- [ ] 对不支持的可选模式在初始化时明确报错；保持 SEE、注入和碰撞物理参数一致。
+
+待单层 Robin 接入和单层求解验收后，再决定是否恢复本阶段。
+
+### 后续可选范围
+
+ECDI 多层滤波、IonizationSourceTable、AVERAGE_USE/CALC 文件约定、
+2D 及其他维度作为后续独立任务。
+首版实现范围为上述 3D 直接背景密度模式。
+
+## 5. 实施约定
+
+- 按求解精度和资源预算调整扩展域与细区布局，必要时评估复合多层泊松或粒子重采样方案。
+- 移除或重命名用户参数时，补充相应的兼容性检查。
+- 遵循仓库对自动生成文件的维护规则。
+
+## 6. 单层兼容性与 Robin 接入计划（2026-10-13）
+
+本节记录接入方案，不表示 Robin 已加入生产求解路径。现有单层主输入保持
+`amr.max_level=0`；两层输入仅保留为阶段 0–1 的开发入口，MCC 多层限制继续保留。
+
+### 6.1 本次单层兼容处理
+
+- 材料缓存只有 level 0 时仍使用 `amrex::MLNodeLaplacian` 与持久 `MLMG`，
+  方程、介电系数、网格布局和时间外推公式不变。
+- 每层求解前恢复指定阳极电势，防止初值修改破坏固定电势。
+- 单层壁电荷保留在粒子同步、滤波、PEC 处理之后加入；原始存储在临时副本上
+  同步，避免重复累加。同一接口的多层分支才参与统一 `SyncRho`。
+- 外场坐标元数据换算及严格覆盖检查只作用于 MR；单层使用既有文件约定。
+- 保留已确认的 Dirichlet phi ghost 外推及 E ghost 处理；它们是此前明确的边界修正，
+  不宣称相对改造前逐位相同。阶段 1 的壁电荷交点路由也需核对 MPI/多 Box 行为。
+- 本次完成源码路径核对和差异检查；未通过 CLion 构建修改后的 `app_3d`，
+  未复跑单层数值对照。因此不能把上述隔离措施当作运行验收通过。
+
+### 6.2 依赖与导入范围
+
+- AMReX 已更新至 `47ceffc47cea4b157fa20aed944689557ca72134`（版本标签 26.10）。
+  已核对 `supportsAlgMG`、`ParallelForStrided`、`multicolor_offset` 及节点算子虚接口；
+  相关 MLMG/节点基类与参考包验证基线 `334d08c6...` 无差异。
+- 将 `cht_node_robin/src` 四个核心文件及来源/版权记录导入
+  `Source/Insert/Fields/NodeRobin/`，仅编入 `lib_3d`，复用宿主 AMReX/CUDA 配置。
+  不复制第二份 AMReX，不直接套用参考包的独立 CMake 最低版本要求。
+- 首版仅支持单层、完整域、3D Cartesian、非周期和静态网格，保留多个 Box。
+  单层 AMR 与多层 MG 是不同概念；关闭该分支的半粗化，保留各方向二倍 MG 粗化。
+
+### 6.3 求解入口与缓存
+
+- 在 Insert 建立专用单层 Robin 求解入口及缓存，由 `LabFrameExplicitES` 显式选择。
+  默认继续使用当前 Dirichlet 材料求解，避免改变既有输入含义。
+- Robin 缓存持有 `cht::MLNodeRobinLaplacian` 和 `MLMG`，后者先析构；
+  首次设置 `epsilon_r`、单极中心、远场电势及三参数 `setOversetMask(0, mask, voltage)`。
+  不经基类两参数 mask 接口绕过新算子的电极管理，也不由旧 `setDomainBC` 覆盖 Robin 配置。
+- 当前主算例阳极为域内统一电压，可复用已有几何生成的 mask；首版不承诺支持
+  任意空间变化的阳极电势。粗化上限按实际 mask 核对，不能仅沿用固定值 4。
+- 每步复用粒子/壁电荷装配、时间外推及阳极约束；物理 RHS 仅缩放一次为
+  `-rho/epsilon0`，Robin 源项由算子钩子加入。诊断使用 `compPhysicalResidual`，
+  避免直接用三维 `MLMG::compResidual` 漏掉非齐次边界源项。
+
+### 6.4 外边界与电场链路
+
+- 单极条件为 `dphi/dn + q*(phi-phi_infinity)=0`，
+  `q=n·(x-center)/|x-center|²`，法向朝外；中心必须位于物理域内部。
+- 新模式必须贯通边界识别、`setPhiBC`、电荷边界处理和 E 边界处理，
+  避免 Poisson 为 Robin 而外侧仍执行 PEC 电荷镜像或切向 E 清零。
+  内部阳极保留 Dirichlet；外侧粒子吸收仍由粒子边界独立控制。
+- 首先适配当前 staggered 主输入，复用内部 `computeE` 差分并处理 E ghost/gather。
+  若支持 collocated，按 Robin 法向导数补物理 ghost，不能直接把算子内部
+  齐次镜像或现有 Dirichlet 二次外推当作已验证的 Robin 取场模板。
+- 当前陶瓷表达式延伸到部分外边界；必须评估单极近似与材料外延、域大小及
+  展开中心的关系。球体真空验证不代表真实羽流工况已获得同样精度。
+
+### 6.5 验收顺序
+
+1. 通过 CLion 构建匹配的 `app_3d`；先验收当前单层 Dirichlet 路径，检查
+   电势、电场、阳极电压、壁电荷账目、迭代次数及多步时间外推。
+2. 导入后复核参考球体和阳极问题，包括物理残差、边界 E 和重复求解缓存。
+3. 在 WarpX 单层装配中比较单/多 Box，并独立验收 MPI。
+4. 最后检查真实工况的边界模型与计算域独立性，再决定是否恢复 AMR 阶段 2。
+
+本次不新增测试工程或注册；运行验收需使用已构建的对应代码及可用的外部数据。

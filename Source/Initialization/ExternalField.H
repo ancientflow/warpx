@@ -193,12 +193,14 @@ public:
      * \param[in] pdx         cell size of WarpX
      * \param[in] dombox      WarpX domain box
      * \param[in] distributed read OpenPMD data distributely
+     * \param[in] require_full_coverage reject missing interpolation data, including ghosts
      */
     ExternalFieldReader (std::string read_fields_from_path,
                          std::string F_name, std::string F_component,
                          amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& problo,
                          amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> const& pdx,
-                         amrex::Box const& dombox, bool distributed);
+                         amrex::Box const& dombox, bool distributed,
+                         bool require_full_coverage = false);
 
     //! Return lightweight view that can be used in kernels
     [[nodiscard]] ExternalFieldView getView (int li) const;
@@ -251,6 +253,7 @@ private:
     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> m_problo; //! WarpX's initial prob lo
     amrex::GpuArray<amrex::Real,AMREX_SPACEDIM> m_probdx; //! WarpX's cell size
     amrex::Box m_dombox;                                  //! WarpX's initial domain
+    bool m_require_full_coverage = false; //! Reject incomplete field-map coverage
     bool m_distributed = false;   //! Is the data loaded distributedly?
     bool m_moving_window = false; //! In moving window stage?
     amrex::RealVect m_dx;     // Field data's dx
