@@ -7,6 +7,7 @@
 #include "Insert/Boundary/WallBehavior.h"
 #include "Insert/Boundary/WallInteractionData.h"
 #include "Insert/Core/WarpXInsert.h"
+#include "Insert/Fields/HallElectrostaticMaterial.H"
 #include "Insert/Fields/HallWallCharge.H"
 #include "Insert/Math/ThermalVelocity.h"
 #include "Insert/Utils/InsertUtils.h"
@@ -659,16 +660,22 @@ ProcessGenericWallPolicy (
 template <typename Boundary>
 void
 ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary const& boundary,
-                 amrex::Real const time, amrex::Real const dt, WallChargeGrid const& grid,
-                 amrex::MultiFab* wall_charge, MultiParticleContainer& mpc,
+                 amrex::Real const time, amrex::Real const dt,
+                 HallWallCharge::ImpactContainer* charge_impacts, MultiParticleContainer& mpc,
                  amrex::Long* const counts,
                  amrex::Real* const anode_stats, int const wall_id)
 {
     amrex::ParticleReal const charge = pc.getCharge();
+    auto const& geom = WarpX::GetInstance().Geom(0);
+    amrex::GpuArray<amrex::ParticleReal, 3> lo, hi, hi_interior;
+    for (int d = 0; d < 3; ++d) {
+        lo[d] = static_cast<amrex::ParticleReal>(geom.ProbLo(d));
+        hi[d] = static_cast<amrex::ParticleReal>(geom.ProbHi(d));
+        hi_interior[d] = std::nextafter(hi[d], lo[d]);
+    }
+    int const rank = amrex::ParallelDescriptor::MyProc();
     for (int lev = 0; lev <= pc.finestLevel(); ++lev) {
-#ifdef AMREX_USE_OMP
-#pragma omp parallel if (amrex::Gpu::notInLaunchRegion())
-#endif
+        // Tile iteration is serial on the host; impact records are appended on device.
         for (WarpXParIter pti(pc, lev); pti.isValid(); ++pti) {
             // Capture the incident count before same-species emission can grow the tile.
             int const np = pti.numParticles();
@@ -699,37 +706,42 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
             auto* const updated_idcpu = updated_soa.GetIdCPUData().data();
             auto* const updated_weight = updated_soa.GetRealData(PIdx::w).data();
             if (policy.deposit_wall_charge) {
-                // wall_charge is only fetched from HallWallCharge when at
-                // least one active policy deposits; it must be valid here.
-                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(wall_charge != nullptr,
-                    "deposit_wall_charge requires the material Poisson path to "
-                    "initialize wall_charge.");
-                // Deposition scatters several particles onto shared nodes.
-                // amrex::For is required here; HostDevice atomics alone do not
-                // make ParallelFor safe on CPU.
-                auto const charge_grid = wall_charge->array(pti);
-                // Charge deposition is a scatter operation.  Keep it in
-                // amrex::For: ParallelFor promises independent iterations even
-                // when atomics are used.
-                amrex::For(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
-                    int const i = source_index[k];
-                    if (record[k].event == WallBehavior::none) { return; }
-                    amrex::ParticleReal const retained_charge =
-                        charge * updated_weight[i] - record[k].outgoing_charge;
-                    if (retained_charge == 0.0_prt) { return; }
+                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(charge_impacts != nullptr,
+                    "Wall-charge deposition requires an impact container.");
+                auto& tile = charge_impacts->DefineAndReturnParticleTile(0, 0, 0);
+                auto const offset = tile.numParticles();
+                tile.resize(offset + nhits);
+                auto* const output = tile.GetArrayOfStructs().data();
+                amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
+                    auto& p = output[offset + k];
+                    p = HallWallCharge::ImpactContainer::ParticleType{};
+                    p.cpu() = rank;
+                    p.id() = -1;
+                    auto const retained = record[k].event == WallBehavior::none ? 0.0_prt :
+                        charge * updated_weight[source_index[k]] - record[k].outgoing_charge;
+                    if (retained == 0.0_prt) { return; }
                     auto const& position = hit[k].position;
-                    DepositWallChargeToNodes(charge_grid, grid,
-                        position.x, position.y, position.z, retained_charge);
+                    amrex::ParticleReal const point[3] = {position.x, position.y, position.z};
+                    p.id() = static_cast<amrex::Long>(offset + k) + 1;
+                    p.rdata(0) = retained;
+                    for (int d = 0; d < 3; ++d) {
+                        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(point[d] >= lo[d] && point[d] <= hi[d],
+                            "Analytic-wall impact lies outside the physical domain.");
+                        // Ownership uses an interior cell; deposition keeps the exact point.
+                        p.pos(d) = point[d] == hi[d] ? hi_interior[d] : point[d];
+                        p.rdata(d+1) = point[d];
+                    }
                 });
+                // Finish device writes before another tile can resize this staging array.
+                amrex::Gpu::streamSynchronize();
             }
             amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
                 if (record[k].event == WallBehavior::none || record[k].keep_primary) { return; }
                 amrex::ParticleIDWrapper{updated_idcpu[source_index[k]]}.make_invalid();
             });
             if (anode_stats != nullptr) {
-                // Wall-current bookkeeping: scatter weighted sums into the
-                // per-wall slots. amrex::For plus HostDevice atomics is safe
-                // on both CPU (OpenMP) and GPU.
+                // Wall-current bookkeeping scatters weighted sums into shared
+                // per-wall slots, so use amrex::For with atomic additions.
                 int const base = wall_id * anode_current_class_size;
                 amrex::For(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
                     int const i = source_index[k];
@@ -767,13 +779,8 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept -> amrex::Long {
                     return record[k].event == WallBehavior::convert ? 0 : record[k].emitted_count;
                 });
-#ifdef AMREX_USE_OMP
-#pragma omp critical
-#endif
-            {
-                for (int b = 0; b < wall_diagnostic_size; ++b) {
-                    counts[b] += tile_counts[b];
-                }
+            for (int b = 0; b < wall_diagnostic_size; ++b) {
+                counts[b] += tile_counts[b];
             }
         }
     }
@@ -805,16 +812,22 @@ AnalyticBoundaryInteraction ()
                 need_wall_charge || (policy.active && policy.deposit_wall_charge);
         }
     }
-    amrex::MultiFab* wall_charge = nullptr;
+    HallWallCharge* wall_charge = nullptr;
+    std::unique_ptr<HallWallCharge::ImpactContainer> charge_impacts;
     if (need_wall_charge) {
         HallWallCharge& persistent_wall_charge = HallWallCharge::GetInstance();
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-            persistent_wall_charge.isDefined(),
-            "Analytic walls with deposit_wall_charge require the material "
-            "Poisson path to initialize wall_charge.");
-        wall_charge = &persistent_wall_charge.get(0);
+            HallElectrostaticMaterial::GetInstance().enabled(),
+            "Analytic-wall charge deposition requires electrostatic materials.");
+        persistent_wall_charge.prepare(
+            warpx_instance.m_fields.get_mr_levels(
+                warpx::fields::FieldType::rho_fp, warpx_instance.finestLevel()),
+            warpx_instance.finestLevel());
+        wall_charge = &persistent_wall_charge;
+        charge_impacts = std::make_unique<HallWallCharge::ImpactContainer>(
+            warpx_instance.Geom(), warpx_instance.DistributionMap(),
+            warpx_instance.boxArray(), warpx_instance.refRatio());
     }
-    WallChargeGrid const grid = MakeWallChargeGrid(warpx_instance.Geom(0));
 
     AnodeCurrentDiagState& anode_diag =
         GetAnodeCurrentDiagState(config.walls.size());
@@ -851,12 +864,16 @@ AnalyticBoundaryInteraction ()
             amrex::Real const dt_effective =
                 warpx_instance.getdt(0) * ParticleSubcyclingNdt(species_name);
             ApplyWallPolicy(pc, policy, config.walls[wall_id].geometry->GetDeviceView(),
-                warpx_instance.gett_new(0), dt_effective, grid,
-                wall_charge, mpc,
+                warpx_instance.gett_new(0), dt_effective,
+                charge_impacts.get(), mpc,
                 wall_interaction_diag ? species_counts.at(species_name).data() : nullptr,
                 anode_stats, wall_id);
         }
     }
+
+    if (wall_charge != nullptr) { wall_charge->depositImpacts(*charge_impacts); }
+    // The caller's full MR Redistribute then routes surviving particles and
+    // newly emitted products by their final positions, after all wall policies.
 
     if (!wall_interaction_diag) { return; }
 

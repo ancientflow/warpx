@@ -37,7 +37,7 @@ insert.zmin_ring_anode = 1
 
 ## 静电介质与体阳极
 
-该功能只用于 3D Cartesian、lab-frame、MLMG、单层网格计算，不支持 EB、IGF、
+该功能只用于 3D Cartesian、lab-frame、MLMG、静态单层或多层网格计算，不支持 EB、IGF、
 relativistic electrostatic solver 或 Python `poissonsolver` callback。
 
 官方 WarpX/ablastr 求解路径由唯一的编译宏
@@ -46,13 +46,32 @@ relativistic electrostatic solver 或 Python `poissonsolver` callback。
 `#define` 行并重新编译，即可使官方目录编译原有求解路径；
 Insert 下的材料实现仍可保留在源文件列表中。
 
-启用后，`LabFrameExplicitES` 会缓存材料 Poisson 算子及其 `MLMG` 实例。静态网格、
-介电常数和阳极 mask 在首次调用时初始化，后续求解始终复用同一多重网格层级。
-该路径不支持运行期间 regrid 或重新分配网格。
+启用后，`LabFrameExplicitES` 为每层缓存独立的材料 Poisson 算子及其 `MLMG` 实例。
+静态网格、介电常数和阳极 mask 在首次调用时初始化，后续求解复用各层多重网格层级。
+粗到细插值之后、每层实际求解之前都会恢复该层阳极指定电势。
+该路径不支持运行期间 regrid、moving window 或重新分配网格，
+需设置 `warpx.regrid_int = -1`、`algo.load_balance_intervals = 0`。
 
 同一路径还会分配持久的、与 `rho` 同布局的 `wall_charge` 网格源。它初始为零，并在
-每次等离子体电荷同步和滤波后加入 Poisson 右端项；后续解析壁面交互会向该网格源
-沉积吸收的净电荷。
+多层计算在粒子沉积及 `afterdeposition` 回调之后，将原始壁电荷副本加入本步 `rho`，
+再共同执行一次 `SyncRho`、PEC 电荷边界处理及材料约束。
+单层保留原有顺序：粒子 `rho` 完成同步、滤波及 PEC 处理之后，才加入独立同步并
+清除 ghost 的壁电荷副本；单层壁电荷不参与粒子的滤波及 PEC 镜像处理。
+持久源保留各 FAB 及 ghost 上尚未求和的原始贡献，不接收同步或粗层限制副本。
+多层要求 `warpx.use_filter = 0` 且 ECDI 关闭，避免隐式改变持久源的物理含义。
+
+撞壁净电荷及交点由 GPU kernel 直接写入临时粒子容器，不经过主机撞击队列；
+随后通过 `Redistribute` 路由到交点的
+最细覆盖层和所属 MPI box；不使用入射粒子的旧 tile 作为沉积目标。
+壁面产物仍由步末的粒子 `Redistribute` 按最终位置分配层级。
+
+可选 `insert.wall_charge_diagnostic = 1` 写入 `wall_charge.dat`，列为
+`step time deposited_C stored_C level0_C ... composite_C composite_minus_deposited_C`。
+`deposited_C` 为累计撞击净电荷，`stored_C` 与各层值对未组装的原始沉积项求和，
+因而不重复计算共享节点或限制副本。`composite_C` 在独立临时副本上执行 `SyncRho`，
+以粗细覆盖掩码排除被细网格覆盖的粗层单元，并用每个未覆盖单元角点的 `dV/8`
+权重积分。最后一列显式报告复合节点积分与撞击账目的差异，需在粗细界面及
+物理边界处检查；该积分位于 PEC 镜像电荷处理和阳极清零之前。诊断默认关闭。
 
 宏启用后，使用以下输入打开材料功能：
 
@@ -95,7 +114,10 @@ Insert 模块处理。
 （保持为 0），而 collocated 网格的 `computeE` 在边界节点的中心差分会读到它们；
 因此在未启用材料路径时，求解后由 `Insert::SetPhiGuards()`（`DirichletPhiGuardSet`）
 按 `phi_ghost = 2*phi_bnd - phi_int - rho_bnd*dx^2/eps0` 重填六个 PEC 面的 ghost
-节点，使中心差分退化为 Poisson 一致的单边通量。材料路径启用时该重填跳过。
+节点，使中心差分退化为 Poisson 一致的单边通量。材料路径使用逐层的独立处理：
+粗层电势插值提供细区 ghost，同层通信覆盖内部 box 边界；物理 Dirichlet 面使用
+二阶单边导数对应的二次外推；当前材料路径仅使用第一类物理边界。电场 ghost 按分量实际
+staggering 从粗层插值并执行同层通信，供粒子 gather 使用。
 内部体阳极的固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
 
 ## 解析壁面粒子相互作用

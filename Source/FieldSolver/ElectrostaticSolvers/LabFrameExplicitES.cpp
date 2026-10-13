@@ -191,6 +191,14 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
     ExecutePythonCallback("afterdeposition");
 
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    auto& electrostatic_material = Insert::HallElectrostaticMaterial::GetInstance();
+    if (electrostatic_material.enabled() && max_level > 0) {
+        // Add raw persistent contributions once. Only this working rho is synchronized.
+        Insert::HallWallCharge::GetInstance().addTo(rho_fp, max_level);
+    }
+#endif
+
     // Apply filter, perform MPI exchange, interpolate across levels
     const Vector<std::unique_ptr<MultiFab> > rho_buf(num_levels);
     auto & warpx = WarpX::GetInstance();
@@ -214,12 +222,14 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // set the boundary potentials appropriately
     setPhiBC(phi_fp, warpx.gett_new(0));
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    auto& electrostatic_material = Insert::HallElectrostaticMaterial::GetInstance();
     std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
     ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr;
     if (electrostatic_material.enabled()) {
-        auto& wall_charge = Insert::HallWallCharge::GetInstance();
-        wall_charge.addTo(rho_fp, max_level);
+        if (max_level == 0) {
+            // Preserve the single-level source ordering: wall charge bypasses
+            // particle filtering and PEC image-charge processing.
+            Insert::HallWallCharge::GetInstance().addTo(rho_fp, max_level);
+        }
         electrostatic_material.prepare(rho_fp, phi_fp, max_level);
         anode_masks = *electrostatic_material.anodeMasks();
         relative_permittivity = electrostatic_material.relativePermittivity();
@@ -250,8 +260,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
                    verbosity, is_igf_2d_slices, Efield_fp,
                    anode_masks, relative_permittivity,
-                   relative_permittivity ? &m_material_linop : nullptr,
-                   relative_permittivity ? &m_material_mlmg : nullptr);
+                   relative_permittivity ? &m_material_solver_cache : nullptr,
+                   electrostatic_material.anodePotentials());
 #else
                    verbosity, is_igf_2d_slices, Efield_fp);
 #endif
@@ -260,6 +270,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // 共置网格 guard cell 处理: MLMG 不填 Dirichlet 面的 ghost 节点 (留 0),
     // computeE 在边界节点的中心差分会读到, 重填后再算电场
     Insert::SetPhiGuards();
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    electrostatic_material.fillPhiGhosts(phi_fp);
+#endif
     // Keep extrapolation history on the uncorrected Poisson potential.
     updatePhiExtrapolationHistory(phi_fp);
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
@@ -272,6 +285,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     else {
         if (IsPythonCallbackInstalled("poissonsolver")) { computeE(Efield_fp, phi_fp, beta); }
     }
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    electrostatic_material.fillElectricFieldGhosts(Efield_fp);
+#endif
 }
 
 /* \brief Compute the potential by solving Poisson's equation with

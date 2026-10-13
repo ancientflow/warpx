@@ -13,6 +13,7 @@
 #include <AMReX_GpuQualifiers.H>
 #include <AMReX_Math.H>
 #include <AMReX_MultiFab.H>
+#include <AMReX_ParticleContainer.H>
 #include <AMReX_Utility.H>
 #include <AMReX_Vector.H>
 
@@ -111,6 +112,9 @@ DepositWallChargeToNodes (amrex::Array4<amrex::Real> const& wall_charge,
 /** Persistent, nodal grid source for charge retained by analytic walls. */
 class HallWallCharge {
   public:
+    // rdata: net charge followed by the exact impact x/y/z coordinates.
+    using ImpactContainer = amrex::ParticleContainer<4, 0, 0, 0>;
+
     static HallWallCharge& GetInstance ();
 
     HallWallCharge (HallWallCharge const&) = delete;
@@ -122,34 +126,35 @@ class HallWallCharge {
     void prepare (ablastr::fields::MultiLevelScalarField const& rho,
                   int max_level);
 
-    /** Add the synchronized persistent source to the Poisson right-hand side.
-     */
+    /** Single level: add an assembled copy after particle rho processing.
+     * Multiple levels: add raw contributions before the working rho's SyncRho. */
     void addTo (ablastr::fields::MultiLevelScalarField const& rho,
                 int max_level);
 
-    /** Return the per-level storage used by wall-interaction deposition
-     * kernels. */
+    /** Return raw per-level storage. Callers must not synchronize it in place. */
     [[nodiscard]] amrex::MultiFab& get (int lev);
 
     [[nodiscard]] bool isDefined () const noexcept { return m_defined; }
 
-    /** Record that a deposition kernel has written into the persistent source.
-     */
-    void
-    markDirty () noexcept {
-        m_dirty = true;
-    }
+    /** Collective: route device-written impacts to their finest covering level and MPI box. */
+    void depositImpacts (ImpactContainer& impacts);
+
+    /** Sum raw deposition entries, including ghosts, without solver restriction copies. */
+    [[nodiscard]] amrex::Vector<amrex::Real> chargeByLevel () const;
+
+    /** Composite nodal integral of an independently assembled temporary RHS. */
+    [[nodiscard]] amrex::Real compositeCharge () const;
 
   private:
     HallWallCharge () = default;
     ~HallWallCharge () = default;
 
-    void synchronize ();
     void assertLayout (ablastr::fields::MultiLevelScalarField const& rho,
                        int max_level) const;
 
     bool m_defined = false;
-    bool m_dirty = false;
+    amrex::Real m_deposited_charge = 0.0;
+    bool m_diagnostic = false;
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_wall_charge;
 };
 

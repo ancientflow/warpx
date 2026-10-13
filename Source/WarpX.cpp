@@ -734,11 +734,13 @@ WarpX::ReadParameters ()
         }
 
         m_p_ext_field_params = std::make_unique<ExternalFieldParams>(pp_warpx);
+#if !defined(WARPX_DIM_3D)
         if (m_p_ext_field_params->B_ext_grid_type == ExternalFieldType::read_from_file ||
             m_p_ext_field_params->E_ext_grid_type == ExternalFieldType::read_from_file){
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0,
-                "External field reading is not implemented for more than one level");
+                "Multilevel external grid fields are currently supported only in 3D");
         }
+#endif
 
         maxlevel_extEMfield_init = maxLevel();
         pp_warpx.query("maxlevel_extEMfield_init", maxlevel_extEMfield_init);

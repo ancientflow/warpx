@@ -35,6 +35,13 @@ public:
     [[nodiscard]] ablastr::fields::ConstMultiLevelScalarField const*
     relativePermittivity () const noexcept;
 
+    [[nodiscard]] ablastr::fields::ConstMultiLevelScalarField const*
+    anodePotentials () const noexcept;
+
+    /** Fill coarse/fine and physical ghosts before collocated differentiation. */
+    void fillPhiGhosts (ablastr::fields::MultiLevelScalarField const& phi) const;
+    void fillElectricFieldGhosts (ablastr::fields::MultiLevelVectorField const& field) const;
+
     [[nodiscard]] amrex::Vector<amrex::iMultiFab const*> const*
     anodeMasks () const noexcept;
 
@@ -67,6 +74,7 @@ public:
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_anode_phi;
 
     ablastr::fields::ConstMultiLevelScalarField m_epsilon_r_ptrs;
+    ablastr::fields::ConstMultiLevelScalarField m_anode_phi_ptrs;
     amrex::Vector<amrex::iMultiFab const*> m_anode_mask_ptrs;
 
 };

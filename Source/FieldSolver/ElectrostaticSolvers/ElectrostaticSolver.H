@@ -12,6 +12,9 @@
 #include "PoissonBoundaryHandler.H"
 #include "Fluids/MultiFluidContainer.H"
 #include "Insert/Config/HallElectrostaticConfig.H"
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/MaterialPoissonCache.H"
+#endif
 #include "Particles/MultiParticleContainer.H"
 
 #include <ablastr/profiler/ProfilerWrapper.H>
@@ -108,8 +111,8 @@ public:
         std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
         , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr,
-        std::unique_ptr<amrex::MLNodeLaplacian>* material_linop_cache = nullptr,
-        std::unique_ptr<amrex::MLMG>* material_mlmg_cache = nullptr
+        Insert::MaterialPoissonCache* material_solver_cache = nullptr,
+        ablastr::fields::ConstMultiLevelScalarField const* fixed_potential = nullptr
 #endif
     ) const;
 
