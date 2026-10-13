@@ -1,0 +1,37 @@
+# AMR 阶段 0：两层静态网格配置。实施记录见 AMR_IMPLEMENTATION_PLAN.md。
+# 工作目录为仓库内 <build>/bin，沿用主算例的 FILE 和数据相对路径。
+# 阶段 1 的材料/壁电荷/外场改动待构建验收；MCC 多层适配仍待阶段 2。
+FILE = ../../Script/PHT/3d_hall_dielectric_slot
+
+# 扩展域独立于 lx/ly/lz；装置尺寸、注入位置、流量及宏粒子权重沿用主算例。
+my_constants.amr_domain_xlo = -0.005
+my_constants.amr_domain_ylo = -0.005
+my_constants.amr_domain_zlo = -0.00875
+my_constants.amr_domain_xhi = 0.015
+my_constants.amr_domain_yhi = 0.015
+my_constants.amr_domain_zhi = 0.01625
+geometry.prob_lo = amr_domain_xlo amr_domain_ylo amr_domain_zlo
+geometry.prob_hi = amr_domain_xhi amr_domain_yhi amr_domain_zhi
+
+# level 0: dx = dy = dz = 78.125 um；level 1 恢复原算例 39.0625 um。
+amr.n_cell = 256 256 320
+amr.max_level = 1
+amr.ref_ratio_vect = 2 2 2
+
+# 细区覆盖原域，包括 z=8.4--9.2 mm 的阴极源和下游缓冲。
+# 粗层半开索引 [64,192) x [64,192) x [80,240)。
+# blocking_factor=32 使细层边界对齐；关闭默认 tag 膨胀以固定目标范围。
+amr.blocking_factor = 32
+amr.max_grid_size = 128
+amr.n_error_buf = 0
+warpx.fine_tag_lo = 0.0 0.0 -0.0025
+warpx.fine_tag_hi = lx ly lz
+
+# 只在初始化时建层。species ndt 仍由各物种的推进路径处理。
+warpx.regrid_int = -1
+warpx.do_subcycling = 0
+algo.load_balance_intervals = 0
+
+# 沿用当前主算例的 staggered 布局；阶段 0 只改变域与网格配置。
+warpx.use_filter = 0
+insert.ecdi_control.enabled = 0

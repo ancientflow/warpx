@@ -1,0 +1,145 @@
+#全局定义
+max_step = 5000000
+my_constants.diag_num = 120
+my_constants.reduced_diag_num = 12000
+my_constants.dt = 3e-12
+
+warpx.const_dt = dt
+warpx.do_electrostatic = labframe
+warpx.self_fields_required_precision = 1e-6
+#warpx.self_fields_absolute_tolerance = 1e-3
+warpx.sort_intervals = 25
+warpx.use_filter = 0
+warpx.grid_type = collocated
+
+##几何参数定义
+my_constants.L = 0.05
+my_constants.l_factor = 5
+my_constants.sim_L = L/l_factor
+my_constants.lx = sim_L
+my_constants.ly = sim_L
+my_constants.lz = sim_L
+
+#工况定义
+my_constants.anode_current_path = "anode_current_ionization.txt"
+
+my_constants.m_dot = 0.6e-6
+my_constants.Ic = 0.5
+my_constants.voltage = 300
+my_constants.ifhole = 0
+my_constants.Tx = 200
+my_constants.Ty = 200
+my_constants.Tz = 140
+my_constants.vz0 = 240
+
+
+#粒子参数定义
+my_constants.weight_ratio = 4
+my_constants.w_factor = 8
+my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
+my_constants.xe_weight = elec_weight*weight_ratio
+
+#物质参数定义
+my_constants.m_xe = 2.179e-25
+
+# Insert runtime diagnostics switches
+my_constants.particle_number_diag = 1
+my_constants.anode_current_diag = 1
+my_constants.clear_hall_boundary_particle_cache_diag = 1
+my_constants.thrust_diag = 0
+my_constants.beam_divergence_diag = 0
+my_constants.iedf_diag = 0
+my_constants.collision_record_diag = 0
+
+warpx.poisson_solver = multigrid
+
+#几何
+my_constants.factor = 4
+my_constants.n_cell = 64 * factor
+
+amr.n_cell = n_cell n_cell n_cell
+amr.blocking_factor = n_cell
+amr.max_grid_size = n_cell
+amr.max_level = 0
+
+#内存使用
+amrex.the_arena_init_size = 1024*1024*1024*75 # 75GB内存
+
+geometry.dims = 3
+geometry.prob_lo = 0.0 0.0 0.0
+geometry.prob_hi = lx ly lz
+
+#边界条件
+boundary.field_lo = pec pec pec
+boundary.field_hi = pec pec pec
+boundary.particle_lo = absorbing absorbing absorbing
+boundary.particle_hi = absorbing absorbing absorbing
+boundary.potential_lo_x = 0
+boundary.potential_lo_y = 0
+boundary.potential_lo_z = 0
+boundary.potential_hi_x = 0
+boundary.potential_hi_y = 0
+boundary.potential_hi_z = 0
+
+#粒子设置
+algo.particle_shape = 1
+
+particles.species_names = electrons xe_ions
+
+electrons.species_type = electron
+#electrons.do_not_deposit = 1
+
+xe_ions.species_type = xenon
+xe_ions.charge = q_e
+#xe_ions.do_not_deposit = 1
+
+###重采样
+electrons.save_particles_at_zlo = 1
+electrons.ndt = 1
+
+xe_ions.save_particles_at_zlo = 1
+xe_ions.ndt = 10
+
+# ==========================================
+# Hall injection sources (explicit, required by new framework)
+# ==========================================
+insert.continuous_sources = cathode_electron average_ionization_source
+
+
+# --- Cathode electron continuous injection ---
+cathode_electron.species = electrons
+cathode_electron.rate = current
+cathode_electron.current = Ic
+cathode_electron.macro_weight = elec_weight
+cathode_electron.l_factor = l_factor
+cathode_electron.x_offset = 0.025 / l_factor
+cathode_electron.y_offset = 0.025 / l_factor
+
+cathode_electron.position.coordinate_system = cylindrical
+cathode_electron.position.r.distribution = area_uniform
+cathode_electron.position.r.min = 0.016 / l_factor
+cathode_electron.position.r.max = 0.020 / l_factor
+cathode_electron.position.theta.distribution = uniform
+cathode_electron.position.theta.min = 0.0
+cathode_electron.position.theta.max = 2*pi
+cathode_electron.position.z.distribution = uniform
+cathode_electron.position.z.min = 0.042 / l_factor
+cathode_electron.position.z.max = 0.046 / l_factor
+
+cathode_electron.velocity.coordinate_system = cartesian
+cathode_electron.velocity.vx.distribution = gaussian
+cathode_electron.velocity.vx.sigma = 592982
+cathode_electron.velocity.vy.distribution = gaussian
+cathode_electron.velocity.vy.sigma = 592982
+cathode_electron.velocity.vz.distribution = gaussian
+cathode_electron.velocity.vz.sigma = 592982
+
+#碰撞设置
+FILE = 3d_hall_mcccoll_test
+
+#电场 磁场定义
+warpx.B_ext_grid_init_style = read_from_file
+warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
+
+#输出定义
+#FILE = diagout_8T
