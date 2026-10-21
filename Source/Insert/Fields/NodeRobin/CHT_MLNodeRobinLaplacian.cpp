@@ -1,5 +1,6 @@
 #include "CHT_MLNodeRobinLaplacian.H"
 #include "CHT_NodeRobin_K.H"
+#include <AMReX_MLNodeLinOp_K.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_Reduce.H>
 #include <AMReX_ParallelDescriptor.H>
@@ -386,6 +387,23 @@ void MLNodeRobinLaplacian::applyBC(int amrlev,int mglev,MultiFab& phi,BCMode bc_
         finish_kernel();
     }
     MLNodeLinOp::applyBC(amrlev,mglev,phi,bc_mode,state_mode,skip_fillboundary);
+    // AMReX's nodal ghost fill mirrors only Neumann/inflow faces; Robin faces
+    // need the same even reflection so the boundary-node volume stencil is the
+    // half-volume Laplacian and is identical for solution and correction
+    // operands, regardless of stale gather ghosts left in the solution.
+    auto lobc = LoBC();
+    auto hibc = HiBC();
+    bool any_robin = false;
+    for (int d = 0; d < 3; ++d) {
+        if (lobc[d] == LinOpBCType::Robin) { lobc[d] = LinOpBCType::Neumann; any_robin = true; }
+        if (hibc[d] == LinOpBCType::Robin) { hibc[d] = LinOpBCType::Neumann; any_robin = true; }
+    }
+    if (any_robin) {
+        for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
+            mlndlap_applybc(mfi.validbox(), phi.array(mfi), domain, lobc, hibc);
+        }
+        finish_kernel();
+    }
 }
 
 void MLNodeRobinLaplacian::applyInhomogNeumannTerm(int amrlev,MultiFab& rhs) const

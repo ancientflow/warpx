@@ -40,6 +40,12 @@ struct MLMGOptions
     /** Maximum number of MLMG iterations */
     int max_iters = 200;
 
+    /** Number of pre-smoothing sweeps per multigrid level (AMReX default: 2) */
+    int num_pre_smooth = 2;
+
+    /** Number of post-smoothing sweeps per multigrid level (AMReX default: 2) */
+    int num_post_smooth = 2;
+
     /** Verbosity of the MLMG solver.
      *  0 : no verbosity
      *  1 : timing and convergence at the end of MLMG
@@ -189,6 +195,8 @@ applyMLMGOptions (amrex::MLMG & mlmg, MLMGOptions const & options)
 {
     mlmg.setVerbose(options.verbosity);
     mlmg.setMaxIter(options.max_iters);
+    mlmg.setPreSmooth(options.num_pre_smooth);
+    mlmg.setPostSmooth(options.num_post_smooth);
     if (options.num_final_sweeps > 0) {
         mlmg.setFinalSmooth(options.num_final_sweeps);
     }

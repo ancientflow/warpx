@@ -567,6 +567,32 @@ Overall simulation parameters
     MLMG iteration, so the most efficient value is problem-dependent.
 
     Must be greater than zero when specified.
+
+.. pp:param:: warpx.self_fields_num_pre_smooth
+    :type: ``integer``
+    :default: 2
+
+    Number of pre-smoothing (relaxation) sweeps applied on each multigrid level
+    before restricting the residual to the next coarser level, in the AMReX MLMG
+    Poisson solve for electrostatic self fields.
+
+    Increasing this value improves the residual reduction per MLMG iteration at
+    the cost of more work per iteration; the most efficient value is
+    problem-dependent. Boundary conditions that keep the boundary nodes as
+    unknowns (e.g. Robin) can benefit from larger values such as 4.
+
+    Must be greater than zero when specified.
+
+.. pp:param:: warpx.self_fields_num_post_smooth
+    :type: ``integer``
+    :default: 2
+
+    Number of post-smoothing (relaxation) sweeps applied on each multigrid level
+    after adding the interpolated coarse correction, in the AMReX MLMG Poisson
+    solve for electrostatic self fields. See ``warpx.self_fields_num_pre_smooth``
+    for tuning guidance.
+
+    Must be greater than zero when specified.
     
 .. pp:param:: warpx.self_fields_phi_extrapolation_order
     :type: ``integer``

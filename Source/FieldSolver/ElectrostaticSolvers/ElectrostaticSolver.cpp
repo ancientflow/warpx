@@ -63,6 +63,14 @@ void ElectrostaticSolver::ReadParameters () {
         m_mlmg_options.num_final_sweeps > 0,
         "warpx.self_fields_num_final_sweeps must be > 0");
 
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_num_pre_smooth", m_mlmg_options.num_pre_smooth);
+    utils::parser::queryWithParser(
+        pp_warpx, "self_fields_num_post_smooth", m_mlmg_options.num_post_smooth);
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        m_mlmg_options.num_pre_smooth > 0 && m_mlmg_options.num_post_smooth > 0,
+        "warpx.self_fields_num_pre_smooth and num_post_smooth must be > 0");
+
     // MLMG bottom solver options
     std::string bottom_solver_name = "default";
     pp_warpx.query("self_fields_bottom_solver", bottom_solver_name);
