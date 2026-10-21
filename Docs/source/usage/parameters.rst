@@ -599,8 +599,28 @@ Overall simulation parameters
     :default: 0
 
     Extrapolation order used for the initial guess of the labframe electrostatic
-    potential solve. Valid values are ``0`` to disable extrapolation, ``1`` for
-    first-order extrapolation, and ``2`` for second-order extrapolation.
+    potential solve. Valid values are ``0`` to reuse the last converged potential
+    without extrapolating in time, ``1`` for first-order extrapolation, and ``2``
+    for second-order extrapolation.
+
+    For Cartesian 2D/3D labframe multigrid solves without embedded boundaries,
+    history is maintained separately on every mesh-refinement level. Only valid
+    unknown nodes receive the predicted initial guess. Coarse-fine interface
+    nodes, physical Dirichlet nodes, fixed-potential nodes and guard cells are
+    excluded, including when the order is zero. The current coarse solution
+    supplies the fine-patch boundary values through the existing interpolation.
+    Particle gather/deposition buffers and electric-field processing are unchanged.
+
+    A level without history uses the existing initial guess (level zero) or
+    coarse interpolation (refined levels). Insufficient history lowers the order.
+    Changing the field-solve time interval restarts accumulation from the latest
+    solution with order zero; solving again at the same time replaces that sample
+    without advancing history. A nonfinite prediction falls back to the latest
+    finite solution. History contains valid nodes only; guard cells are rebuilt
+    by the existing solver path. This behavior is covered for continuous runs
+    starting from initialization.
+
+    Other solver paths retain their existing initial-guess treatment.
 
 .. pp:param:: warpx.self_fields_phi_extrapolation_alpha
     :type: ``float``

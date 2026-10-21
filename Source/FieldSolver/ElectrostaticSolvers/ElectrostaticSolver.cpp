@@ -193,7 +193,8 @@ ElectrostaticSolver::computePhi (
     bool const is_igf_2d,
     std::optional<ablastr::fields::MultiLevelVectorField> efield,
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks,
-    ablastr::fields::PoissonLevelSolver const& level_solver
+    ablastr::fields::PoissonLevelSolver const& level_solver,
+    ablastr::fields::PoissonLevelPrepare const& prepare_level
 ) const
 {
     // create a vector to our fields, sorted by level
@@ -279,7 +280,8 @@ ElectrostaticSolver::computePhi (
         warpx.gett_new(0),
         eb_farray_box_factory,
         overset_masks,
-        level_solver
+        level_solver,
+        prepare_level
     );
 
 }

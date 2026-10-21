@@ -16,6 +16,8 @@
 #include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
 #endif
 
+#include <ablastr/fields/NodalPoissonInitialGuess.H>
+
 #include <AMReX_MultiFab.H>
 #include <AMReX_Vector.H>
 
@@ -51,6 +53,10 @@ public:
 
 private:
 
+    ablastr::fields::NodalPoissonInitialGuess m_nodal_initial_guess;
+
+    // Compatibility history for EB, non-Cartesian and direct-solver paths.
+    // The Cartesian nodal MLMG path uses m_nodal_initial_guess instead.
     void preparePhiExtrapolatedInitialGuess (
         const ablastr::fields::MultiLevelScalarField& phi
     );

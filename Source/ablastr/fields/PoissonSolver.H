@@ -170,7 +170,7 @@ inline void interpolatePhiBetweenLevels (
  * \tparam T_BoundaryHandler handler for boundary conditions, for example @see ElectrostaticSolver::PoissonBoundaryHandler (EB ONLY)
  * \tparam T_FArrayBoxFactory usually nothing or an amrex::EBFArrayBoxFactory (EB ONLY)
  * \param[in] rho The charge density a given species
- * \param[out] phi The potential to be computed by this function
+ * \param[in,out] phi Initial potential guess, overwritten with the computed potential
  * \param[in] beta Represents the velocity of the source of `phi`
  * \param[in] mlmg_options Settings for the MLMG solve, @see ablastr::fields::MLMGOptions
  * \param[in] geom the geometry per level (e.g., from AmrMesh)
@@ -185,6 +185,7 @@ inline void interpolatePhiBetweenLevels (
  * \param[in] post_phi_calculation perform a calculation per level directly after phi was calculated; required for embedded boundaries (default: none)
  * \param[in] boundary_handler a handler for boundary conditions, for example @see ElectrostaticSolver::PoissonBoundaryHandler
  * \param[in] level_solver Optional synchronous per-level MLMG solve; see PoissonLevelSolver.
+ * \param[in] prepare_level Optional in-place preparation of each level's phi; see PoissonLevelPrepare.
  * \param[in] current_time the current time; required for embedded boundaries (default: none)
  * \param[in] eb_farray_box_factory a factory for field data, @see amrex::EBFArrayBoxFactory; required for embedded boundaries (default: none)
  */
@@ -213,7 +214,8 @@ computePhi (
     [[maybe_unused]] std::optional<amrex::Real const> current_time = std::nullopt, // only used for EB
     [[maybe_unused]] const std::optional<amrex::Vector<T_FArrayBoxFactory const *> >& eb_farray_box_factory = std::nullopt, // only used for EB
     std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt,
-    PoissonLevelSolver const& level_solver = {}
+    PoissonLevelSolver const& level_solver = {},
+    PoissonLevelPrepare const& prepare_level = {}
 )
 {
     using namespace amrex::literals;
@@ -225,6 +227,9 @@ computePhi (
     ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
         !level_solver || (!eb_enabled && !is_solver_igf_on_lev0),
         "A custom level solver requires non-EB multigrid Poisson solves.");
+    ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(
+        !prepare_level || (!eb_enabled && !is_solver_igf_on_lev0),
+        "Per-level initial guesses require non-EB multigrid Poisson solves.");
 
     if (!rel_ref_ratio.has_value()) {
         ABLASTR_ALWAYS_ASSERT_WITH_MESSAGE(finest_level == 0u,
@@ -333,6 +338,7 @@ computePhi (
         std::unique_ptr<amrex::MLMG> owned_mlmg;
         amrex::MLMG* selected_mlmg = nullptr;
         const int ng = int(grid_type == utils::enums::GridType::Collocated);
+        if (prepare_level) { prepare_level(lev, *phi[lev]); }
         if (level_solver) {
             selected_mlmg = &level_solver(
                 lev, info, *phi[lev], *rho[lev], mlmg_options, absolute_tolerance);
@@ -455,11 +461,9 @@ computePhi (
         const amrex::IntVect& refratio = rel_ref_ratio.value()[lev];
         const int ncomp = linop ? linop->getNComp() : phi[lev]->nComp();
 
-        // needed for solving the levels by levels:
-        // - coarser level is initial guess for finer level
-        // - coarser level provides boundary values for finer level patch
-        // Interpolation from phi[lev] to phi[lev+1]
-        // (This provides both the boundary conditions and initial guess for phi[lev+1])
+        // Keep native interpolation into the fine solution. Before its solve,
+        // prepare_level may replace valid unknown nodes with a history prediction;
+        // fixed/interface nodes and ghosts retain the interpolated values.
         if (lev < finest_level) {
             interpolatePhiBetweenLevels(phi[lev],
                                         phi[lev+1],

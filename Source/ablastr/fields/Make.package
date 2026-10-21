@@ -1,5 +1,6 @@
 
 CEXE_sources += MultiFabRegister.cpp
+CEXE_sources += NodalPoissonInitialGuess.cpp
 
 ifeq ($(USE_FFT),TRUE)
     ifeq ($(DIM),3)

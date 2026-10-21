@@ -15,6 +15,15 @@ namespace ablastr::fields {
 
 struct MLMGOptions;
 
+/** Optional in-place preparation of phi before each level's multigrid solve.
+ *
+ * Called synchronously after interpolation from the current coarse solution (if any) and
+ * before the native or custom level solver. Only valid unknown nodes may change;
+ * fixed potentials and ghosts must be preserved. An empty callback leaves phi as is.
+ * History and captured state belong to the caller and must outlive computePhi.
+ */
+using PoissonLevelPrepare = std::function<void (int, amrex::MultiFab&)>;
+
 /** Optional per-level solve used by computePhi; an empty callback uses the native solver.
  *
  * Called synchronously after coarse interpolation and RHS scaling by -1/epsilon0.
