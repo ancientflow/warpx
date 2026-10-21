@@ -19,6 +19,7 @@
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 #include "Insert/Fields/HallElectrostaticMaterial.H"
 #include "Insert/Fields/HallWallCharge.H"
+#include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 
 #include <AMReX_ParmParse.H>
@@ -314,14 +315,20 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         } else
 #endif
         {
-            computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                       Efield_fp
+            ablastr::fields::PoissonLevelSolver level_solver;
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-                       , anode_masks, relative_permittivity,
-                       relative_permittivity ? &m_material_solver_cache : nullptr,
-                       electrostatic_material.anodePotentials()
+            if (relative_permittivity) {
+                // The adapter borrows level data and the persistent cache only
+                // for this synchronous call. Native solves allocate no material state.
+                level_solver = Insert::MaterialPoissonSolver(
+                    m_material_solver_cache, *relative_permittivity, *anode_masks,
+                    *electrostatic_material.anodePotentials(), warpx.Geom(),
+                    warpx.boxArray(), warpx.DistributionMap(), WarpX::grid_type,
+                    m_poisson_boundary_handler->lobc, m_poisson_boundary_handler->hibc);
+            }
 #endif
-            );
+            computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
+                       Efield_fp, std::nullopt, level_solver);
         }
 #endif
     }

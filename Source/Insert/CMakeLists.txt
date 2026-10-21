@@ -32,6 +32,7 @@ foreach(D IN LISTS WarpX_DIMS)
     if(D STREQUAL "3")
         target_sources(lib_${SD}
           PRIVATE
+            Fields/MaterialPoissonSolver.cpp
             Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp
             Fields/NodeRobin/NodeRobinSolver.cpp
         )

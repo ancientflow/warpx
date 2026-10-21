@@ -11,20 +11,13 @@
 
 #include "PoissonBoundaryHandler.H"
 #include "Fluids/MultiFluidContainer.H"
-#include "Insert/Config/HallElectrostaticConfig.H"
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-#include "Insert/Fields/MaterialPoissonCache.H"
-#endif
 #include "Particles/MultiParticleContainer.H"
 
 #include <ablastr/fields/MLMGOptions.H>
+#include <ablastr/fields/PoissonLevelSolver.H>
 #include <ablastr/profiler/ProfilerWrapper.H>
 #include <AMReX_Array.H>
 #include <AMReX_iMultiFab.H>
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-#include <AMReX_MLMG.H>
-#include <AMReX_MLNodeLaplacian.H>
-#endif
 
 #include <memory>
 #include <optional>
@@ -95,6 +88,7 @@ public:
      * \param[in] mlmg_options Settings for the MLMG solve, @see ablastr::fields::MLMGOptions
      * \param[in] is_igf_2d_slices boolean to select between fully 3D Poisson solver and quasi-3D, i.e. one 2D Poisson solve on every z slice (default: false)
      * \param[out] efield The electric field corresponding to the calculated phi (only used with embedded boundaries)
+     * \param[in] level_solver Optional synchronous per-level solve, with caller-owned state
      */
     void computePhi (
         ablastr::fields::MultiLevelScalarField const& rho,
@@ -103,12 +97,8 @@ public:
         ablastr::fields::MLMGOptions const & mlmg_options,
         bool is_igf_2d_slices,
         std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt, // only used for EB
-        std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-        , ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr,
-        Insert::MaterialPoissonCache* material_solver_cache = nullptr,
-        ablastr::fields::ConstMultiLevelScalarField const* fixed_potential = nullptr
-#endif
+        std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt,
+        ablastr::fields::PoissonLevelSolver const& level_solver = {}
     ) const;
 
     /**
