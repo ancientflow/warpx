@@ -83,12 +83,13 @@ public:
      *  \f]
      * \param[in] rho The charge density for a given species (relativistic solver)
      *                               or total charge density (labframe solver)
-     * \param[out] phi The potential to be computed by this function
+     * \param[in,out] phi Initial potential guess, overwritten with the computed potential
      * \param[in] beta Represents the velocity of the source of `phi`
      * \param[in] mlmg_options Settings for the MLMG solve, @see ablastr::fields::MLMGOptions
      * \param[in] is_igf_2d_slices boolean to select between fully 3D Poisson solver and quasi-3D, i.e. one 2D Poisson solve on every z slice (default: false)
      * \param[out] efield The electric field corresponding to the calculated phi (only used with embedded boundaries)
      * \param[in] level_solver Optional synchronous per-level solve, with caller-owned state
+     * \param[in] prepare_level Optional in-place preparation of phi before each level solve
      */
     void computePhi (
         ablastr::fields::MultiLevelScalarField const& rho,
@@ -98,7 +99,8 @@ public:
         bool is_igf_2d_slices,
         std::optional<ablastr::fields::MultiLevelVectorField> efield = std::nullopt, // only used for EB
         std::optional<amrex::Vector<amrex::iMultiFab const *> > overset_masks = std::nullopt,
-        ablastr::fields::PoissonLevelSolver const& level_solver = {}
+        ablastr::fields::PoissonLevelSolver const& level_solver = {},
+        ablastr::fields::PoissonLevelPrepare const& prepare_level = {}
     ) const;
 
     /**

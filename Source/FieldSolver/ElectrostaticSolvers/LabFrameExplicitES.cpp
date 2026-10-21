@@ -266,7 +266,14 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // Todo: use simpler finite difference form with beta=0
     const std::array<Real, 3> beta = {0._rt};
 
-    preparePhiExtrapolatedInitialGuess(phi_fp);
+    bool const use_level_history =
+#if defined(WARPX_DIM_3D) || defined(WARPX_DIM_XZ)
+        !EB::enabled() && !IsPythonCallbackInstalled("poissonsolver") &&
+        WarpX::poisson_solver_id == PoissonSolverAlgo::Multigrid;
+#else
+        false;
+#endif
+    if (!use_level_history) { preparePhiExtrapolatedInitialGuess(phi_fp); }
 
     // set the boundary potentials appropriately
     if (!use_robin) { setPhiBC(phi_fp, warpx.gett_new(0)); }
@@ -289,6 +296,27 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     // electrostatic material path owns the anode).
     Insert::SetBoundaryPhi();
 
+    if (use_level_history) {
+        ablastr::fields::NodalPoissonInitialGuess::BC lobc{}, hibc{};
+        if (!use_robin) {
+            lobc = m_poisson_boundary_handler->lobc;
+            hibc = m_poisson_boundary_handler->hibc;
+        }
+        amrex::Vector<amrex::iMultiFab const*> fixed_masks;
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+        if (anode_masks) { fixed_masks = *anode_masks; }
+        if (use_robin) {
+            // Monopole owns the physical boundary; its face nodes are unknowns.
+            lobc.fill(amrex::LinOpBCType::Robin);
+            hibc.fill(amrex::LinOpBCType::Robin);
+        }
+#endif
+        m_nodal_initial_guess.beginSolve(
+            phi_fp, warpx.Geom(), lobc, hibc, fixed_masks, warpx.gett_new(0),
+            self_fields_phi_extrapolation_order,
+            self_fields_phi_extrapolation_alpha, self_fields_phi_extrapolation_beta);
+    }
+
     // Compute the potential phi, by solving the Poisson equation
     if (IsPythonCallbackInstalled("poissonsolver")) {
 
@@ -305,10 +333,18 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         // Use the AMREX MLMG or the FFT (IGF) solver otherwise
         ablastr::fields::MLMGOptions mlmg_options = m_mlmg_options;
         mlmg_options.verbosity = verbose_step ? m_mlmg_options.verbosity : 0;
+        ablastr::fields::PoissonLevelPrepare prepare_level;
+        if (use_level_history) {
+            prepare_level = [this, verbosity = mlmg_options.verbosity]
+                (int lev, amrex::MultiFab& phi) {
+                    m_nodal_initial_guess.prepare(lev, phi, verbosity);
+                };
+        }
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
         if (use_robin) {
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0,
                 "Monopole Robin currently supports only single-level solves.");
+            if (prepare_level) { prepare_level(0, *phi_fp[0]); }
             m_robin_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
                 *anode_masks->at(0), *electrostatic_material.anodePotentials()->at(0),
                 warpx.Geom(0), mlmg_options);
@@ -328,7 +364,8 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
             }
 #endif
             computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                       Efield_fp, std::nullopt, level_solver);
+                       Efield_fp, std::nullopt, level_solver,
+                       prepare_level);
         }
 #endif
     }
@@ -338,7 +375,11 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
     );
     // Keep extrapolation history on the uncorrected Poisson potential.
-    updatePhiExtrapolationHistory(phi_fp);
+    if (use_level_history) {
+        m_nodal_initial_guess.commit(phi_fp);
+    } else {
+        updatePhiExtrapolationHistory(phi_fp);
+    }
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     Insert::VoltageAdjustment();
 #endif
