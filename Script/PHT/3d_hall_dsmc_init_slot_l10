@@ -3,9 +3,8 @@
 # 磁场文件使用 l10 几何的 ../../data/B3D_l10.bp5。
 # 输出粒子文件需重命名为 hall_start_256_600K_slot_l10.bp5 供主算例使用。
 # 原说明: 入口为宽 0.5mm (未缩比物理尺寸) 的连续环缝, 缝心位于 r_ring 环上 (环心由 x_offset/y_offset 给定),
-# 缝内按 0.5mm 通道、注入 600K、壁面 600K、1/48 低流量 (0.0125 mg/s)
-# 全漫反射工况的出口径向剖面回灌采样 (由 Source/Insert/tool/ZmaxRadialExitAnalyzer 生成,
-# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 8),
+# 缝内按 400K 出口径向剖面回灌采样 (由 Script/inlet_gas_poly_coeffs.md 工况 11
+# 的 600K 系数按文档 √T 缩放律换算, 见工况 12 说明),
 # 按归一化坐标
 #   u = (r - slot_r_in) / slot_width ∈ [0,1]   (r 为相对环心轴的半径)
 # 铺到环缝上:
@@ -34,37 +33,38 @@ my_constants.ifhole = 0
 
 # 环缝几何: 缝心位于 r_ring 环上, 缝宽 0.5mm (未缩比), 做 l_factor 缩比
 my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
-my_constants.slot_width = 0.5e-3 / l_factor
+my_constants.slot_width = 2.5e-3 / l_factor
 my_constants.slot_r_in = r_ring - slot_width / 2
 my_constants.slot_r_out = r_ring + slot_width / 2
 
 # 出口剖面 poly3 拟合系数 (u = (r - slot_r_in)/slot_width ∈ [0,1]),
-# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 0.5mm 通道, 注入 600K /
-# 壁面 600K, 1/48 低流量即 0.0125 mg/s 单孔分流工况, 全漫反射),
-# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 8
+# 400K 结果: 由 Script/inlet_gas_poly_coeffs.md 工况 11 (600K,
+# 通量麦克斯韦入口, L/D=4) 按文档给出的分子流 √T 缩放律换算
+# (T_i × 400/600, mean_vz × √(400/600), jf 不变),
+# 见工况 12 的缩放说明
 # flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
 # (jf 绝对值对应 0.0125 mg/s, 此处仅用其径向形状, 总量由 m_dot 控制)
-my_constants.jf_c0 = 2.8230e22
-my_constants.jf_c1 = -1.0173e22
-my_constants.jf_c2 = 2.1979e22
-my_constants.jf_c3 = -2.0596e22
+my_constants.jf_c0 = 7.5948e22
+my_constants.jf_c1 = -2.7802e22
+my_constants.jf_c2 = 5.8324e22
+my_constants.jf_c3 = -5.5304e22
 # T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
-my_constants.tx_c0 = 4.4948e2
-my_constants.tx_c1 = -8.4170e1
-my_constants.tx_c2 = 2.2336e2
-my_constants.tx_c3 = -1.3033e2
-my_constants.ty_c0 = 4.4788e2
-my_constants.ty_c1 = -7.2656e1
-my_constants.ty_c2 = 1.9609e2
-my_constants.ty_c3 = -1.1188e2
-my_constants.tz_c0 = 2.8028e2
-my_constants.tz_c1 = -1.6338e1
-my_constants.tz_c2 = 4.0228e1
-my_constants.tz_c3 = -3.2635e1
-my_constants.mvz_c0 = 2.8080e2
-my_constants.mvz_c1 = 2.1615e1
-my_constants.mvz_c2 = -5.8018e1
-my_constants.mvz_c3 = 3.5911e1
+my_constants.tx_c0 = 3.0189e2
+my_constants.tx_c1 = -4.4621e1
+my_constants.tx_c2 = 1.2571e2
+my_constants.tx_c3 = -6.8973e1
+my_constants.ty_c0 = 3.0221e2
+my_constants.ty_c1 = -4.6777e1
+my_constants.ty_c2 = 1.2937e2
+my_constants.ty_c3 = -7.0747e1
+my_constants.tz_c0 = 1.8508e2
+my_constants.tz_c1 = -8.3067e0
+my_constants.tz_c2 = 2.5039e1
+my_constants.tz_c3 = -2.2702e1
+my_constants.mvz_c0 = 2.3003e2
+my_constants.mvz_c1 = 1.6871e1
+my_constants.mvz_c2 = -4.5799e1
+my_constants.mvz_c3 = 2.7450e1
 
 #粒子参数定义
 my_constants.rho_init = 2.5e18

@@ -14,7 +14,7 @@ warpx.self_fields_required_precision = 1e-5
 warpx.self_fields_absolute_tolerance = 1e5
 warpx.sort_intervals = 25
 warpx.use_filter = 0
-warpx.grid_type = staggered
+warpx.grid_type = collocated
 warpx.self_fields_phi_extrapolation_order = 2
 warpx.self_fields_phi_extrapolation_alpha = 0.3
 warpx.self_fields_phi_extrapolation_beta = 0.1
@@ -147,18 +147,18 @@ xe_neutral.analytic_wall.anode_ring.wall_temperature = 400.0
 # 最后一项 secondary_electron_1 使用余量概率。
 # 注意：参考文件电子漫反射的实际参数为 40000 K，此处照录；
 # 离子复合产物和中性原子漫反射为 400 K，二次电子为 3 eV。
-electrons.analytic_wall.inner_wall.behaviors = absorb specular secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.inner_wall.behaviors = absorb specular secondary_electron_1 #secondary_electron_2
 electrons.analytic_wall.inner_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
 electrons.analytic_wall.inner_wall.p_specular = "0.5*exp(-(E_eV/30)**2)"
-electrons.analytic_wall.inner_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
+electrons.analytic_wall.inner_wall.p_secondary_electron_1 = "1-exp(-(E_eV/127.8958)**2)"
 electrons.analytic_wall.inner_wall.wall_temperature = 40000
 electrons.analytic_wall.inner_wall.secondary_electron_species = electrons
 electrons.analytic_wall.inner_wall.secondary_electron_temperature_eV = 3.0
 electrons.analytic_wall.inner_wall.deposit_wall_charge = 1
-electrons.analytic_wall.outer_wall.behaviors = absorb specular secondary_electron_2 secondary_electron_1
+electrons.analytic_wall.outer_wall.behaviors = absorb specular  secondary_electron_1 #secondary_electron_2
 electrons.analytic_wall.outer_wall.p_absorb = "0.5*exp(-(E_eV/43.4592)**2)"
 electrons.analytic_wall.outer_wall.p_specular = "0.5*exp(-(E_eV/30)**2)"
-electrons.analytic_wall.outer_wall.p_secondary_electron_2 = "1-exp(-(E_eV/127.8958)**2)"
+electrons.analytic_wall.outer_wall.p_secondary_electron_1 = "1-exp(-(E_eV/127.8958)**2)"
 electrons.analytic_wall.outer_wall.wall_temperature = 40000
 electrons.analytic_wall.outer_wall.secondary_electron_species = electrons
 electrons.analytic_wall.outer_wall.secondary_electron_temperature_eV = 3.0
@@ -313,7 +313,7 @@ diagnostics.diags_names = ECDI_diag
 
 ECDI_diag.diag_type = Full
 ECDI_diag.intervals = 5000
-ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions T_electrons
 ECDI_diag.write_species = 0
 ECDI_diag.format = openpmd
 ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/spt_diag

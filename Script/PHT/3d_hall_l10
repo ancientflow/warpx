@@ -5,12 +5,12 @@
 #sim_L=0.005 后模拟网格 dx 与之相同), zmin 面环形阳极电势经
 #insert.zmin_ring_anode 恢复 (旧 zmin 阳极栈已在 e32deec8b 删除)。
 #进气由 48 孔阵列改为宽 0.5mm 连续环缝, 与 3d_hall_dielectric_slot_l10 一致
-#(工况 8 出口剖面, Script/inlet_gas_poly_coeffs.md)。
+#(400K 出口剖面, 由工况 11 系数按 √T 缩放, Script/inlet_gas_poly_coeffs.md)。
 #注意: 初始中性文件 hall_start_256_600K_slot_l10.bp5 由
 #Script/PHT/3d_hall_dsmc_init_slot_l10 生成, 需先运行该算例。
 #全局定义
 max_step = 9000000
-my_constants.dt = 1.5e-12
+my_constants.dt = 3e-12
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -18,7 +18,12 @@ warpx.self_fields_required_precision = 1e-6
 #warpx.self_fields_absolute_tolerance = 1e-3
 warpx.sort_intervals = 25
 warpx.use_filter = 0
-warpx.grid_type = collocated
+
+warpx.grid_type = staggered
+algo.field_gathering = energy-conserving
+interpolation.galerkin_scheme = 1
+
+warpx.do_initial_div_cleaning = 0
 
 ##几何参数定义
 my_constants.L = 0.05
@@ -37,43 +42,43 @@ my_constants.ifhole = 0
 # 环缝几何: 环心位于 r_ring 环上 (环心由 x_offset/y_offset 给定),
 # 缝宽 0.5mm ,做 l_factor 缩比
 my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
-my_constants.slot_width = 0.5e-3 / l_factor
+my_constants.slot_width = 2.5e-3 / l_factor
 my_constants.slot_r_in = r_ring - slot_width / 2
 my_constants.slot_r_out = r_ring + slot_width / 2
 
 # 出口剖面 poly3 拟合系数 (u = (r - slot_r_in) / slot_width ∈ [0,1],
-# r 为相对环轴的半径), 来自 ZmaxRadialExitAnalyzer
-# (3d_xe_dsmc 0.5mm 通道, 注入 600K / 壁面 600K, 1/48 低流量
-# 即 0.0125 mg/s 单孔分流工况, 全漫反射),
-# 系数记录于 Script/inlet_gas_poly_coeffs.md 工况 8
+# r 为相对环轴的半径), 400K 结果: 由 Script/inlet_gas_poly_coeffs.md
+# 工况 11 (600K, 通量麦克斯韦入口, L/D=4) 按文档给出的分子流 √T
+# 缩放律换算 (T_i × 400/600, mean_vz × √(400/600), jf 不变),
+# 见工况 12 的缩放说明
 # flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
 # (jf 绝对值对应 0.0125 mg/s, 此处仅用其径向形状, 总量由 m_dot 控制)
-my_constants.jf_c0 = 2.8230e22
-my_constants.jf_c1 = -1.0173e22
-my_constants.jf_c2 = 2.1979e22
-my_constants.jf_c3 = -2.0596e22
+my_constants.jf_c0 = 7.5948e22
+my_constants.jf_c1 = -2.7802e22
+my_constants.jf_c2 = 5.8324e22
+my_constants.jf_c3 = -5.5304e22
 # T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
-my_constants.tx_c0 = 4.4948e2
-my_constants.tx_c1 = -8.4170e1
-my_constants.tx_c2 = 2.2336e2
-my_constants.tx_c3 = -1.3033e2
-my_constants.ty_c0 = 4.4788e2
-my_constants.ty_c1 = -7.2656e1
-my_constants.ty_c2 = 1.9609e2
-my_constants.ty_c3 = -1.1188e2
-my_constants.tz_c0 = 2.8028e2
-my_constants.tz_c1 = -1.6338e1
-my_constants.tz_c2 = 4.0228e1
-my_constants.tz_c3 = -3.2635e1
-my_constants.mvz_c0 = 2.8080e2
-my_constants.mvz_c1 = 2.1615e1
-my_constants.mvz_c2 = -5.8018e1
-my_constants.mvz_c3 = 3.5911e1
+my_constants.tx_c0 = 3.0189e2
+my_constants.tx_c1 = -4.4621e1
+my_constants.tx_c2 = 1.2571e2
+my_constants.tx_c3 = -6.8973e1
+my_constants.ty_c0 = 3.0221e2
+my_constants.ty_c1 = -4.6777e1
+my_constants.ty_c2 = 1.2937e2
+my_constants.ty_c3 = -7.0747e1
+my_constants.tz_c0 = 1.8508e2
+my_constants.tz_c1 = -8.3067e0
+my_constants.tz_c2 = 2.5039e1
+my_constants.tz_c3 = -2.2702e1
+my_constants.mvz_c0 = 2.3003e2
+my_constants.mvz_c1 = 1.6871e1
+my_constants.mvz_c2 = -4.5799e1
+my_constants.mvz_c3 = 2.7450e1
 
 
 #粒子参数定义
-my_constants.weight_ratio = 4
-my_constants.w_factor = 8
+my_constants.weight_ratio = 16
+my_constants.w_factor = 32
 my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
 my_constants.xe_weight = elec_weight*weight_ratio
 
@@ -175,7 +180,7 @@ my_constants.inlet_r_max = inlet_r_center + 0.003 / l_factor
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
 insert.initial_sources = channel_plasma
-insert.continuous_sources = cathode_electron xe_neutral_inlet
+insert.continuous_sources = xe_neutral_inlet cathode_electron
 
 # --- Initial channel plasma (electrons + xe_ions) ---
 channel_plasma.rate = density_volume
@@ -286,7 +291,6 @@ xe_neutral.injection_sources = xeinit
 #初始注入
 xe_neutral.xeinit.injection_style = external_file
 xe_neutral.xeinit.injection_file = ../../data/hall_start_256_600K_slot_l10.bp5
-
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_l10
 
@@ -294,8 +298,30 @@ FILE = ../../Script/3d_hall_mcccoll_l10
 warpx.B_ext_grid_init_style = read_from_file
 warpx.read_fields_from_path = ../../data/B3D_l10.bp5
 
-#输出定义
-FILE = ../../Script/diagout_8T
+#场诊断
+diagnostics.diags_names = ECDI_diag #full_diag
+
+
+full_diag.diag_type = Full
+full_diag.intervals = 3000000:5000000:10000
+full_diag.fields_to_plot = rho_electrons Ex Ey Ez
+full_diag.write_species = 0
+full_diag.format = openpmd
+full_diag.file_prefix = /media/ps/disk2/WarpXData/full_diag_l10
+
+
+ECDI_diag.diag_type = Full
+ECDI_diag.intervals = 5000
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions T_electrons
+ECDI_diag.write_species = 0
+ECDI_diag.format = openpmd
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/compare_diag_l10
+
+#宏观统计
+warpx.reduced_diags_names = particle_number_compare_l10
+
+particle_number_compare_l10.type = ParticleNumber
+particle_number_compare_l10.intervals = 500
 
 #ECDI抑制
 insert.ecdi_control.enabled = 0

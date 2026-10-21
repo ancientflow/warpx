@@ -167,6 +167,11 @@ insert.robin_diagnostics = 1
 `compPhysicalResidual` 的最大范数。它不使用遗漏非齐次 Robin 源的普通残差接口。
 诊断默认关闭，不额外分配残差场。
 
+Robin 面把边界节点保留为未知数，MLMG 默认每层 2 次预/后光滑的收敛率差于
+Dirichlet（真空球体算例约 0.54 对 0.33）。用 `warpx.self_fields_num_pre_smooth`
+和 `warpx.self_fields_num_post_smooth` 提到 4（或更高）可显著改善收敛率和
+求解耗时。
+
 六个场边界必须显式设为 `none`；这使通用场处理不再执行 PEC/PMC 镜像或切向场清零，
 真正的静电边界由 Robin 算子负责。粒子吸收/反射仍由 `boundary.particle_*` 独立控制。
 外加 E/B 仍按现有顺序叠加，外加 E 不经过 PEC 截断。

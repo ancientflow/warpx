@@ -12,7 +12,7 @@
 # 换用其他剖面时替换下方拟合系数即可; 缝宽变化需同步修改 slot_width。
 
 #全局定义
-max_step = 10000
+max_step = 8000
 my_constants.dt = 5.6e-10
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -65,8 +65,8 @@ my_constants.mvz_c3 = 3.0711e1
 
 #粒子参数定义
 my_constants.rho_init = 2.5e18
-my_constants.w_factor = 2
-my_constants.weight_ratio = 1
+my_constants.w_factor = 64
+my_constants.weight_ratio = 16
 my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
 my_constants.xe_weight = elec_weight*weight_ratio
 

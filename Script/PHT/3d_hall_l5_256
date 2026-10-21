@@ -1,3 +1,17 @@
+#PHT 家族基准算例: 5 倍缩比 (l_factor=5), 网格 256^3 (factor=4), 六面 Dirichlet,
+#无介电结构 (仅 zmin 面环形阳极, 300 V)。进气为连续环缝 (与 3d_hall_l10/
+#3d_hall_l5_512 一致)。
+#2026-10-20: 由 48 孔阵列改为环缝, 碰撞模型 3d_hall_mcccoll_test 换为
+#3d_hall_mcccoll (补 xe_dsmc, x5 截面), 初始中性文件换为 600K 环缝版
+#(唯一的 l5 256^3 环缝文件, 400K 版需由 3d_hall_dsmc_init_slot 重新生成)。
+#此后本文件不再复现 2026-08 的 48 孔运行。
+#即各 l10 输入注释中所指的 "3d_hall"。2026-08 运行, 输出已移至
+#/media/ps/disk1/WarpXData/full_diag (E+rho_electrons, 3M-5M+9M 步) 与
+#/media/ps/disk1/WarpXData/ECDI_diag_crop (rho_electrons 近阳极裁剪, 0-9M 步)。
+#注意: 2026-08 运行的 ECDI 未存 phi, 雪崩前电势结构无数据; 本文件现行
+#诊断 (内联 ECDI_diag, 含 phi + T_electrons, 前缀 compare_diag_l5) 已补齐。
+#相对路径 (../../Script/..., ../../data/..., B2DTo3D_n2X_l2X.bp5) 相对运行目录
+#(cmake-build-release/bin) 解析, 与本文件位置无关。
 #全局定义
 max_step = 9000000
 my_constants.dt = 3e-12
@@ -8,7 +22,10 @@ warpx.self_fields_required_precision = 1e-6
 #warpx.self_fields_absolute_tolerance = 1e-3
 warpx.sort_intervals = 25
 warpx.use_filter = 0
-warpx.grid_type = collocated
+warpx.grid_type = staggered
+algo.field_gathering = energy-conserving
+interpolation.galerkin_scheme = 1
+warpx.do_initial_div_cleaning = 0
 
 ##几何参数定义
 my_constants.L = 0.05
@@ -23,36 +40,36 @@ my_constants.m_dot = 0.6e-6
 my_constants.Ic = 0.5
 my_constants.voltage = 300
 my_constants.ifhole = 0
-# 小孔几何: 孔中心所在环半径与孔半径 (孔半径取缝半宽, 与单孔 DSMC 通道一致)
+# 环缝几何: 缝心位于 r_ring 环上, 缝宽 2.5mm 做 l_factor 缩比
 my_constants.r_ring = ((0.021 + 0.031) / 4) / l_factor
-my_constants.w_slit = 0.001 / l_factor
-my_constants.hole_radius = w_slit
-my_constants.hole_count = 48
+my_constants.slot_width = 2.5e-3 / l_factor
+my_constants.slot_r_in = r_ring - slot_width / 2
+my_constants.slot_r_out = r_ring + slot_width / 2
 
-# 出口剖面 poly3 拟合系数 (u = r / hole_radius ∈ [0,1], r 为孔内局部半径),
-# 来自 ZmaxRadialExitAnalyzer (3d_xe_dsmc 壁面 400K 工况)
+# 出口剖面 poly3 拟合系数 (u = (r - slot_r_in) / slot_width ∈ [0,1],
+# r 为相对环轴的半径), 400K 结果: 由 Script/inlet_gas_poly_coeffs.md
 # flux [1/(m^2 s)] = jf_c0 + jf_c1 u + jf_c2 u^2 + jf_c3 u^3
-my_constants.jf_c0 = 1.1065e24
-my_constants.jf_c1 = -2.5115e23
-my_constants.jf_c2 = 1.4286e23
-my_constants.jf_c3 = -4.7771e23
+my_constants.jf_c0 = 7.5948e22
+my_constants.jf_c1 = -2.7802e22
+my_constants.jf_c2 = 5.8324e22
+my_constants.jf_c3 = -5.5304e22
 # T_x, T_y, T_z [K] 与 mean_vz [m/s] 同形式
-my_constants.tx_c0 = 3.0396e2
-my_constants.tx_c1 = 2.3711e1
-my_constants.tx_c2 = -4.6530e1
-my_constants.tx_c3 = 8.1279e1
-my_constants.ty_c0 = 3.0243e2
-my_constants.ty_c1 = 3.4419e1
-my_constants.ty_c2 = -6.5369e1
-my_constants.ty_c3 = 9.0793e1
-my_constants.tz_c0 = 1.9873e2
-my_constants.tz_c1 = -1.5765e1
-my_constants.tz_c2 = 3.2015e1
-my_constants.tz_c3 = -2.8509e1
-my_constants.mvz_c0 = 2.6902e2
-my_constants.mvz_c1 = -3.6125e0
-my_constants.mvz_c2 = -1.0281e1
-my_constants.mvz_c3 = -1.6341e1
+my_constants.tx_c0 = 3.0189e2
+my_constants.tx_c1 = -4.4621e1
+my_constants.tx_c2 = 1.2571e2
+my_constants.tx_c3 = -6.8973e1
+my_constants.ty_c0 = 3.0221e2
+my_constants.ty_c1 = -4.6777e1
+my_constants.ty_c2 = 1.2937e2
+my_constants.ty_c3 = -7.0747e1
+my_constants.tz_c0 = 1.8508e2
+my_constants.tz_c1 = -8.3067e0
+my_constants.tz_c2 = 2.5039e1
+my_constants.tz_c3 = -2.2702e1
+my_constants.mvz_c0 = 2.3003e2
+my_constants.mvz_c1 = 1.6871e1
+my_constants.mvz_c2 = -4.5799e1
+my_constants.mvz_c3 = 2.7450e1
 
 
 #粒子参数定义
@@ -157,7 +174,7 @@ my_constants.inlet_r_max = inlet_r_center + 0.003 / l_factor
 # Hall injection sources (explicit, required by new framework)
 # ==========================================
 insert.initial_sources = channel_plasma
-insert.continuous_sources = cathode_electron xe_neutral_inlet
+insert.continuous_sources = xe_neutral_inlet cathode_electron
 
 # --- Initial channel plasma (electrons + xe_ions) ---
 channel_plasma.rate = density_volume
@@ -237,53 +254,64 @@ xe_neutral_inlet.x_offset = 0.025 / l_factor
 xe_neutral_inlet.y_offset = 0.025 / l_factor
 
 
-# 位置: 小孔阵列 (孔分派 + 坐标偏移, 本身不实现分布); 底层柱坐标分布
-# 定义孔内圆斑, r 按 P(r) ∝ r * flux(u) 采样, u = r/hole_radius
+# 位置: 环缝 (底层柱坐标分布); r 按 P(r) ∝ r * flux(u) 采样,
+# u = (r - slot_r_in)/slot_width ∈ [0,1]
 # (parser 任意一维 CDF, 几何权重 r 显式写在表达式中);
 # theta 均匀, z 固定在 zmin 面
-xe_neutral_inlet.position.coupled_distribution = hole_array_plane
-xe_neutral_inlet.hole_count = hole_count
-xe_neutral_inlet.hole_ring_radius = r_ring
 xe_neutral_inlet.position.coordinate_system = cylindrical
 xe_neutral_inlet.position.r.distribution = parser
-xe_neutral_inlet.position.r.min = 0.0
-xe_neutral_inlet.position.r.max = hole_radius
+xe_neutral_inlet.position.r.min = slot_r_in
+xe_neutral_inlet.position.r.max = slot_r_out
 xe_neutral_inlet.position.r.num_bins = 1024
-xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*(r/hole_radius) + jf_c2*(r/hole_radius)**2 + jf_c3*(r/hole_radius)**3)
+xe_neutral_inlet.position.r.function(r) = r * (jf_c0 + jf_c1*((r-slot_r_in)/slot_width) + jf_c2*((r-slot_r_in)/slot_width)**2 + jf_c3*((r-slot_r_in)/slot_width)**3)
 xe_neutral_inlet.position.theta.distribution = uniform
 xe_neutral_inlet.position.theta.min = 0.0
 xe_neutral_inlet.position.theta.max = 2*pi
 xe_neutral_inlet.position.z.distribution = constant
 xe_neutral_inlet.position.z.value = 0.0
 
-# 速度: 各分量参数为孔内局部半径 r 的函数 (sigma(r)/mean(r), 逐粒子求值,
-# 局部坐标原点随孔分派偏移到孔中心, 即 r 相对于孔中心);
-# 剖面坐标归一化为 u = r/hole_radius;
+# 速度: 各分量参数为缝内归一化位置的函数 (sigma(r)/mean(r), 逐粒子求值,
+# r 为相对环心轴的半径, u = (r - slot_r_in)/slot_width ∈ [0,1]);
 # vx/vy 全高斯, vz 截断 vz > 0 的漂移高斯 (截断尾部约 1%)
 xe_neutral_inlet.velocity.coordinate_system = cartesian
 xe_neutral_inlet.velocity.vx.distribution = gaussian
-xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*(r/hole_radius) + tx_c2*(r/hole_radius)**2 + tx_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vx.sigma(r) = sqrt(kb * (tx_c0 + tx_c1*((r-slot_r_in)/slot_width) + tx_c2*((r-slot_r_in)/slot_width)**2 + tx_c3*((r-slot_r_in)/slot_width)**3) / m_xe)
 xe_neutral_inlet.velocity.vy.distribution = gaussian
-xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*(r/hole_radius) + ty_c2*(r/hole_radius)**2 + ty_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vy.sigma(r) = sqrt(kb * (ty_c0 + ty_c1*((r-slot_r_in)/slot_width) + ty_c2*((r-slot_r_in)/slot_width)**2 + ty_c3*((r-slot_r_in)/slot_width)**3) / m_xe)
 xe_neutral_inlet.velocity.vz.distribution = positive_gaussian
-xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*(r/hole_radius) + mvz_c2*(r/hole_radius)**2 + mvz_c3*(r/hole_radius)**3
-xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*(r/hole_radius) + tz_c2*(r/hole_radius)**2 + tz_c3*(r/hole_radius)**3) / m_xe)
+xe_neutral_inlet.velocity.vz.mean(r) = mvz_c0 + mvz_c1*((r-slot_r_in)/slot_width) + mvz_c2*((r-slot_r_in)/slot_width)**2 + mvz_c3*((r-slot_r_in)/slot_width)**3
+xe_neutral_inlet.velocity.vz.sigma(r) = sqrt(kb * (tz_c0 + tz_c1*((r-slot_r_in)/slot_width) + tz_c2*((r-slot_r_in)/slot_width)**2 + tz_c3*((r-slot_r_in)/slot_width)**3) / m_xe)
 
 xe_neutral.injection_sources = xeinit
 
 #初始注入
 xe_neutral.xeinit.injection_style = external_file
-xe_neutral.xeinit.injection_file = ../../data/hall_start_256_400K_hole.bp5
+xe_neutral.xeinit.injection_file = ../../data/hall_start_256_600K_slot.bp5
 
 #碰撞设置
-FILE = ../../Script/3d_hall_mcccoll_test
+FILE = ../../Script/3d_hall_mcccoll
 
 #电场 磁场定义
 warpx.B_ext_grid_init_style = read_from_file
-warpx.read_fields_from_path = B2DTo3D_n2X_l2X.bp5
+warpx.read_fields_from_path = ../../data/B2DTo3D_n2X_l2X.bp5
 
-#输出定义
-FILE = ../../Script/diagout_8T
+#输出定义 (与 3d_hall_l10 内联块一致; ECDI 前缀 compare_diag_l5, 避免与
+#3d_hall_l5_512 占用的 compare_diag 冲突; 不带 full_diag)
+diagnostics.diags_names = ECDI_diag
+
+ECDI_diag.diag_type = Full
+ECDI_diag.intervals = 5000
+ECDI_diag.fields_to_plot = rho_electrons rho_xe_neutral phi rho_xe_ions T_electrons
+ECDI_diag.write_species = 0
+ECDI_diag.format = openpmd
+ECDI_diag.openpmd_backend = "bp5"
+ECDI_diag.file_prefix = /media/ps/disk2/WarpXData/compare_diag_l5_yee
+
+#宏观统计
+warpx.reduced_diags_names = particle_number_compare_l5
+
+particle_number_compare_l5.type = ParticleNumber
+particle_number_compare_l5.intervals = 500
 
 #ECDI抑制
 insert.ecdi_control.enabled = 0

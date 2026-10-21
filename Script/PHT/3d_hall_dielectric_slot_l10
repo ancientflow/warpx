@@ -4,7 +4,7 @@
 #初始中性文件与磁场文件需用 l10 几何重新生成。
 #全局定义
 max_step = 9000000
-my_constants.dt = 1.5e-12
+my_constants.dt = 3e-12
 
 warpx.const_dt = dt
 warpx.do_electrostatic = labframe
@@ -12,7 +12,6 @@ warpx.self_fields_required_precision = 1e-5
 warpx.self_fields_absolute_tolerance = 1
 warpx.sort_intervals = 25
 warpx.use_filter = 0
-#Yee 网格: phi/rho 仍为节点存储, E 改为棱心紧模板差分 (等效 getGradSolution 通量形式)
 warpx.grid_type = collocated
 #关闭外源磁场的初始散度清洗: 文件未覆盖全域时清洗器会把 z=-2mm 钳制界面
 #的跳变摊开并泄漏进通道 (z=-0.16mm 处 max|dBz|=0.15T); 不清洗时通道区离散
@@ -70,8 +69,8 @@ my_constants.mvz_c3 = 3.5911e1
 
 
 #粒子参数定义
-my_constants.weight_ratio = 4
-my_constants.w_factor = 8
+my_constants.weight_ratio = 16
+my_constants.w_factor = 32
 my_constants.elec_weight = 2.5e18*sim_L^3/64^3/200/w_factor
 my_constants.xe_weight = elec_weight*weight_ratio
 
@@ -163,6 +162,7 @@ analytic_wall.ceramic_wall.normal_z = "1.0"
 electrons.analytic_wall.anode_ring.behaviors = absorb
 
 # 陶瓷壁面使用材料模型；阳极、离子和中性原子使用通用 behaviors 路径。
+#electrons.analytic_wall.ceramic_wall.behaviors = absorb
 electrons.analytic_wall.ceramic_wall.material = ceramic
 electrons.analytic_wall.ceramic_wall.secondary_electron_species = electrons
 electrons.analytic_wall.ceramic_wall.secondary_electron_temperature_eV = 3.0
@@ -330,7 +330,7 @@ xe_neutral.injection_sources = xeinit
 
 #初始注入
 xe_neutral.xeinit.injection_style = external_file
-xe_neutral.xeinit.injection_file = ../../data/hall_start_256_600K_slot_l10.bp5
+xe_neutral.xeinit.injection_file = ../../data/hall_start_256_400k_slot_l10.bp5
 
 #碰撞设置
 FILE = ../../Script/3d_hall_mcccoll_l10

@@ -49,7 +49,7 @@ mvz_c0 = 3.1477e2    mvz_c1 = 2.5567e0    mvz_c2 = -2.3046e1   mvz_c3 = -4.8893e
 - **通道直径**：1mm（归一化半径 `u = r/R`，`R = 0.5 mm`）
 - **拟合精度**：加权 RMS 相对误差 — 通量 1.01%，T_x/T_y/T_z ≤ 0.23%，mean_vz 0.08%；
   mean_vx/mean_vy 按对称性恒为 0（加权 RMS ≤ 0.06 m/s）
-- **使用位置**：`Script/3d_hall`（`xe_neutral_inlet`）
+- **使用位置**：`Script/PHT/3d_hall_l5_256`（`xe_neutral_inlet`）
 
 ```
 jf_c0 =  1.1065e24   jf_c1 = -2.5115e23   jf_c2 =  1.4286e23   jf_c3 = -4.7771e23
@@ -67,7 +67,7 @@ mvz_c0 = 2.6902e2    mvz_c1 = -3.6125e0   mvz_c2 = -1.0281e1   mvz_c3 = -1.6341e
 - **通道直径**：1mm（归一化半径 `u = r/R`，`R = 0.5 mm`）
 - **拟合精度**：加权 RMS 相对误差 — 通量 1.14%，T_x/T_y/T_z ≤ 0.22%，mean_vz 0.13%；
   mean_vx/mean_vy 按对称性恒为 0（加权 RMS ≤ 0.08 m/s）
-- **使用位置**：待接入（参考 `Script/3d_hall` 的 `xe_neutral_inlet` 用法）
+- **使用位置**：待接入（参考 `Script/PHT/3d_hall_l5_256` 的 `xe_neutral_inlet` 用法）
 
 ```
 jf_c0 =  8.9952e23   jf_c1 = -2.6127e23   jf_c2 =  3.7691e23   jf_c3 = -5.2273e23
@@ -85,7 +85,7 @@ mvz_c0 = 3.5923e2    mvz_c1 = 6.7369e0    mvz_c2 = -3.4595e1   mvz_c3 = 2.1311e0
 - **通道直径**：0.5mm（归一化半径 `u = r/R`，`R = 0.25 mm`）
 - **拟合精度**：加权 RMS 相对误差 — 通量 1.44%，T_x/T_y/T_z ≤ 0.20%，mean_vz 0.10%；
   mean_vx/mean_vy 按对称性恒为 0（加权 RMS ≤ 0.08 m/s）
-- **使用位置**：待接入（参考 `Script/3d_hall` 的 `xe_neutral_inlet` 用法）
+- **使用位置**：待接入（参考 `Script/PHT/3d_hall_l5_256` 的 `xe_neutral_inlet` 用法）
 
 ```
 jf_c0 =  3.0072e24   jf_c1 = -9.4486e23   jf_c2 =  1.1450e24   jf_c3 = -1.8228e24
@@ -107,7 +107,7 @@ mvz_c0 = 3.2603e2    mvz_c1 = 5.5370e0    mvz_c2 = -3.6283e1   mvz_c3 = 2.4365e-
 - **拟合精度**：加权 RMS 相对误差 — 通量 1.32%（cos 形更优，0.62%），
   T_x/T_y ≤ 0.61%，T_z 0.12%，mean_vz 0.18%；
   mean_vx/mean_vy 按对称性恒为 0（加权 RMS ≤ 0.14 m/s）
-- **使用位置**：真实流量下的推荐系数（参考 `Script/3d_hall` 的
+- **使用位置**：真实流量下的推荐系数（参考 `Script/PHT/3d_hall_l5_256` 的
   `xe_neutral_inlet` 用法）
 
 ```
@@ -185,8 +185,9 @@ mvz_c0 = 2.8075e2    mvz_c1 = 2.2326e1    mvz_c2 = -5.9251e1   mvz_c3 = 3.6617e1
   各系数差异 ≲ 2.5%（jf_c0 2.8230e22 vs 2.8933e22，约 -2.4%；
   T_x/T_y 略高约 0.6%，T_z/mean_vz 差 < 0.1%），
   说明出口分布由 600K 壁面热化主导，对注入温度（600↔800K）不敏感
-- **使用位置**：`Script/PHT/3d_hall_l10`、`Script/PHT/3d_hall_dielectric_slot_l10`、
-  `Script/PHT/3d_hall_dsmc_init_slot_l10`（注入 600K 工况的推荐系数）
+- **使用位置**：`Script/PHT/3d_hall_dielectric_slot_l10`（注入 600K 工况的推荐系数；
+  `Script/PHT/3d_hall_l10` 与 `Script/PHT/3d_hall_dsmc_init_slot_l10` 已改为
+  400K，按工况 12 的 √T 缩放律由工况 11 换算）
 
 ```
 jf_c0 =  2.8230e22   jf_c1 = -1.0173e22   jf_c2 =  2.1979e22   jf_c3 = -2.0596e22
@@ -298,8 +299,11 @@ mvz_c0 = 2.8173e2    mvz_c1 = 2.0663e1    mvz_c2 = -5.6092e1   mvz_c3 = 3.3619e1
   通量形状与幅值不变（jf_c0 差 +0.6%，统计噪声内）。即分子流极限下
   壁面温度只是速度标尺，温度工况间可通过 √T 缩放互相换算，
   无需逐温度重跑
-- **使用位置**：未接入（500K 参考工况；其他温度可按 √T 从工况 11
-  缩放：T_i → T_i·(T/600)，mean_vz → mean_vz·√(T/600)，jf 不变）
+- **使用位置**：`Script/PHT/3d_hall_dsmc_init_hole_l10`、
+  `Script/PHT/3d_hall_hole_l10`（500K 工况的推荐系数；其他温度可按
+  √T 从工况 11 缩放：T_i → T_i·(T/600)，mean_vz → mean_vz·√(T/600)，
+  jf 不变）。400K 已按此缩放（由工况 11 换算）接入
+  `Script/PHT/3d_hall_l10` 与 `Script/PHT/3d_hall_dsmc_init_slot_l10`
 
 ```
 jf_c0 =  7.6396e22   jf_c1 = -2.7621e22   jf_c2 =  5.7186e22   jf_c3 = -5.4550e22

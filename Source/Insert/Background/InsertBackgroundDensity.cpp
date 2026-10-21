@@ -94,6 +94,10 @@ GlobalBackgroundDensityFinalize ()
     for (auto& density : global_background_density) {
         density.backgroundDensityFinalize();
     }
+    // Release the MultiFabs now, while the AMReX arenas are still alive.
+    // The static destructor of this global vector would otherwise run after
+    // AMReX finalization and abort with "pure virtual method called".
+    global_background_density.clear();
 #endif
 }
 
