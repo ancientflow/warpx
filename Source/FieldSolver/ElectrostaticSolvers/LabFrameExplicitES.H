@@ -10,7 +10,9 @@
 #define WARPX_LABFRAMEEXPLICITES_H_
 
 #include "ElectrostaticSolver.H"
+#include "Insert/Config/HallElectrostaticConfig.H"
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/MaterialPoissonCache.H"
 #include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
 #endif
 

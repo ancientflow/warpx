@@ -1,0 +1,114 @@
+{
+  "recorded_utc": "2026-10-21T06:50:52.889828+00:00",
+  "branch": "Amr-support",
+  "source_commit": "e1d320e5c0dfd44d084ee91874facd5a87d4e979",
+  "purpose": "Pre-build provenance for AMR stage 0 interface refactor; not numerical validation",
+  "builds": {
+    "cmake-build-release": {
+      "cache_sha256": "b53a58e4b2480f960fd8aa4a14514d548eb135f05dbda5e9125902a3b3b8731c",
+      "options": {
+        "AMReX_CUDA_FASTMATH": "ON",
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CUDA_ARCHITECTURES": "native",
+        "CMAKE_CUDA_COMPILER": "/usr/local/cuda-13.2/bin/nvcc",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "WarpX_COMPUTE": "CUDA",
+        "WarpX_DIMS": "3",
+        "WarpX_EB": "ON",
+        "WarpX_FASTMATH": "OFF",
+        "WarpX_FFT": "ON",
+        "WarpX_IPO": "OFF",
+        "WarpX_MPI": "ON",
+        "WarpX_OPENPMD": "ON",
+        "WarpX_PARTICLE_PRECISION": "DOUBLE",
+        "WarpX_PRECISION": "DOUBLE",
+        "WarpX_PYTHON": "OFF",
+        "WarpX_QED": "ON",
+        "WarpX_amrex_branch": "b552c85c432defab450688581a1c87aead7b461d",
+        "WarpX_amrex_src": ""
+      },
+      "amrex_source_commit": "b552c85c432defab450688581a1c87aead7b461d",
+      "amrex_worktree_status": ""
+    },
+    "build-codex": {
+      "cache_sha256": "fc3d405da67462a50c8e175734eba6354e63dfd8bddaed94be43185920b315f2",
+      "options": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+        "WarpX_COMPUTE": "OMP",
+        "WarpX_DIMS": "3",
+        "WarpX_EB": "ON",
+        "WarpX_FASTMATH": "OFF",
+        "WarpX_FFT": "OFF",
+        "WarpX_IPO": "OFF",
+        "WarpX_MPI": "ON",
+        "WarpX_OPENPMD": "ON",
+        "WarpX_PARTICLE_PRECISION": "DOUBLE",
+        "WarpX_PRECISION": "DOUBLE",
+        "WarpX_PYTHON": "ON",
+        "WarpX_QED": "ON",
+        "WarpX_amrex_branch": "c2eb6db7ee7965de0ddfc4c05d40dc2d3d61da93",
+        "WarpX_amrex_src": ""
+      }
+    }
+  },
+  "files": {
+    "Script/PHT/3d_hall_dielectric_slot": {
+      "sha256": "a28a0501973873f5eb7c993631ad524f29a9e71e24106985a92d20300e381853"
+    },
+    "Script/PHT/3d_hall_dielectric_slot_amr": {
+      "sha256": "a60228d96738ba3b6ea3a83c8230928a3765e48a35cd479af71043613f7b773c"
+    },
+    "Script/3d_hall_mcccoll": {
+      "sha256": "4884b2f43cd5b26a5b684db0eb6ded7604436ea4a0f7543f34b1213b5a93fc60"
+    },
+    "Source/Insert/Config/HallElectrostaticConfig.H": {
+      "sha256": "93be8137618824a1bc6b9c101d2f321c8632b025699fad208ce41db186c2bcd8"
+    },
+    "Source/Insert/Config/WarpXFunctionConfig.h": {
+      "sha256": "54c66b1e62ca357bb95f1192c9e82d9c95b5b6d54079c665b32b032da6109e8c"
+    },
+    "Source/Insert/Config/WarpXSimulationConfig.h": {
+      "sha256": "f42008ccfaf68423765b4be7fa337e704d6b732bffa2d6ad2e21cad8ff2c01bb"
+    },
+    "Source/Insert/Config/WarpXOptimizationConfig.h": {
+      "sha256": "d325dd69b814539312009c7d7e969d784dab3ae851bf5c493e44416e5c127383"
+    },
+    "Examples/Tests/electrostatic_sphere/inputs_base_3d": {
+      "sha256": "219472b3499463d231d1a815502c5299ec2b8a9938e80a89c4bc6b82d1434fbb"
+    },
+    "Examples/Tests/electrostatic_sphere/inputs_test_3d_electrostatic_sphere_lab_frame": {
+      "sha256": "a9e29a3e918de9bf450decab6c2338750cdc5fce6cdc1a65c09792dc4285d5e5"
+    },
+    "Examples/Tests/electrostatic_sphere/inputs_test_3d_electrostatic_sphere_lab_frame_mr_emass_10": {
+      "sha256": "2d0a0f780ae65bc913015951d040dcf3b96f9bd719f650ff5a3758a29fab98d5"
+    }
+  },
+  "external_data": {
+    "data/B3D_dielectric.bp5": {
+      "exists": false,
+      "content_version": null
+    },
+    "data/hall_start_256_600K_slot.bp5": {
+      "exists": false,
+      "content_version": null
+    }
+  },
+  "validation": {
+    "clion_build": "not_run: no CLion tool available",
+    "native_single_level": "not_run",
+    "native_multilevel": "not_run",
+    "native_local_patch": "not_run",
+    "ctest_registration": "listed six run/analysis/checksum entries for existing native single-level and MR tests; no execution",
+    "static_native_comparison": "operator setup, solve operations and postsolve sequence preserved after extracting the old non-material branch"
+  },
+  "existing_binary": {
+    "path": "cmake-build-release/bin/warpx.3d.MPI.CUDA.DP.PDP.OPMD.FFT.EB.QED",
+    "size": 900695672,
+    "mtime_utc": "2026-10-21T06:45:45.525729+00:00",
+    "matches_stage0_changes": null,
+    "verification": "Not verified against the completed stage-0 source changes; not used for validation"
+  }
+}
