@@ -20,6 +20,8 @@
 
 #include <string>
 
+class BackgroundCoupledDensity;
+
 class CoupledBackgroundMCCCollision final : public CollisionBase {
   public:
     explicit CoupledBackgroundMCCCollision (std::string const& collision_name);
@@ -54,14 +56,14 @@ class CoupledBackgroundMCCCollision final : public CollisionBase {
      * @param ground_rho local background density
      * @param p_delete pointer of particles to be deleted
      * @param p_particle_num pointer of particles in each cell
-     * @param ncell number of cell at an axis
+     * @param lev mesh-refinement level
      */
     template <int depos_order>
-    void doBackgroundCollisionsWithinTileCouple (WarpXParIter& pti,
+    void doBackgroundCollisionsWithinTileCouple (int lev, WarpXParIter& pti,
                                                  amrex::Real t,
                                                  amrex::MultiFab& ground_rho,
                                                  int* p_delete,
-                                                 int* p_particle_num, int ncell,
+                                                 int* p_particle_num,
                                                  amrex::XDim3 inv_cell_size);
 
     /** Perform MCC ionization interactions with local density
@@ -75,13 +77,16 @@ class CoupledBackgroundMCCCollision final : public CollisionBase {
      * @param ground_rho local background density
      * @param inv_cell_size the reciprocal of the cell size
      * @param elec_weight the weight of electron
+     * @param background_density per-level neutral density and consumption data
+     * @param ground_species neutral particles, null when using a prescribed density
      */
     template <int depos_order>
     void doBackgroundIonizationCouple (
         int lev, amrex::LayoutData<amrex::Real>* cost,
         WarpXParticleContainer& species1, WarpXParticleContainer& species2,
         amrex::Real t, amrex::MultiFab& ground_rho,
-        const amrex::XDim3& inv_cell_size, amrex::ParticleReal elec_weight);
+        const amrex::XDim3& inv_cell_size, amrex::ParticleReal elec_weight,
+        BackgroundCoupledDensity& background_density, WarpXParticleContainer* ground_species);
 
   private:
     amrex::Vector<ScatteringProcess> m_scattering_processes;

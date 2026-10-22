@@ -1,23 +1,25 @@
 #include "BackgroundCoupledDensity.h"
 
-#include <BoundaryConditions/WarpX_PEC.H>
-
+#include "BoundaryConditions/WarpX_PEC.H"
 #include "Insert/Utils/InsertUtils.h"
 #include "Parallelization/WarpXSumGuardCells.H"
+#include "WarpX.H"
+
+#include <AMReX_ParmParse.H>
 
 #if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
-#include <AMReX_ParmParse.H>
 #include <AMReX_VisMF.H>
 #endif
 
-#ifdef MCC_DENSITY_AVERAGE_CALC
+#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
 #include <cctype>
-#include <iomanip>
-#include <sstream>
 #endif
-
-#ifdef MCC_DENSITY_AVERAGE_USE
-#include <cctype>
+#include <cmath>
+#ifdef MCC_DENSITY_AVERAGE_CALC
+#include <iomanip>
+#endif
+#include <limits>
+#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
 #include <sstream>
 #endif
 
@@ -88,8 +90,6 @@ void
 AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
                 const int lev) {
     for (WarpXParIter pti(pc, lev); pti.isValid(); ++pti) {
-        const amrex::Box& box = pti.validbox();
-
         auto np = pti.numParticles();
         amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
                           << ": deposit " << np << " particles" << "\n";
@@ -112,48 +112,25 @@ AtomDepositAPI (WarpXParticleContainer& pc, amrex::MultiFab& rho,
         WarpX::particle_boundary_lo, WarpX::particle_boundary_hi,
         warpx_instance.Geom(lev), lev, PatchType::fine,
         warpx_instance.refRatio());
-
-    /*
-    amrex::Box domain = warpx_instance.Geom(lev).Domain();
-    domain.surroundingNodes();
-    for (amrex::MFIter mfi(rho, amrex::TilingIfNotGPU()); mfi.isValid();
-         ++mfi) {
-        const amrex::Box& box = mfi.validbox();
-        const auto& rho_arr = rho[mfi].array();
-        amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE(int i, int j, int k) {
-            // x direction
-            if (i == domain.smallEnd(0)) {
-                rho_arr(i, j, k) *= 2.0_prt;
-            }
-            if (i == domain.bigEnd(0)) {
-                rho_arr(i, j, k) *= 2.0_prt;
-            }
-            // y direction
-            if (j == domain.smallEnd(1)) {
-                rho_arr(i, j, k) *= 2.0_prt;
-            }
-            if (j == domain.bigEnd(1)) {
-                rho_arr(i, j, k) *= 2.0_prt;
-            }
-            // z direction
-            if (k == domain.smallEnd(2)) {
-                rho_arr(i, j, k) *= 2.0_prt;
-            }
-            if (k == domain.bigEnd(2)) {
-                rho_arr(i, j, k) *= 2.0_prt;
-            }
-        });*/
 }
 
 /**
  * @brief init the vector of background density species
- * @attention if number of background species particles at begin is zero,
- * this function will give wrong result, because findParticlesInEachCell
- * will return vacuum container
  */
 void
 BackgroundCoupledDensity::backgroundDensityInit () {
     WarpX& warpx_instance = WarpX::GetInstance();
+    if (warpx_instance.maxLevel() > 0) {
+        int regrid_interval = -1;
+        int subcycling = 0;
+        amrex::ParmParse("warpx").query("regrid_int", regrid_interval);
+        amrex::ParmParse("warpx").query("do_subcycling", subcycling);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            regrid_interval <= 0 && subcycling == 0 && !WarpX::do_moving_window &&
+                !warpx_instance.get_load_balance_intervals().isActivated(),
+            "Coupled MCC with mesh refinement requires a static mesh: disable regrid, "
+            "moving window, AMR time subcycling and load balancing.");
+    }
 
 #ifndef MCC_DENSITY_AVERAGE_USE
     MultiParticleContainer& mypc = warpx_instance.GetPartContainer();
@@ -171,47 +148,24 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 #ifdef MCC_DENSITY_AVERAGE_CALC
     m_background_density_sum_fabs.resize(flvl + 1);
 #endif
-    m_background_bins.resize(flvl + 1);
-    m_n_particle_in_each_cell.resize(flvl + 1);
+    m_tiles.resize(flvl + 1);
 
     amrex::Print() << "Background density initialized with size: \n";
 
     for (int lev = 0; lev <= flvl; lev++) {
-        auto* rho =
-            warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, lev);
-        m_background_density_fabs[lev] =
-            amrex::MultiFab(rho->boxArray(), rho->DistributionMap(),
-                            rho->nComp(), rho->nGrow());
-        m_ionization_consumption_fabs[lev] =
-            amrex::MultiFab(rho->boxArray(), rho->DistributionMap(), 1,
-                            m_background_density_fabs[lev].nGrowVect());
+        // Private nodal density: do not borrow a Poisson charge FAB or its contents.
+        auto const ba = amrex::convert(warpx_instance.boxArray(lev), amrex::IntVect(1));
+        auto const& dm = warpx_instance.DistributionMap(lev);
+        auto ng = warpx_instance.get_ng_depos_rho();
+        ng.max(amrex::IntVect(WarpX::nox + 1));
+        m_background_density_fabs[lev] = amrex::MultiFab(ba, dm, WarpX::ncomps, ng);
+        m_background_density_fabs[lev].setVal(0.0);
+        m_ionization_consumption_fabs[lev] = amrex::MultiFab(ba, dm, 1, ng);
         m_ionization_consumption_fabs[lev].setVal(0.0);
 #ifdef MCC_DENSITY_AVERAGE_CALC
         m_background_density_sum_fabs[lev] =
-            amrex::MultiFab(rho->boxArray(), rho->DistributionMap(),
-                            rho->nComp(), rho->nGrow());
+            amrex::MultiFab(ba, dm, WarpX::ncomps, ng);
         m_background_density_sum_fabs[lev].setVal(0.0);
-#endif
-
-#ifndef MCC_DENSITY_AVERAGE_USE
-        auto geo = warpx_instance.Geom(lev);
-        const size_t box_num = warpx_instance.boxArray(lev).size();
-
-        auto& background_bin = m_background_bins[lev];
-        auto& background_np = m_n_particle_in_each_cell[lev];
-
-        background_bin.resize(box_num);
-        background_np.resize(box_num);
-
-        for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
-            const int box_index = pti.index();
-            auto& ptile = background_species.ParticlesAt(lev, pti);
-            background_bin[box_index] =
-                ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
-            long const numbins = background_bin[box_index].numBins();
-            background_np[box_index] =
-                amrex::Gpu::DeviceVector<int>(numbins, 0);
-        }
 #endif
     }
 #ifdef MCC_DENSITY_AVERAGE_CALC
@@ -267,9 +221,26 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
     auto& background_species =
         mypc.GetParticleContainerFromName(m_ground_species);
     auto const flvl = background_species.finestLevel();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        std::isfinite(elec_weight) && elec_weight > 0,
+        "Coupled MCC requires a finite positive my_constants.elec_weight.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+        static_cast<int>(m_background_density_fabs.size()) == flvl + 1,
+        "Coupled MCC background level count changed after initialization.");
     amrex::AllPrint() << "rank " << amrex::ParallelDescriptor::MyProc()
                       << ":Start updating background density\n";
     for (int lev = 0; lev <= flvl; lev++) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            m_background_density_fabs[lev].boxArray() ==
+                amrex::convert(warpx_instance.boxArray(lev), amrex::IntVect(1)) &&
+            m_background_density_fabs[lev].DistributionMap() ==
+                warpx_instance.DistributionMap(lev),
+            "Coupled MCC background layout changed after initialization.");
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            background_species.ParticleBoxArray(lev) == warpx_instance.boxArray(lev) &&
+            background_species.ParticleDistributionMap(lev) ==
+                warpx_instance.DistributionMap(lev),
+            "Coupled MCC background particles must use the field mesh layout.");
         m_background_density_fabs[lev].setVal(0.0_prt);
         AtomDepositAPI(background_species, m_background_density_fabs[lev], lev);
 #ifdef MCC_DENSITY_AVERAGE_CALC
@@ -287,41 +258,36 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
                                  m_background_density_fabs[lev].nGrowVect());
         }
 #endif
-        auto geo = warpx_instance.Geom(lev);
-        auto& background_bin = m_background_bins[lev];
-        auto& background_np = m_n_particle_in_each_cell[lev];
-
-        for (WarpXParIter pti(background_species, lev); pti.isValid(); ++pti) {
-            const int box_index = pti.index();
-            amrex::AllPrint()
-                << "rank " << amrex::ParallelDescriptor::MyProc()
-                << ": Updating lev " << lev << ": box " << box_index << "\n";
-
-            auto& ptile = background_species.ParticlesAt(lev, pti);
-            background_bin[box_index] =
-                ParticleUtils::findParticlesInEachCell(geo, pti, ptile);
-            int const np = ptile.numParticles();
-            const int* offsets = background_bin[box_index].offsetsPtr();
-            int const* indices = background_bin[box_index].permutationPtr();
-            long const numbins = background_bin[box_index].numBins();
-            int* p_particle_num = background_np[box_index].dataPtr();
-            /*
-            const int* offsets = (*binIter).offsetsPtr();
-            int const* indices = (*binIter).permutationPtr();
-            long const numbins = (*binIter).numBins();
-            int* p_particle_num = (*npIter).dataPtr();*/
-            auto& soa = ptile.GetStructOfArrays();
-            auto& soa_arr = soa.GetRealData();
-            amrex::ParticleReal const* pw = soa_arr[PIdx::w].dataPtr();
+        auto const& geo = warpx_instance.Geom(lev);
+        auto& tiles = m_tiles[lev];
+        amrex::Gpu::streamSynchronize();
+        tiles.clear();
+        // Include empty tiles: a projectile can occupy a tile with no neutrals.
+        for (auto mfi = background_species.MakeMFIter(lev); mfi.isValid(); ++mfi) {
+            auto const key = std::make_pair(mfi.index(), mfi.LocalTileIndex());
+            auto& ptile = background_species.DefineAndReturnParticleTile(
+                lev, key.first, key.second);
+            auto& tile = tiles[key];
+            tile.bins = ParticleUtils::findParticlesInEachCell(geo, mfi, ptile);
+            auto const* offsets = tile.bins.offsetsPtr();
+            auto const* indices = tile.bins.permutationPtr();
+            auto const numbins = tile.bins.numBins();
+            tile.available.resize(numbins);
+            auto* available = tile.available.dataPtr();
+            auto const& soa = ptile.GetStructOfArrays();
+            auto const* idcpu = soa.GetIdCPUData().data();
+            auto const* pw = soa.GetRealData()[PIdx::w].dataPtr();
             amrex::ParallelFor(numbins, [=] AMREX_GPU_DEVICE(long ibin) {
-                const int offset_start = offsets[ibin],
-                          offset_end = offsets[ibin + 1];
-                amrex::ParticleReal num_w = 0;
-                for (int i = offset_start; i < offset_end; i++) {
-                    num_w += pw[indices[i]];
+                amrex::Long count = 0;
+                for (int i = offsets[ibin]; i < offsets[ibin + 1]; ++i) {
+                    int const ip = indices[i];
+                    if (amrex::ConstParticleIDWrapper{idcpu[ip]}.is_valid() && pw[ip] > 0) {
+                        // Count consumable weight units per particle, not fractions
+                        // pooled across particles that cannot individually be consumed.
+                        count += static_cast<amrex::Long>(pw[ip] / elec_weight + 1.e-6);
+                    }
                 }
-                p_particle_num[ibin] =
-                    static_cast<int>((num_w / elec_weight) + 0.1);
+                available[ibin] = static_cast<int>(count);
             });
         }
     }
