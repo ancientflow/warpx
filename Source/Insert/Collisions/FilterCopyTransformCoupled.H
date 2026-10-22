@@ -91,7 +91,7 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                               TransFunc&& transform, Index* p_delete,
                               const amrex::Array4<amrex::Real>& rho_array,
                               Index* p_particle_num, const amrex::XDim3 xyzmin,
-                              const amrex::Box& box, const amrex::IntVect ngrow,
+                              const amrex::Box& box, const amrex::Box& cell_box,
                               const amrex::XDim3& inv_cell_size,
                               const bool consume_background = true) noexcept {
     using namespace amrex;
@@ -106,10 +106,10 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
     auto* p_mask = mask.dataPtr();
     const auto src_data = src.getParticleTileData();
 
-    const Dim3 lo = lbound(box), hi = ubound(box), grow_dim = ngrow.dim3();
-    Dim3 const ncell{hi.x - lo.x - (2 * grow_dim.x),
-                     hi.y - lo.y - (2 * grow_dim.y),
-                     hi.z - lo.z - (2 * grow_dim.z)};
+    const Dim3 lo = lbound(box), cell_lo = lbound(cell_box);
+    const Dim3 cell_hi = ubound(cell_box);
+    Dim3 const ncell{cell_hi.x - cell_lo.x + 1, cell_hi.y - cell_lo.y + 1,
+                    cell_hi.z - cell_lo.z + 1};
     amrex::ParallelForRNG(
         np, [=] AMREX_GPU_DEVICE(int i, amrex::RandomEngine const& engine) {
             const auto& p = src_data.getSuperParticle(i);
@@ -120,9 +120,13 @@ filterCopyTransformParticles (DstPC& pc1, DstPC& pc2, DstTile& dst1,
                                       rpy = (y - xyzmin.y) * inv_cell_size.y,
                                       rpz = (z - xyzmin.z) * inv_cell_size.z;
             amrex::ParticleReal n_a = 0;
-            const int pi = static_cast<int>(rpx - grow_dim.x),
-                      pj = static_cast<int>(rpy - grow_dim.y),
-                      pk = static_cast<int>(rpz - grow_dim.z);
+            // Match DenseBins' tile-local indexing and roundoff clamping.
+            const int pi = amrex::min(ncell.x - 1, amrex::max(0,
+                static_cast<int>(rpx + lo.x - cell_lo.x)));
+            const int pj = amrex::min(ncell.y - 1, amrex::max(0,
+                static_cast<int>(rpy + lo.y - cell_lo.y)));
+            const int pk = amrex::min(ncell.z - 1, amrex::max(0,
+                static_cast<int>(rpz + lo.z - cell_lo.z)));
             Compute_shape_factor<depos_order> const compute_shape_factor;
             amrex::ParticleReal sx[depos_order + 1] = {0._rt},
                                          sy[depos_order + 1] = {0._rt},

@@ -68,7 +68,7 @@ extern void AtomDepostiAPI(WarpXParticleContainer& pc, amrex::MultiFab& rho);*/
  */
 template <int depos_order>
 void
-ReplaceParticlesEachCell (int* p_delete, const int* p_offset, int* p_indices,
+ReplaceParticlesEachCell (int lev, int* p_delete, const int* p_offset, int* p_indices,
                           int numbins, WarpXParticleContainer& src_pc,
                           WarpXParIter& pti, amrex::MultiFab& ground_rho,
                           amrex::MultiFab& excitation_rho,
@@ -77,10 +77,9 @@ ReplaceParticlesEachCell (int* p_delete, const int* p_offset, int* p_indices,
     using namespace amrex::literals;
     amrex::Gpu::DeviceScalar<int> all_deleted(0);
     int* p_num = all_deleted.dataPtr();
-    auto GetPosition = GetParticlePosition<PIdx>(pti);
-
     amrex::Real invvol = inv_gap * inv_gap * inv_gap;
-    auto& ptile = src_pc.ParticlesAt(0, pti);
+    auto& ptile = src_pc.ParticlesAt(lev, pti);
+    auto GetPosition = GetParticlePosition<PIdx>(ptile);
     auto& soa = ptile.GetStructOfArrays();
 
     uint64_t* const AMREX_RESTRICT idcpu = soa.GetIdCPUData().data();
@@ -88,7 +87,7 @@ ReplaceParticlesEachCell (int* p_delete, const int* p_offset, int* p_indices,
     amrex::ParticleReal* pw = soa_arr[PIdx::w].dataPtr();
     amrex::Box box = pti.tilebox();
     box.grow(ground_rho.nGrowVect());
-    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, 0, 0.0_rt);
+    const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, lev, 0.0_rt);
     const amrex::Dim3 lo = lbound(box);
 
     const auto& rho_arr_src = ground_rho.array(pti);
