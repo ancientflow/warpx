@@ -1,7 +1,7 @@
 #include "Insert/Fields/HallWallCharge.H"
 
 #if defined(WARPX_DIM_3D)
-#include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
+#include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 #include "Utils/TextMsg.H"
 #include "WarpX.H"
@@ -236,7 +236,7 @@ HallWallCharge::compositeCharge () const
     amrex::ParmParse("insert").query("electrostatic_boundary", boundary);
     if (boundary == "monopole") {
         // Match the private Robin RHS's boundary dual-volume normalization.
-        NodeRobinSolver::normalizeBoundarySource(*fine[0], warpx.Geom(0));
+        MaterialPoissonSolver::normalizeBoundarySource(*fine[0], warpx.Geom(0));
     }
 #endif
     amrex::Real result = 0.0;

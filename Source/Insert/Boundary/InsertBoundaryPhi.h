@@ -5,12 +5,12 @@
 
 namespace Insert {
 
-class NodeRobinSolver;
+class MaterialPoissonSolver;
 
 /** Fill potential ghosts needed by the common valid-region electric-field operator. */
 void FillPhiGhosts (
     ablastr::fields::MultiLevelScalarField const& phi,
-    NodeRobinSolver* robin_solver = nullptr);
+    MaterialPoissonSolver* material_solver = nullptr);
 
 void AnodeVoltage ();
 void DirichletPhiGuardSet ();

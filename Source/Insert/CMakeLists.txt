@@ -34,7 +34,6 @@ foreach(D IN LISTS WarpX_DIMS)
           PRIVATE
             Fields/MaterialPoissonSolver.cpp
             Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp
-            Fields/NodeRobin/NodeRobinSolver.cpp
         )
     endif()
 endforeach()

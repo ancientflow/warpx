@@ -56,6 +56,12 @@ public:
     /// The caller must cap LPInfo coarsening to resolve the electrode first.
     void setOversetMask(int amrlev, const amrex::iMultiFab& mask, amrex::Real value);
     void setInternalDirichletValue(amrex::Real value);
+    /// Copy prescribed nodal voltages on the finest level. Only physical
+    /// solutions use these values; every MG correction remains homogeneous.
+    void setInternalDirichletValues (amrex::MultiFab const& values);
+    /// Reject changes to the static material/mask, including in-place edits.
+    void validateStaticMaterial (amrex::MultiFab const& sigma,
+                                 amrex::iMultiFab const& mask) const;
     amrex::Long internalDirichletNodes(int mglev) const;
     /// Copy f on one face from a one-component nodal MF with the solution
     /// layout. Only surface storage is retained; input may be destroyed.
@@ -113,6 +119,7 @@ private:
     std::unique_ptr<amrex::iMultiFab> m_internal_mask;
     amrex::Vector<amrex::Long> m_internal_counts;
     amrex::Real m_internal_value = 0;
+    std::unique_ptr<amrex::MultiFab> m_internal_values;
     amrex::GpuArray<amrex::Real, 6> m_a_over_b{};
     amrex::Vector<std::unique_ptr<amrex::MultiFab>> m_sigma;
     // One thin FAB per face/locally-owned box, no full-domain boundary MFs.

@@ -251,21 +251,7 @@ HallElectrostaticMaterial::prepare (
                 rho[lev]->DistributionMap() == m_anode_mask[lev]->DistributionMap(),
             "The volume-anode mask requires rho to share its grid layout and distribution.");
 
-        for (amrex::MFIter mfi(*m_anode_mask[lev], amrex::TilingIfNotGPU());
-             mfi.isValid(); ++mfi)
-        {
-            amrex::Box const& box = mfi.tilebox();
-            auto const mask = m_anode_mask[lev]->const_array(mfi);
-            auto const rho_array = rho[lev]->array(mfi);
-            amrex::ParallelFor(
-                box,
-                [=] AMREX_GPU_DEVICE(int i, int j, int k) noexcept
-                {
-                    if (mask(i, j, k) == 0) {
-                        rho_array(i, j, k) = 0.0;
-                    }
-                });
-        }
+        // Fixed-node sources are masked only in the solver's private RHS.
     }
 }
 

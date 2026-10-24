@@ -26,7 +26,7 @@ public:
 
     [[nodiscard]] bool enabled ();
 
-    /** Clear deposited volume charge in the cached anode. */
+    /** Initialize static material data and validate layouts without modifying rho. */
     void prepare (
         ablastr::fields::MultiLevelScalarField const& rho,
         ablastr::fields::MultiLevelScalarField const& phi,

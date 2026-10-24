@@ -37,7 +37,7 @@ insert.zmin_ring_anode = 1
 
 ## 静电介质与体阳极
 
-该功能只用于 3D Cartesian、lab-frame、MLMG、静态单层或多层网格计算，不支持 EB、IGF、
+当前统一材料后端只用于 3D Cartesian、lab-frame、MLMG、完整静态单层域，不支持 EB、IGF、
 relativistic electrostatic solver 或 Python `poissonsolver` callback。
 
 官方 WarpX/ablastr 求解路径由唯一的编译宏
@@ -46,14 +46,14 @@ relativistic electrostatic solver 或 Python `poissonsolver` callback。
 `#define` 行并重新编译，即可使官方目录编译原有求解路径；
 Insert 下的材料实现仍可保留在源文件列表中。
 
-启用后，`LabFrameExplicitES` 为每层缓存独立的材料 Poisson 算子及其 `MLMG` 实例。
-静态网格、介电常数和阳极 mask 在首次调用时初始化，后续求解复用各层多重网格层级。
-粗到细插值之后、每层实际求解之前都会恢复该层阳极指定电势。
+启用后，`LabFrameExplicitES` 持有统一材料 Poisson 求解器，其缓存按需初始化。
+静态网格、介电常数和阳极 mask 在首次调用时初始化，后续求解复用多重网格层级。
+每步求解都恢复阳极指定电势。局部多层材料求解待 AMR 计划阶段 4–5。
 该路径不支持运行期间 regrid、moving window 或重新分配网格，
 需设置 `warpx.regrid_int = -1`、`algo.load_balance_intervals = 0`。
 
-同一路径还会分配持久的、与 `rho` 同布局的 `wall_charge` 网格源。它初始为零，并在
-多层计算在粒子沉积及 `afterdeposition` 回调之后，将原始壁电荷副本加入本步 `rho`，
+同一路径还会分配持久的、与 `rho` 同布局的 `wall_charge` 网格源，初始为零。
+已实现的多层壁电荷基础设施在粒子沉积及 `afterdeposition` 回调之后，将原始副本加入本步 `rho`，
 再共同执行一次 `SyncRho`、PEC 电荷边界处理及材料约束。
 单层保留原有顺序：粒子 `rho` 完成同步、滤波及 PEC 处理之后，才加入独立同步并
 清除 ghost 的壁电荷副本；单层壁电荷不参与粒子的滤波及 PEC 镜像处理。
@@ -105,11 +105,12 @@ insert.anode_potential_function(x,y,z) = "anode_voltage"
 
 阳极表达式在节点上只解析一次，`anode_implicit_function <= 0` 的节点写入 overset
 mask `0`，其他节点写入 `1`。体阳极必须非空并至少覆盖两个 z 向 nodal 层。
-每次 Poisson 求解前，mask 为零的节点恢复到阳极电势，并清除这些节点上的 `rho`。
+每次 Poisson 求解时，mask 为零的节点恢复到阳极电势；仅清除私有求解 RHS
+上的对应源项，保留沉积场 `rho`。两种材料边界均支持空间变化阳极电压。
 陶瓷和阳极均处于统一场计算域中；粒子吸收、壁面自由电荷和阳极电流仍由独立的
 Insert 模块处理。
 
-计算域外边界的电势和 ghost nodes 沿用求解器自身的边界处理；共置网格的 MLMG
+计算域外边界的电势和 ghost nodes 沿用求解器自身的边界处理。原生共置网格的 MLMG
 路径启用 `setFinalFillBC(true)`。注意 MLMG 不会填 Dirichlet 面的 ghost 节点
 （保持为 0），而 collocated 网格的 `computeE` 在边界节点的中心差分会读到它们；
 因此在未启用材料路径时，求解后由 `Insert::SetPhiGuards()`（`DirichletPhiGuardSet`）
@@ -122,8 +123,12 @@ staggering 从粗层插值并执行同层通信，供粒子 gather 使用。
 
 ### 单层单极 Robin 求解
 
-`insert.electrostatic_boundary` 默认为 `dirichlet`，保持上述材料求解路径。
-选择 `monopole` 后，由独立节点算子施加六面单极 Robin 条件，内部阳极仍固定电势：
+`insert.electrostatic_boundary` 默认为 `dirichlet`。材料启用时，两种模式统一使用
+`cht::MLNodeRobinLaplacian` 和同一缓存生命周期；非材料路径保留原生算子。
+当前两种材料模式均限于完整单层域，局部 AMR 尚未支持。
+Dirichlet 保留原生 `boundary.potential_*` 时间函数及非零值，每步将已设置的节点面值
+复制为 `a=1,b=0` 的 forcing。选择 `monopole` 后，同一算子施加六面单极 Robin 条件，
+内部阳极仍固定电势：
 
 ```text
 max_step = 5
@@ -148,10 +153,10 @@ insert.robin_diagnostics = 1
 
 本阶段支持 3D Cartesian、完整非周期静态域、单层、staggered 或 collocated、
 一阶粒子形状、
-关闭 rho/ECDI 滤波，以及域内统一电压阳极。支持显式 labframe 静电多步 PIC 演化；
+关闭 rho/ECDI 滤波，以及域内固定电势阳极。支持显式 labframe 静电多步 PIC 演化；
 静磁耦合与隐式演化尚未接入此边界模式。沿用材料路径对 EB、Python Poisson 回调、重网格、负载均衡和 moving window
 的限制。`robin_center` 和 `robin_phi_infinity` 支持参数表达式；后者默认 0 V。
-阳极不得接触外域边界，空间变化的阳极电压会明确报错。
+阳极不得接触外域边界；`anode_potential_function(x,y,z)` 可以随空间变化。
 
 入口复用材料 rho/epsilon/mask，但不对外面执行旧 PEC rho 镜像和 Dirichlet phi 设置。
 输出 rho 保持原沉积 `q/ΔV` 约定。在独立 RHS 副本上，对外域面/棱/角节点分别
@@ -159,18 +164,20 @@ insert.robin_diagnostics = 1
 算子自行加入 Robin 源。此过程不改写 rho 或持久壁电荷。壁电荷复合诊断的临时副本
 在 Robin 模式下使用同一控制体积修正；默认 Dirichlet 诊断不变。
 算子与 MLMG 持久缓存，网格、材料/mask 对象或层次选项变化时拒绝继续使用旧缓存。
-粗化上限通过实际 mask 的逐级节点注入确定，并遵守 `self_fields_max_coarsening_level`；
+粗化上限逐级检查阳极 z 厚度、细节点类别、间隙和介质跳变，
+并遵守 `self_fields_max_coarsening_level`；详见 [阶段 3 记录](AMRStage3.md)。
 为确保各 Box 可安全二倍粗化，所选上限可能随 Box 划分而更保守。
 关闭半粗化，仅支持原生 smoother/Krylov 底层求解器。
 
-`robin_diagnostics=1` 输出粗化上限、求解次数、材料层次构建次数和
-`compPhysicalResidual` 的最大范数。它不使用遗漏非齐次 Robin 源的普通残差接口。
+`robin_diagnostics=1` 对两种材料模式都生效，输出实际 MG 层数和固定节点数、
+粗化上限、有效 pre/post、迭代次数、材料层次构建次数、`compPhysicalResidual` 最大范数，
+以及准备/求解/额外残差计算耗时；提高 MLMG/bottom 日志等级以记录 bottom 失败或回退。
 诊断默认关闭，不额外分配残差场。
 
-Robin 面把边界节点保留为未知数，MLMG 默认每层 2 次预/后光滑的收敛率差于
-Dirichlet（真空球体算例约 0.54 对 0.33）。用 `warpx.self_fields_num_pre_smooth`
-和 `warpx.self_fields_num_post_smooth` 提到 4（或更高）可显著改善收敛率和
-求解耗时。
+Robin 面将边界节点保留为未知数。两种模式均通过统一选项入口应用
+`warpx.self_fields_num_pre_smooth` 和 `warpx.self_fields_num_post_smooth`，默认 2/2；
+旧材料 Dirichlet 的硬编码 1/2 已移除。增加扫描次数的收益取决于具体离散问题，
+应以同一固定源、相同容差的迭代数和耗时验证，不能用单个独立算例的收敛因子概括。
 
 六个场边界必须显式设为 `none`；这使通用场处理不再执行 PEC/PMC 镜像或切向场清零，
 真正的静电边界由 Robin 算子负责。粒子吸收/反射仍由 `boundary.particle_*` 独立控制。
