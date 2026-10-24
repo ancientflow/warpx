@@ -12,8 +12,7 @@
 #include "ElectrostaticSolver.H"
 #include "Insert/Config/HallElectrostaticConfig.H"
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-#include "Insert/Fields/MaterialPoissonCache.H"
-#include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
+#include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 
 #include <ablastr/fields/NodalPoissonInitialGuess.H>
@@ -76,8 +75,7 @@ private:
     int m_phi_extrapolation_history_depth = 0;
 
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    Insert::MaterialPoissonCache m_material_solver_cache;
-    Insert::NodeRobinSolver m_robin_solver;
+    Insert::MaterialPoissonSolver m_material_solver;
 #endif
 
 };

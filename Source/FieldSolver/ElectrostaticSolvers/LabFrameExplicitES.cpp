@@ -32,8 +32,14 @@ using namespace amrex;
 void LabFrameExplicitES::InitData() {
     auto & warpx = WarpX::GetInstance();
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    m_robin_solver.readParameters(warpx.Geom(0));
-    if (m_robin_solver.enabled()) {
+    m_material_solver.readParameters(warpx.Geom(0));
+    if (Insert::HallElectrostaticMaterial::GetInstance().enabled()) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1 && warpx.maxLevel() == 0 &&
+            warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
+            "The unified material solver requires one full nonperiodic Cartesian level; "
+            "local fine patches are not yet supported.");
+    }
+    if (m_material_solver.isMonopole()) {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             WarpX::electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame &&
             warpx.evolve_scheme == EvolveScheme::Explicit,
@@ -72,6 +78,16 @@ void LabFrameExplicitES::InitData() {
         "insert.electrostatic_boundary = monopole requires 3D.");
 #endif
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
+#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+    if (Insert::HallElectrostaticMaterial::GetInstance().enabled()) {
+        for (int d = 0; d < 3; ++d) {
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+                m_poisson_boundary_handler->lobc[d] == amrex::LinOpBCType::Dirichlet &&
+                m_poisson_boundary_handler->hibc[d] == amrex::LinOpBCType::Dirichlet,
+                "Material Dirichlet mode requires Dirichlet conditions on all six faces.");
+        }
+    }
+#endif
 }
 
 int LabFrameExplicitES::phiExtrapolationCacheDepth () const
@@ -222,7 +238,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     bool const skip_lev0_coarse_patch = true;
     bool const use_robin =
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-        m_robin_solver.enabled();
+        m_material_solver.isMonopole();
 #else
         false;
 #endif
@@ -341,37 +357,25 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
                 };
         }
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-        if (use_robin) {
+        if (relative_permittivity) {
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0,
-                "Monopole Robin currently supports only single-level solves.");
+                "The unified material solver currently supports one full AMR level; "
+                "local fine patches require the stage 4 operator extension.");
             if (prepare_level) { prepare_level(0, *phi_fp[0]); }
-            m_robin_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
+            m_material_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
                 *anode_masks->at(0), *electrostatic_material.anodePotentials()->at(0),
                 warpx.Geom(0), mlmg_options);
         } else
 #endif
         {
-            ablastr::fields::PoissonLevelSolver level_solver;
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-            if (relative_permittivity) {
-                // The adapter borrows level data and the persistent cache only
-                // for this synchronous call. Native solves allocate no material state.
-                level_solver = Insert::MaterialPoissonSolver(
-                    m_material_solver_cache, *relative_permittivity, *anode_masks,
-                    *electrostatic_material.anodePotentials(), warpx.Geom(),
-                    warpx.boxArray(), warpx.DistributionMap(), WarpX::grid_type,
-                    m_poisson_boundary_handler->lobc, m_poisson_boundary_handler->hibc);
-            }
-#endif
             computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                       Efield_fp, std::nullopt, level_solver,
-                       prepare_level);
+                       Efield_fp, std::nullopt, {}, prepare_level);
         }
 #endif
     }
     Insert::FillPhiGhosts(phi_fp
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-                          , &m_robin_solver
+                          , &m_material_solver
 #endif
     );
     // Keep extrapolation history on the uncorrected Poisson potential.

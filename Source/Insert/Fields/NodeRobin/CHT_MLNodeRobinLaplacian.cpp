@@ -211,6 +211,50 @@ void MLNodeRobinLaplacian::setInternalDirichletValue(Real value)
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_internal_mask && std::isfinite(value),
         "A finite internal potential and an existing electrode mask are required");
     m_internal_value=value;
+    m_internal_values.reset();
+}
+
+void MLNodeRobinLaplacian::setInternalDirichletValues (amrex::MultiFab const& values)
+{
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_internal_mask && values.nComp() == 1 &&
+        values.boxArray() == m_internal_mask->boxArray() &&
+        values.DistributionMap() == m_internal_mask->DistributionMap() &&
+        values.is_finite(0, 1, 0),
+        "Internal voltages must be finite and use the scalar nodal mask layout");
+    if (!m_internal_values) {
+        m_internal_values = std::make_unique<amrex::MultiFab>(
+            values.boxArray(), values.DistributionMap(), 1, 0);
+    }
+    amrex::MultiFab::Copy(*m_internal_values, values, 0, 0, 1, 0);
+    m_internal_values->OverrideSync(m_geom[0][0].periodicity());
+}
+
+void MLNodeRobinLaplacian::validateStaticMaterial (
+    amrex::MultiFab const& sigma, amrex::iMultiFab const& mask) const
+{
+    amrex::ReduceOps<amrex::ReduceOpMax> ops;
+    amrex::ReduceData<int> data(ops);
+    using Tuple = amrex::ReduceData<int>::Type;
+    for (amrex::MFIter mfi(sigma); mfi.isValid(); ++mfi) {
+        auto const s = sigma.const_array(mfi);
+        auto const cached = m_sigma[0]->const_array(mfi);
+        ops.eval(mfi.validbox(), data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple {
+                return {s(i,j,k) != cached(i,j,k)};
+            });
+    }
+    for (amrex::MFIter mfi(mask); mfi.isValid(); ++mfi) {
+        auto const m = mask.const_array(mfi);
+        auto const cached = m_internal_mask->const_array(mfi);
+        ops.eval(mfi.validbox(), data,
+            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple {
+                return {m(i,j,k) != cached(i,j,k)};
+            });
+    }
+    int changed = amrex::get<0>(data.value());
+    amrex::ParallelDescriptor::ReduceIntMax(changed);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(changed == 0,
+        "Static material coefficients or electrode mask changed; rebuild the solver cache");
 }
 
 void MLNodeRobinLaplacian::validate_internal_mask()
@@ -378,32 +422,21 @@ void MLNodeRobinLaplacian::applyBC(int amrlev,int mglev,MultiFab& phi,BCMode bc_
         }
     }
     if (physical && mglev==0 && m_internal_mask) {
-        auto const mask=m_internal_mask->const_arrays();
-        auto const u=phi.arrays();
-        Real const value=m_internal_value;
-        ParallelFor(phi,[=] AMREX_GPU_DEVICE(int box,int i,int j,int k) noexcept {
-            if (!mask[box](i,j,k)) { u[box](i,j,k)=value; }
-        });
-        finish_kernel();
-    }
-    MLNodeLinOp::applyBC(amrlev,mglev,phi,bc_mode,state_mode,skip_fillboundary);
-    // AMReX's nodal ghost fill mirrors only Neumann/inflow faces; Robin faces
-    // need the same even reflection so the boundary-node volume stencil is the
-    // half-volume Laplacian and is identical for solution and correction
-    // operands, regardless of stale gather ghosts left in the solution.
-    auto lobc = LoBC();
-    auto hibc = HiBC();
-    bool any_robin = false;
-    for (int d = 0; d < 3; ++d) {
-        if (lobc[d] == LinOpBCType::Robin) { lobc[d] = LinOpBCType::Neumann; any_robin = true; }
-        if (hibc[d] == LinOpBCType::Robin) { hibc[d] = LinOpBCType::Neumann; any_robin = true; }
-    }
-    if (any_robin) {
-        for (MFIter mfi(phi); mfi.isValid(); ++mfi) {
-            mlndlap_applybc(mfi.validbox(), phi.array(mfi), domain, lobc, hibc);
+        for (amrex::MFIter mfi(phi); mfi.isValid(); ++mfi) {
+            auto const mask = m_internal_mask->const_array(mfi);
+            auto const u = phi.array(mfi);
+            auto const values = m_internal_values
+                ? m_internal_values->const_array(mfi) : amrex::Array4<amrex::Real const>{};
+            amrex::Real const value = m_internal_value;
+            amrex::ParallelFor(mfi.validbox(), [=] AMREX_GPU_DEVICE(int i,int j,int k) noexcept {
+                if (!mask(i,j,k)) { u(i,j,k) = values ? values(i,j,k) : value; }
+            });
         }
         finish_kernel();
     }
+    MLNodeLinOp::applyBC(amrlev,mglev,phi,bc_mode,state_mode,skip_fillboundary);
+    // MLLinOp stores Robin as Neumann in LoBC/HiBC. The base implementation
+    // already mirrors these ghosts and supplies the nodal half-volume weights.
 }
 
 void MLNodeRobinLaplacian::applyInhomogNeumannTerm(int amrlev,MultiFab& rhs) const

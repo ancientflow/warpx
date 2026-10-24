@@ -1,10 +1,12 @@
 # WarpX 静态 AMR 实施计划
 
-> 更新日期：2026-10-22。审查基线：`Amr-support` / `e1d320e5c`。
+> 更新日期：2026-10-24。审查基线：`Amr-support` / `e1d320e5c`。
 > 本版按依赖重排，替代此前的暂停安排及 1P/1A/1B/2A 等阶段编号。
 > 阶段 0 已落实公共接口与材料适配层解耦，并记录版本和模块契约；
-> CLion 编译与原生数值基线尚未完成。阶段 2 的实现已写入工作区，数值验收待完成；
-> 阶段 3 及后续阶段仍为计划，未完成项保持未勾选。
+> 阶段 3 已通过 CLion 编译和原生单层冒烟检查，阶段 0 的完整数值基线仍待完成。
+> 阶段 2 的实现已写入工作区，数值验收待完成；
+> 阶段 3 的统一单层材料后端及单层基线已完成，验证范围与精度限制见 AMRStage3.md；
+> 阶段 4 及后续阶段仍为计划，未完成项保持未勾选。
 > 阶段 1 的公共历史、掩码及原生 AMR 接入已有工作区实现；通用求解接口通过求解前
 > 窄回调直接准备各层 phi，尚待编译运行验收。本次接口调整不编写测试内容。
 
@@ -161,12 +163,16 @@ MCC 处理自己的背景密度和粒子数据，不直接改写泊松 `rho_fp/r
 
 ### 阶段 3：单层材料后端统一与基线
 
-- [ ] 核对单层 Dirichlet/Robin 的源、阳极、物理残差与取场链路；消除无效修复假设。
-- [ ] 建立统一材料入口和缓存，Dirichlet/monopole 都构造自定义算子；保留非材料原生路径。
-- [ ] 将原生第一类面电势转换为自定义边界 forcing，保留非零、空间变化和随时间更新的语义。
-- [ ] 扩展内部阳极固定电势场接口，保留原材料空间变化阳极电压能力及齐次修正约束。
-- [ ] 通过统一选项入口应用显式 pre/post，记录有效值，并清理旧材料后端分支。
-- [ ] 检查实际 MG 层次、阳极分辨率及 bottom solver 状态；建立同一固定源的耗时基线。
+- [x] 核对单层 Dirichlet/Robin 的源、阳极、物理残差与取场链路；消除无效修复假设。
+- [x] 建立统一材料入口和缓存，Dirichlet/monopole 都构造自定义算子；保留非材料原生路径。
+- [x] 将原生第一类面电势转换为自定义边界 forcing，保留非零、空间变化和随时间更新的语义。
+- [x] 扩展内部阳极固定电势场接口，保留原材料空间变化阳极电压能力及齐次修正约束。
+- [x] 通过统一选项入口应用显式 pre/post，记录有效值，并清理旧材料后端分支。
+- [x] 检查实际 MG 层次、阳极分辨率及 bottom solver 状态；建立同一固定源的耗时基线。
+
+实现与验证记录见 [AMRStage3.md](Source/Insert/Docs/AMRStage3.md)。
+已完成 CLion `app_3d` 构建及 9 项单层运行检查，记录了同一固定源的迭代、耗时与缓存复用。
+验收容差为相对/绝对 `1e-10`；额外 `1e-12` 绝对残差压力检查未通过，失败及范围限制已记录。
 
 ### 阶段 4：自定义材料算子的局部覆盖
 
@@ -643,6 +649,9 @@ coarse-aux 值及其更新时间，确认原生局部细区基线正常。若证
 
 ## 附录 A：当前代码状态与审查依据
 
+本附录保留阶段 3 实施前的审查基线；统一后端的当前状态见
+[AMRStage3.md](Source/Insert/Docs/AMRStage3.md)。
+
 ### A.1 当前实现基础
 
 - 当前主算例是 `Script/PHT/3d_hall_dielectric_slot`：`labframe`、MLMG、staggered、
@@ -701,8 +710,8 @@ coarse-aux 值及其更新时间，确认原生局部细区基线正常。若证
   全层时间外推、源装配、求解分派与历史提交。
 - [PoissonSolver.H](Source/ablastr/fields/PoissonSolver.H)：
   全场粗到细插值、原生逐层缓存与平滑参数覆盖。
-- [NodeRobinSolver.cpp](Source/Insert/Fields/NodeRobin/NodeRobinSolver.cpp)：
-  单层 Robin 缓存、物理源归一化与粗化上限。
+- [MaterialPoissonSolver.cpp](Source/Insert/Fields/MaterialPoissonSolver.cpp)：
+  阶段 3 已将旧 NodeRobinSolver 迁入此统一入口，处理两种边界的缓存与私有源。
 - [CHT_MLNodeRobinLaplacian.cpp](Source/Insert/Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp)：
   单域约束、边界算子、平滑、限制和插值。
 - [HallElectrostaticMaterial.cpp](Source/Insert/Fields/HallElectrostaticMaterial.cpp) 与

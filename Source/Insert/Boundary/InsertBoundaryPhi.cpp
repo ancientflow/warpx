@@ -6,7 +6,7 @@
 #include "Insert/Core/WarpXInsert.h"
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
 #include "Insert/Fields/HallElectrostaticMaterial.H"
-#include "Insert/Fields/NodeRobin/NodeRobinSolver.H"
+#include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/TextMsg.H"
@@ -33,18 +33,18 @@ namespace Insert {
 
 void FillPhiGhosts (
     ablastr::fields::MultiLevelScalarField const& phi,
-    NodeRobinSolver* robin_solver)
+    MaterialPoissonSolver* material_solver)
 {
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    if (robin_solver && robin_solver->enabled()) {
+    if (material_solver && material_solver->isMonopole()) {
         phi[0]->FillBoundary();
         if (WarpX::grid_type == ablastr::utils::enums::GridType::Collocated) {
-            robin_solver->fillPhiGhosts(*phi[0], WarpX::GetInstance().Geom(0));
+            material_solver->fillPhiGhosts(*phi[0], WarpX::GetInstance().Geom(0));
         }
         return;
     }
 #else
-    amrex::ignore_unused(robin_solver);
+    amrex::ignore_unused(material_solver);
 #endif
     SetPhiGuards();
 #ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
