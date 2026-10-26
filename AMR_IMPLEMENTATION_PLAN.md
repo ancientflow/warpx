@@ -7,7 +7,8 @@
 > 阶段 2 的实现已写入工作区，数值验收待完成；
 > 阶段 3 的统一单层材料后端及单层基线已完成，验证范围与精度限制见 AMRStage3.md；
 > 阶段 4 已完成 Dirichlet 局部覆盖及两层/三级运行检查，记录见 AMRStage4.md；
-> 阶段 5 及后续阶段仍为计划，未完成项保持未勾选。
+> 阶段 5 已完成多层 Robin、历史和取场/空间精度检查，记录见 AMRStage5.md；
+> 阶段 6 及后续阶段仍为计划，未完成项保持未勾选。
 > 阶段 1 的公共历史、掩码及原生 AMR 接入已有工作区实现；通用求解接口通过求解前
 > 窄回调直接准备各层 phi，尚待编译运行验收。本次接口调整不编写测试内容。
 
@@ -188,19 +189,24 @@ MCC 处理自己的背景密度和粒子数据，不直接改写泊松 `rho_fp/r
 实现与验证记录见 [AMRStage4.md](Source/Insert/Docs/AMRStage4.md)。
 CLion `app_3d` 构建、两层/三级、无阳极细区、双 MPI rank、单层回归及非法接口检查已完成。
 固定节点误差为 0，三级 CUDA memcheck 为 0 errors；约 5 V 三级重复求解的绝对残差
-停滞已单独记录，未修改容差或计为通过。多层 monopole 仍显式拒绝，留待阶段 5。
+停滞已单独记录，未修改容差或计为通过。阶段 4 的单层 monopole 限制已由阶段 5 解除。
 
 ### 阶段 5：多层 Robin 外边界与全链路取场
 
-- [ ] 共享协调器使用统一自定义后端：Robin 仅施加于完整域 level 0 的外边界，
+- [x] 共享协调器使用统一自定义后端：Robin 仅施加于完整域 level 0 的外边界，
   内部各层使用已扩展的自定义局部算子；保持默认 Dirichlet 及原生用户边界接口。
-- [ ] 复用阶段 1 的历史与层级传递，核对启用材料前后公共模块的数据语义一致。
-- [ ] 更新初始化限制、边界 handler、必要的私有 RHS 归一化及每层缓存；
+- [x] 复用阶段 1 的历史与层级传递，核对启用材料前后公共模块的数据语义一致。
+- [x] 更新初始化限制、边界 handler、必要的私有 RHS 归一化及每层缓存；
   必需的物理面 ghost 按边界模型处理，粗细接口沿用原生处理路径。
-- [ ] 验证两种外边界均支持逐层 0/1/2 阶历史、无历史回退及正确的固定电势恢复。
-- [ ] 验证 staggered/collocated 的 phi/E ghost、gather、外加场及 aux 更新，
+- [x] 验证两种外边界均支持逐层 0/1/2 阶历史、无历史回退及正确的固定电势恢复。
+- [x] 验证 staggered/collocated 的 phi/E ghost、gather、外加场及 aux 更新，
   检查无阳极细区与不允许的外域接触细区。
-- [ ] 完成第 4 节单向求解精度检查，随后进入阶段 6 的路径一致性与自力验收。
+- [x] 完成第 4 节单向求解精度检查，随后进入阶段 6 的路径一致性与自力验收。
+
+实现和验证见 [AMRStage5.md](Source/Insert/Docs/AMRStage5.md)。
+两种边界、两种网格和 0/1/2 阶历史共 12 组三级运行通过；完成均匀细网格参考下的
+分区 phi/E 误差与粗层加密检查。取场探针复现并修复了公共静电 cax 未刷新的原生问题，
+缓冲区设置及粒子分区保持原有路径。阶段 6 仍需系统自力、轨迹和缓冲宽度扫描。
 
 ### 阶段 6：原生路径一致性与 AMR 自力验收
 
@@ -538,7 +544,7 @@ Robin 物理面必需的边界处理只在 level 0 上生效。
 [LabFrameExplicitES.cpp](Source/FieldSolver/ElectrostaticSolvers/LabFrameExplicitES.cpp) 和
 [ElectrostaticMaterial.cpp](Source/Insert/Fields/ElectrostaticMaterial.cpp)。
 
-**必须单独验证的原生基线疑点**：当前 aux helper 在电磁分支中更新 cax，静电分支
+**原生基线疑点（阶段 5 已复现并修复 cax 刷新，见 AMRStage5.md）**：当前 aux helper 在电磁分支中更新 cax，静电分支
 只复制 fp→aux 或将 staggered fp 转到 nodal aux；源码中未找到静电分支对应的 cax
 更新。但 buffer 分区后的粒子可能从已分配的 `Efield_cax/Bfield_cax` 采集。
 这些 helper 与本地 development 相同，不能归因于阶段 0 或材料新增代码；

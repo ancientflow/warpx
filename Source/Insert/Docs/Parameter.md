@@ -52,12 +52,12 @@ Insert 下的材料实现仍可保留在源文件列表中。
 
 启用后，`LabFrameExplicitES` 持有统一材料 Poisson 求解器，其缓存按需初始化。
 静态网格、介电常数和阳极 mask 在首次调用时初始化，后续求解复用多重网格层级。
-每步求解都恢复阳极指定电势。Dirichlet 已支持局部多层网格，每层持有独立算子和 MLMG；
-monopole 仍限完整单层域。细层必须严格位于物理域内部，各方向细化比均为 2。
+每步求解都恢复阳极指定电势。Dirichlet 和 monopole 均支持逐层静态 AMR，
+每层持有独立算子和 MLMG。细层必须严格位于物理域内部，各方向细化比均为 2。
 不检查阳极与粗细接口之间的模板缓冲，也不以此限制 MG 粗化。
 局部细层可以不含阳极，此时只使用物理/覆盖约束，不人为添加固定节点。
 同层 Box 接缝仍由邻接网格提供数据，不作为粗细固定边界。
-详细实现、运行记录和精度限制见 [阶段 4 记录](AMRStage4.md)。
+详细实现、运行记录和精度限制见 [阶段 4 记录](AMRStage4.md) 和 [阶段 5 记录](AMRStage5.md)。
 该路径不支持运行期间 regrid、moving window 或重新分配网格，
 需设置 `warpx.regrid_int = -1`、`algo.load_balance_intervals = 0`。
 
@@ -130,11 +130,12 @@ Insert 模块处理。
 staggering 从粗层插值并执行同层通信，供粒子 gather 使用。
 内部体阳极的固定电势仍由上述 overset mask 和 `anode_potential_function` 提供。
 
-### 单层单极 Robin 求解
+### 单极 Robin 与多层材料求解
 
 `insert.electrostatic_boundary` 默认为 `dirichlet`。材料启用时，两种模式统一使用
 `Insert::Poisson::MLNodeRobinLaplacian` 和同一缓存生命周期；非材料路径保留原生算子。
-Dirichlet 已接入公共逐层求解和粗到细插值；monopole 仍限完整单层域，多层支持留待阶段 5。
+两种边界都接入公共逐层求解、粗到细插值和本层历史。monopole 仅施加于完整物理域
+level 0，内部细层采用粗解插值给出的固定接口电势；不把细区边界当作 Robin 面。
 Dirichlet 保留原生 `boundary.potential_*` 时间函数及非零值，每步将已设置的节点面值
 复制为 `a=1,b=0` 的 forcing。选择 `monopole` 后，同一算子施加六面单极 Robin 条件，
 内部阳极仍固定电势：
@@ -160,7 +161,7 @@ insert.robin_phi_infinity = 0
 insert.robin_diagnostics = 1
 ```
 
-本阶段支持 3D Cartesian、完整非周期静态域、单层、staggered 或 collocated、
+本阶段支持 3D Cartesian、非周期静态域及严格位于域内的局部细层、staggered 或 collocated、
 一阶粒子形状、
 关闭 rho/ECDI 滤波，以及域内固定电势阳极。支持显式 labframe 静电多步 PIC 演化；
 静磁耦合与隐式演化尚未接入此边界模式。沿用材料路径对 EB、Python Poisson 回调、重网格、负载均衡和 moving window
@@ -169,7 +170,8 @@ insert.robin_diagnostics = 1
 
 入口复用材料 rho/epsilon/mask，但不对外面执行旧 PEC rho 镜像和 Dirichlet phi 设置。
 输出 rho 保持原沉积 `q/ΔV` 约定。在独立 RHS 副本上，对外域面/棱/角节点分别
-乘 2/4/8，匹配节点算子的半/四分之一/八分之一控制体积，再乘 `-1/epsilon0`；
+乘 2/4/8，匹配节点算子的半/四分之一/八分之一控制体积；该权重仅作用于 level 0，
+与公共调度已执行的一次 `-1/epsilon0` 单位转换相乘；
 算子自行加入 Robin 源。此过程不改写 rho 或持久壁电荷。壁电荷复合诊断的临时副本
 在 Robin 模式下使用同一控制体积修正；默认 Dirichlet 诊断不变。
 算子与 MLMG 持久缓存，网格、材料/mask 对象或层次选项变化时拒绝继续使用旧缓存。
@@ -181,8 +183,13 @@ insert.robin_diagnostics = 1
 `robin_diagnostics=1` 对两种材料模式都生效，输出实际 MG 层数和固定节点数、
 粗化上限、有效 pre/post、迭代次数、材料层次构建次数、`compPhysicalResidual` 最大范数，
 以及准备/求解/额外残差计算耗时；提高 MLMG/bottom 日志等级以记录 bottom 失败或回退。
-Dirichlet 多层诊断另检查固定节点误差（必须为零）并统计 Box 边界上的未知节点条目；
+两种边界的多层诊断均检查固定节点误差（必须为零）并统计 Box 边界上的未知节点条目；
 条目统计包含同层共享节点副本。诊断默认关闭，不额外分配残差场。
+
+多层验证及公共静电 coarse-aux 修复见 [阶段 5 记录](AMRStage5.md)。
+`self_fields_phi_extrapolation_order` 只指定最高阶数；要实际启用线性/二阶候选，
+还需设置非零的 `self_fields_phi_extrapolation_alpha` / `self_fields_phi_extrapolation_beta`。
+验证使用两者均为 1，历史不足时自动降阶；默认两者均为 0，保持上一解初值。
 
 Robin 面将边界节点保留为未知数。两种模式均通过统一选项入口应用
 `warpx.self_fields_num_pre_smooth` 和 `warpx.self_fields_num_post_smooth`，默认 2/2；

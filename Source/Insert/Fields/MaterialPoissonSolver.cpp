@@ -4,8 +4,6 @@
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
 
-#include <ablastr/constant.H>
-
 #include <AMReX_MLMG.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_ParallelDescriptor.H>
@@ -174,20 +172,6 @@ void MaterialPoissonSolver::readParameters (amrex::Geometry const& geom)
         "insert.robin_phi_infinity must be finite.");
 }
 
-void MaterialPoissonSolver::solve (
-    amrex::MultiFab const& rho, amrex::MultiFab& phi,
-    amrex::MultiFab const& epsilon, amrex::iMultiFab const& mask,
-    amrex::MultiFab const& voltage, amrex::Geometry const& geom,
-    ablastr::fields::MLMGOptions const& options)
-{
-    amrex::MultiFab rhs(rho.boxArray(), rho.DistributionMap(), 1, 0);
-    amrex::MultiFab::Copy(rhs, rho, 0, 0, 1, 0);
-    if (m_monopole) { normalizeBoundarySource(rhs, geom); }
-    rhs.mult(-1.0/ablastr::constant::SI::epsilon_0);
-    solveLevel(0, rhs, phi, epsilon, mask, voltage, geom, options,
-               options.absolute_tolerance);
-}
-
 amrex::MLMG& MaterialPoissonSolver::solveLevel (
     int lev, amrex::MultiFab const& rho, amrex::MultiFab& phi,
     amrex::MultiFab const& epsilon, amrex::iMultiFab const& mask,
@@ -195,8 +179,8 @@ amrex::MLMG& MaterialPoissonSolver::solveLevel (
     ablastr::fields::MLMGOptions const& options, amrex::Real absolute_tolerance)
 {
     auto const prepare_start = amrex::second();
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(lev >= 0 && (!m_monopole || lev == 0),
-        "Multi-level monopole material solves are not supported yet.");
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(lev >= 0, "Invalid material AMR level.");
+    bool const robin_level = m_monopole && lev == 0;
     if (static_cast<int>(m_caches.size()) <= lev) { m_caches.resize(lev+1); }
     auto& cache = m_caches[lev];
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(geom.Coord() == 0 && !geom.isAnyPeriodic(),
@@ -238,7 +222,7 @@ amrex::MLMG& MaterialPoissonSolver::solveLevel (
             amrex::Vector<amrex::BoxArray>{epsilon.boxArray()},
             amrex::Vector<amrex::DistributionMapping>{epsilon.DistributionMap()}, info);
         c.op->setSigma(0, epsilon);
-        if (m_monopole) {
+        if (robin_level) {
             c.op->setMonopoleBC(m_center, m_phi_infinity);
         } else {
             Insert::Poisson::MLNodeRobinLaplacian::Faces faces;
@@ -270,13 +254,16 @@ amrex::MLMG& MaterialPoissonSolver::solveLevel (
     }
     c.op->validateStaticMaterial(epsilon, mask);
     c.op->setInternalDirichletValues(voltage);
-    if (!m_monopole) {
+    if (!robin_level) {
         // setPhiBC has evaluated the current boundary values. Preserve its
         // edge/corner precedence and any spatially varying nodal face data.
         phi.OverrideSync(geom.periodicity());
         for (int face = 0; face < 6; ++face) { c.op->setRobinForcing(face, phi); }
     }
     amrex::MultiFab::Copy(*c.rhs, rho, 0, 0, 1, 0);
+    // The common hierarchy has already scaled by -1/epsilon0. Dual-volume
+    // normalization is dimensionless and applies only to physical Robin nodes.
+    if (robin_level) { normalizeBoundarySource(*c.rhs, geom); }
     // Coverage, physical Dirichlet faces and electrodes all constrain only the
     // private solve RHS. The public deposition remains byte-for-byte unchanged.
     c.op->prepareForSolve();
@@ -307,7 +294,7 @@ amrex::MLMG& MaterialPoissonSolver::solveLevel (
     ++c.solves;
     if (m_diagnostics || options.verbosity > 0) {
         amrex::Print() << "Material Poisson level " << lev << " ("
-                       << (m_monopole ? "monopole" : "dirichlet") << ") solve " << c.solves
+                       << (robin_level ? "monopole" : "dirichlet") << ") solve " << c.solves
                        << ": MG levels = " << c.op->NMGLevels(0)
                        << ", coarsening cap = " << c.coarsening_cap
                        << ", pre/post = " << options.num_pre_smooth
