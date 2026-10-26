@@ -3,7 +3,7 @@
 namespace Insert {
 
 void Benchmark2DParticleInjection ();
-void InitializeHallInjection ();
-void InjectHallParticles ();
+void InitializeParticleInjection ();
+void InjectConfiguredParticles ();
 
 } // namespace Insert

@@ -306,7 +306,17 @@ computePhi (
 #endif
         // Use the Multigrid (MLMG) solver if selected or on refined patches
         // but first scale rho appropriately
-        rho[lev]->mult(-1._rt / ablastr::constant::SI::epsilon_0);
+        // Custom backends may mask fixed-node sources. Give them a private,
+        // scaled RHS so neither scaling roundoff nor masking changes deposition.
+        std::unique_ptr<amrex::MultiFab> custom_rhs;
+        auto* rhs = rho[lev];
+        if (level_solver) {
+            custom_rhs = std::make_unique<amrex::MultiFab>(
+                rhs->boxArray(), rhs->DistributionMap(), rhs->nComp(), 0);
+            amrex::MultiFab::Copy(*custom_rhs, *rhs, 0, 0, rhs->nComp(), 0);
+            rhs = custom_rhs.get();
+        }
+        rhs->mult(-1._rt / ablastr::constant::SI::epsilon_0);
 
 #ifdef WARPX_DIM_RZ
         constexpr bool is_rz = true;
@@ -341,7 +351,7 @@ computePhi (
         if (prepare_level) { prepare_level(lev, *phi[lev]); }
         if (level_solver) {
             selected_mlmg = &level_solver(
-                lev, info, *phi[lev], *rho[lev], mlmg_options, absolute_tolerance);
+                lev, info, *phi[lev], *rhs, mlmg_options, absolute_tolerance);
         } else {
             if (eb_enabled || is_rz) {
                 // In the presence of EB or RZ: the solver assumes that the beam is
@@ -480,7 +490,9 @@ computePhi (
                 post_phi_calculation.value()(mlmg, lev);
             }
         }
-        rho[lev]->mult(-ablastr::constant::SI::epsilon_0);  // Multiply rho by epsilon again
+        if (!level_solver) {
+            rho[lev]->mult(-ablastr::constant::SI::epsilon_0);
+        }
 
     } // loop over lev(els)
 } // computePhi

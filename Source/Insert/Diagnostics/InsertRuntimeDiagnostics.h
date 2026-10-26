@@ -11,6 +11,6 @@ void ThrustCalc ();
 void BeamDivergenceCalc ();
 void IEDFCalc ();
 void ZmaxRadialExitStatsCalc ();
-void ClearHallBoundaryParticleCache ();
+void ClearBoundaryParticleCache ();
 
 } // namespace Insert

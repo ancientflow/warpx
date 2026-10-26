@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Insert/Injection/HallCoordinateTransform.h"
-#include "Insert/Injection/HallDistribution1D.h"
-#include "Insert/Injection/HallPositionSampler.h"
+#include "Insert/Injection/CoordinateTransform.h"
+#include "Insert/Injection/Distribution1D.h"
+#include "Insert/Injection/PositionSampler.h"
 
 #include <AMReX_ParmParse.H>
 #include <AMReX_Parser.H>
@@ -20,7 +20,7 @@ namespace Insert {
  *  functions of the local radius r about the injection axis, e.g.
  *  reconstructed from exit-plane radial statistics. Only valid for the
  *  gaussian and positive_gaussian distribution types. */
-struct HallRadialGaussianOverride
+struct RadialGaussianOverride
 {
     bool positive = false; // truncate to v >= 0 by rejection sampling
     amrex::ParticleReal mean_const = amrex::ParticleReal(0.0);
@@ -32,19 +32,19 @@ struct HallRadialGaussianOverride
     std::optional<amrex::ParserExecutor<1>> mean_of_r;
 };
 
-class HallCoordinateDistribution : public HallPositionSampler
+class CoordinateDistribution : public PositionSampler
 {
 public:
-    HallCoordinateDistribution (
-        HallCoordinateSystem coordinate_system,
-        std::unique_ptr<HallDistribution1D> q0,
-        std::unique_ptr<HallDistribution1D> q1,
-        std::unique_ptr<HallDistribution1D> q2,
-        HallRotatingAxisFrame rotating_axis_frame = {},
-        std::array<std::optional<HallRadialGaussianOverride>, 3>
+    CoordinateDistribution (
+        CoordinateSystem coordinate_system,
+        std::unique_ptr<Distribution1D> q0,
+        std::unique_ptr<Distribution1D> q1,
+        std::unique_ptr<Distribution1D> q2,
+        RotatingAxisFrame rotating_axis_frame = {},
+        std::array<std::optional<RadialGaussianOverride>, 3>
             radial_velocity = {});
 
-    [[nodiscard]] HallCoordinateSystem coordinateSystem () const noexcept;
+    [[nodiscard]] CoordinateSystem coordinateSystem () const noexcept;
 
     [[nodiscard]] amrex::XDim3
     sampleCoordinates (amrex::RandomEngine const& engine) const;
@@ -63,20 +63,20 @@ private:
         amrex::RandomEngine const& engine,
         EmissionSample const& position) const;
 
-    HallCoordinateSystem m_coordinate_system;
-    std::unique_ptr<HallDistribution1D> m_q0;
-    std::unique_ptr<HallDistribution1D> m_q1;
-    std::unique_ptr<HallDistribution1D> m_q2;
-    HallRotatingAxisFrame m_rotating_axis_frame;
-    std::array<std::optional<HallRadialGaussianOverride>, 3>
+    CoordinateSystem m_coordinate_system;
+    std::unique_ptr<Distribution1D> m_q0;
+    std::unique_ptr<Distribution1D> m_q1;
+    std::unique_ptr<Distribution1D> m_q2;
+    RotatingAxisFrame m_rotating_axis_frame;
+    std::array<std::optional<RadialGaussianOverride>, 3>
         m_radial_velocity;
     bool m_has_radial_velocity = false;
 };
 
-std::unique_ptr<HallCoordinateDistribution>
-MakeHallCoordinateDistribution (
+std::unique_ptr<CoordinateDistribution>
+MakeCoordinateDistribution (
     amrex::ParmParse const& pp, std::string const& prefix,
-    HallCoordinateSpace space,
+    CoordinateSpace space,
     std::string const& allowed_coupled_distribution = "");
 
 } // namespace Insert

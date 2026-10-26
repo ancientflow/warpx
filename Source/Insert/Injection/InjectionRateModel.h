@@ -8,19 +8,19 @@
 
 namespace Insert {
 
-class HallRateModel
+class InjectionRateModel
 {
 public:
-    virtual ~HallRateModel () = default;
+    virtual ~InjectionRateModel () = default;
 
     [[nodiscard]] virtual amrex::Real
     expectedMacroParticles (amrex::Real dt) const = 0;
 };
 
-class HallFixedCountRateModel final : public HallRateModel
+class FixedCountRateModel final : public InjectionRateModel
 {
 public:
-    explicit HallFixedCountRateModel (amrex::Real count);
+    explicit FixedCountRateModel (amrex::Real count);
 
     [[nodiscard]] amrex::Real
     expectedMacroParticles (amrex::Real dt) const override;
@@ -29,10 +29,10 @@ private:
     amrex::Real m_count;
 };
 
-class HallDensityVolumeRateModel final : public HallRateModel
+class DensityVolumeRateModel final : public InjectionRateModel
 {
 public:
-    HallDensityVolumeRateModel (
+    DensityVolumeRateModel (
         amrex::Real density, amrex::Real volume, amrex::Real macro_weight);
 
     [[nodiscard]] amrex::Real
@@ -44,10 +44,10 @@ private:
     amrex::Real m_macro_weight;
 };
 
-class HallCurrentRateModel final : public HallRateModel
+class CurrentRateModel final : public InjectionRateModel
 {
 public:
-    HallCurrentRateModel (
+    CurrentRateModel (
         amrex::Real current, amrex::Real macro_weight,
         amrex::Real l_factor);
 
@@ -60,10 +60,10 @@ private:
     amrex::Real m_l_factor;
 };
 
-class HallMassFlowRateModel final : public HallRateModel
+class MassFlowRateModel final : public InjectionRateModel
 {
 public:
-    HallMassFlowRateModel (
+    MassFlowRateModel (
         amrex::Real mass_flow, amrex::Real particle_mass,
         amrex::Real macro_weight, amrex::Real l_factor);
 
@@ -77,7 +77,7 @@ private:
     amrex::Real m_l_factor;
 };
 
-class HallFractionalParticleAccumulator
+class FractionalParticleAccumulator
 {
 public:
     [[nodiscard]] int
@@ -89,8 +89,8 @@ private:
     amrex::Real m_remainder = 0.0;
 };
 
-std::unique_ptr<HallRateModel>
-MakeHallRateModel (
+std::unique_ptr<InjectionRateModel>
+MakeInjectionRateModel (
     amrex::ParmParse const& pp, std::string const& prefix);
 
 } // namespace Insert

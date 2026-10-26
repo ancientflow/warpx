@@ -1,14 +1,14 @@
-#ifndef CHT_ML_NODE_ROBIN_LAPLACIAN_H_
-#define CHT_ML_NODE_ROBIN_LAPLACIAN_H_
+#ifndef WARPX_INSERT_POISSON_ML_NODE_ROBIN_LAPLACIAN_H_
+#define WARPX_INSERT_POISSON_ML_NODE_ROBIN_LAPLACIAN_H_
 
 #include <AMReX_MLNodeLinOp.H>
-#include "CHT_MonopoleBoundary.H"
+#include "MonopoleBoundary.H"
 #include <array>
 #include <memory>
 
-namespace cht {
+namespace Insert::Poisson {
 
-/** Full-domain div(sigma grad(phi)), with a*phi+b*dphi/dn=f on six faces.
+/** div(sigma grad(phi)), with a*phi+b*dphi/dn=f on physical domain faces.
  *
  * Direct AMReX nodal-base implementation, usable with amrex::MLMG. Currently
  * supports one AMR level, any number of factor-two MG levels, Cartesian 3D,
@@ -24,6 +24,9 @@ namespace cht {
  * surface quadrature and the inherited Neumann half-volume node weights.
  * Internal fixed-potential nodes use AMReX's overset mask. No EB geometry,
  * AMReX patches, or second AMReX library is required.
+ * Local patches retain the full physical Geometry. AMReX coverage masks fix
+ * their coarse/fine interface nodes to the caller's interpolated phi values;
+ * shared Box seams stay unknown.
  */
 class MLNodeRobinLaplacian final : public amrex::MLNodeLinOp
 {
@@ -40,7 +43,7 @@ public:
                         const amrex::Vector<amrex::DistributionMapping>& dmap,
                         const amrex::LPInfo& info = amrex::LPInfo());
 
-    std::string name() const override { return "cht::MLNodeRobinLaplacian"; }
+    std::string name() const override { return "Insert::Poisson::MLNodeRobinLaplacian"; }
     void setSigma(int amrlev, const amrex::MultiFab& sigma);
     void setSigma(amrex::Real sigma);
 
@@ -63,6 +66,8 @@ public:
     void validateStaticMaterial (amrex::MultiFab const& sigma,
                                  amrex::iMultiFab const& mask) const;
     amrex::Long internalDirichletNodes(int mglev) const;
+    amrex::iMultiFab const& dirichletMask (int mglev = 0) const
+    { return *m_dirichlet_mask[0][mglev]; }
     /// Copy f on one face from a one-component nodal MF with the solution
     /// layout. Only surface storage is retained; input may be destroyed.
     /// For b=0 this is a*phi, not phi. Adjacent Dirichlet values and copies of
@@ -132,5 +137,5 @@ private:
     mutable bool m_boundary_values_dirty = true;
     int m_coefficient_builds = 0;
 };
-} // namespace cht
+} // namespace Insert::Poisson
 #endif

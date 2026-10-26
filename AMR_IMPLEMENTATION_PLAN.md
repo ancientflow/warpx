@@ -6,7 +6,8 @@
 > 阶段 3 已通过 CLion 编译和原生单层冒烟检查，阶段 0 的完整数值基线仍待完成。
 > 阶段 2 的实现已写入工作区，数值验收待完成；
 > 阶段 3 的统一单层材料后端及单层基线已完成，验证范围与精度限制见 AMRStage3.md；
-> 阶段 4 及后续阶段仍为计划，未完成项保持未勾选。
+> 阶段 4 已完成 Dirichlet 局部覆盖及两层/三级运行检查，记录见 AMRStage4.md；
+> 阶段 5 及后续阶段仍为计划，未完成项保持未勾选。
 > 阶段 1 的公共历史、掩码及原生 AMR 接入已有工作区实现；通用求解接口通过求解前
 > 窄回调直接准备各层 phi，尚待编译运行验收。本次接口调整不编写测试内容。
 
@@ -16,7 +17,7 @@
 
 - 引入两层静态 MR：level 0 覆盖扩展域和羽流，level 1 保留通道附近细网格。
 - 碰撞、时间外推、材料求解独立实现和验收；原生非材料路径可复用外推与多层 MCC。
-- 材料路径统一使用自实现 `cht::MLNodeRobinLaplacian`，支持最外物理面的
+- 材料路径统一使用自实现 `Insert::Poisson::MLNodeRobinLaplacian`，支持最外物理面的
   Dirichlet 和单极 Robin；第一类沿用 WarpX 参数接口，非材料路径保留原生后端。
 - 每层保留本层电势历史；沿用原生粗插值写入细层 phi，随后在本层求解前仅对
   有效未知节点外推，保留当前粗解确定的接口值及必要 ghost。
@@ -176,13 +177,18 @@ MCC 处理自己的背景密度和粒子数据，不直接改写泊松 `rho_fp/r
 
 ### 阶段 4：自定义材料算子的局部覆盖
 
-- [ ] 扩展自定义算子的局部覆盖支持，完成覆盖/固定掩码、系数 ghost、MG 层次、
+- [x] 扩展自定义算子的局部覆盖支持，完成覆盖/固定掩码、系数 ghost、MG 层次、
   传递算子与奇异性检查；每个实例仍只接收一个 AMR level。
-- [ ] 将材料的额外阳极约束、物理残差和 ghost 操作接到公共层级契约，
+- [x] 将材料的额外阳极约束、物理残差和 ghost 操作接到公共层级契约，
   不复制一套材料专用时间历史或粗细插值流程。
-- [ ] 将材料对固定节点的源处理限制到私有求解 RHS；逐项审查已有 phi/E ghost 扩展，
+- [x] 将材料对固定节点的源处理限制到私有求解 RHS；逐项审查已有 phi/E ghost 扩展，
   禁止为替换泊松算子另写电场插值、aux/cax 或粒子 gather/deposition 路径。
-- [ ] 先用自定义算子的 Dirichlet 模式完成两层及三级小问题，确认同层 Box 接缝不被当作固定接口。
+- [x] 先用自定义算子的 Dirichlet 模式完成两层及三级小问题，确认同层 Box 接缝不被当作固定接口。
+
+实现与验证记录见 [AMRStage4.md](Source/Insert/Docs/AMRStage4.md)。
+CLion `app_3d` 构建、两层/三级、无阳极细区、双 MPI rank、单层回归及非法接口检查已完成。
+固定节点误差为 0，三级 CUDA memcheck 为 0 errors；约 5 V 三级重复求解的绝对残差
+停滞已单独记录，未修改容差或计为通过。多层 monopole 仍显式拒绝，留待阶段 5。
 
 ### 阶段 5：多层 Robin 外边界与全链路取场
 
@@ -260,7 +266,7 @@ MLMG 的解场 `phi` 同时承载迭代初值与求解结果。历史组件和�
 单层求解职责，原生与材料后端均直接消费已经准备好的 `phi`。
 
 - 从 `LabFrameExplicitES` 提取独立的 phi 历史组件，放在通用静电/fields 层，
-  不包含 Insert 材料头文件，不受 `WARPX_USE_HALL_ELECTROSTATIC_MATERIALS` 控制。
+  不包含 Insert 材料头文件，不受 `WARPX_USE_ELECTROSTATIC_MATERIALS` 控制。
   原生 lab-frame MLMG 和材料 MLMG 都能使用逐层历史，并分别恢复自身约束。
 - 公共粗细插值/接口传递保留普通 MultiFab、Geometry 和细化率接口，
   将当前 `PoissonSolver.H` 对 `Insert::MaterialPoissonCache` 等具体类型的依赖
@@ -315,7 +321,8 @@ MLMG 的解场 `phi` 同时承载迭代初值与求解结果。历史组件和�
    level 0 无历史时使用合法的既有初值。
 4. 完成共享节点同步和所需 ghost 填充，核对接口仍等于当前粗解的插值，
    固定电势仍等于当前指定值，再计算候选残差或调用该层求解器。
-   初版阳极和其必要模板缓冲位于细区内部，避免阳极约束与接口值冲突。
+   不检查阳极与粗细接口之间的模板缓冲，也不以此限制 MG 粗化；
+   重合节点沿用阳极指定电势覆盖逻辑。
 5. 求解后填 phi/E 所需 ghost；只在本步所有层成功求解后提交新的电势历史。
 
 上述过程逐层执行：先解 level 0，再准备并解 level 1，随后才准备 level 2。
@@ -395,7 +402,7 @@ Robin 物理面必需的边界处理只在 level 0 上生效。
 
 ### 3.5 统一材料求解后端与边界分工
 
-材料路径统一采用自实现 `cht::MLNodeRobinLaplacian` 与 `MLMG`，包括第一类和
+材料路径统一采用自实现 `Insert::Poisson::MLNodeRobinLaplacian` 与 `MLMG`，包括第一类和
 单极 Robin 两种物理外边界。保留 WarpX 原生第一类的参数、解析电势设置和调用语义，
 但材料 Dirichlet 不再调用原生 `MLNodeLaplacian`。非材料求解路径保持原生实现。
 先完成完整单层域的统一接入，再扩展自定义算子的局部细区支持及逐层协调器。
@@ -529,7 +536,7 @@ Robin 物理面必需的边界处理只在 level 0 上生效。
 关键路径见 [WarpXComm.cpp](Source/Parallelization/WarpXComm.cpp)、
 [PhysicalParticleContainer.cpp](Source/Particles/PhysicalParticleContainer.cpp)、
 [LabFrameExplicitES.cpp](Source/FieldSolver/ElectrostaticSolvers/LabFrameExplicitES.cpp) 和
-[HallElectrostaticMaterial.cpp](Source/Insert/Fields/HallElectrostaticMaterial.cpp)。
+[ElectrostaticMaterial.cpp](Source/Insert/Fields/ElectrostaticMaterial.cpp)。
 
 **必须单独验证的原生基线疑点**：当前 aux helper 在电磁分支中更新 cax，静电分支
 只复制 fp→aux 或将 staggered fp 转到 nodal aux；源码中未找到静电分支对应的 cax
@@ -684,7 +691,7 @@ coarse-aux 值及其更新时间，确认原生局部细区基线正常。若证
 | `4792f7f9d` | 单层 PIC、边界源归一化、energy-conserving gather | 多层接口与细层时间外推有效性 |
 | `e1d320e5c` | pre/post 参数、额外 ghost 分支及背景密度析构处理 | 约 0.78 收敛因子的根因已消除 |
 
-- 当前 `cht::MLNodeRobinLaplacian` 明确限制单 AMR 层、完整非周期 Cartesian 域，
+- 当前 `Insert::Poisson::MLNodeRobinLaplacian` 明确限制单 AMR 层、完整非周期 Cartesian 域，
   支持的是该域内的多 MG 层。`NodeRobinSolver` 缓存材料与 mask，使用物理 RHS 副本，
   由算子钩子添加 Robin 非齐次源，`compPhysicalResidual` 用于完整残差。
 - 底层 `setRobinBC` 已支持 `b=0` 的第一类、`a=0` 的第二类和一般 Robin，
@@ -712,9 +719,9 @@ coarse-aux 值及其更新时间，确认原生局部细区基线正常。若证
   全场粗到细插值、原生逐层缓存与平滑参数覆盖。
 - [MaterialPoissonSolver.cpp](Source/Insert/Fields/MaterialPoissonSolver.cpp)：
   阶段 3 已将旧 NodeRobinSolver 迁入此统一入口，处理两种边界的缓存与私有源。
-- [CHT_MLNodeRobinLaplacian.cpp](Source/Insert/Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp)：
+- [MLNodeRobinLaplacian.cpp](Source/Insert/Fields/NodeRobin/MLNodeRobinLaplacian.cpp)：
   单域约束、边界算子、平滑、限制和插值。
-- [HallElectrostaticMaterial.cpp](Source/Insert/Fields/HallElectrostaticMaterial.cpp) 与
+- [ElectrostaticMaterial.cpp](Source/Insert/Fields/ElectrostaticMaterial.cpp) 与
   [InsertBoundaryPhi.cpp](Source/Insert/Boundary/InsertBoundaryPhi.cpp)：材料、约束及 phi/E ghost。
 - [CoupledBackgroundMCCCollision.cpp](Source/Insert/Collisions/CoupledBackgroundMCCCollision.cpp)：
   剩余单层限制和层号依赖。
@@ -765,10 +772,10 @@ Release 的 CUDA 架构为 `native`，C++/CUDA Release flags 均为 `-O3 -DNDEBU
 openPMD `0.17.1`、PICSAR `26.05`。
 
 Insert 启用宏为 `NUMP`、`BENCHMARK_2D`、`MCC_DENSITY`、`MCC_DELETE`，
-3D 条件下另启用 `HALL3D` 和 `WARPX_USE_HALL_ELECTROSTATIC_MATERIALS`。
+3D 条件下另启用 `WARPX_INSERT_3D` 和 `WARPX_USE_ELECTROSTATIC_MATERIALS`。
 `FIELDSIZE`、`COLLISION_RECORD`、`MCC_DENSITY_AVERAGE_CALC/USE`、
 `MCC_EXCITATION`、`IONIZATION_SOURCE_RECORD/INJECT`、`MCC_ION_CACHED_RHO`、
-`HALL3D_INIT` 均未启用。
+`WARPX_INSERT_INITIALIZATION_3D` 均未启用。
 
 以下为修改前文件内容的 SHA-256，便于后续区分输入或构建配置漂移：
 
@@ -776,7 +783,7 @@ Insert 启用宏为 `NUMP`、`BENCHMARK_2D`、`MCC_DENSITY`、`MCC_DELETE`，
 |---|---|
 | `Script/PHT/3d_hall_dielectric_slot` | `a28a0501973873f5eb7c993631ad524f29a9e71e24106985a92d20300e381853` |
 | `Script/3d_hall_mcccoll` | `4884b2f43cd5b26a5b684db0eb6ded7604436ea4a0f7543f34b1213b5a93fc60` |
-| `Source/Insert/Config/HallElectrostaticConfig.H` | `93be8137618824a1bc6b9c101d2f321c8632b025699fad208ce41db186c2bcd8` |
+| `Source/Insert/Config/ElectrostaticMaterialConfig.H` | `93be8137618824a1bc6b9c101d2f321c8632b025699fad208ce41db186c2bcd8` |
 | `Source/Insert/Config/WarpXFunctionConfig.h` | `54c66b1e62ca357bb95f1192c9e82d9c95b5b6d54079c665b32b032da6109e8c` |
 | `Source/Insert/Config/WarpXOptimizationConfig.h` | `d325dd69b814539312009c7d7e969d784dab3ae851bf5c493e44416e5c127383` |
 | `Source/Insert/Config/WarpXSimulationConfig.h` | `f42008ccfaf68423765b4be7fa337e704d6b732bffa2d6ad2e21cad8ff2c01bb` |

@@ -11,7 +11,7 @@ namespace Insert {
  *      flux per radial annulus;
  *    - velocity distribution: per radial bin, three one-dimensional
  *      histograms of vx, vy and vz.
- *  Sampling happens every hall_diag_interval steps (DoBoundaryParticleDiag)
+ *  Sampling happens every boundary_particle_diag_interval steps (DoBoundaryParticleDiag)
  *  starting from zmax_radial_start_step; the zhi boundary buffer is cleared
  *  at every sampled step so that statistics stay continuous and the buffer
  *  does not grow unbounded. Results are written to files on the final step.

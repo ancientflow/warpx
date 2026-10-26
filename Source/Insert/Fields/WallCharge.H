@@ -1,5 +1,5 @@
-#ifndef WARPX_INSERT_HALLWALLCHARGE_H_
-#define WARPX_INSERT_HALLWALLCHARGE_H_
+#ifndef WARPX_INSERT_WALL_CHARGE_H_
+#define WARPX_INSERT_WALL_CHARGE_H_
 
 #include "Insert/Math/InterpUtils.h"
 
@@ -110,17 +110,17 @@ DepositWallChargeToNodes (amrex::Array4<amrex::Real> const& wall_charge,
 }
 
 /** Persistent, nodal grid source for charge retained by analytic walls. */
-class HallWallCharge {
+class WallCharge {
   public:
     // rdata: net charge followed by the exact impact x/y/z coordinates.
     using ImpactContainer = amrex::ParticleContainer<4, 0, 0, 0>;
 
-    static HallWallCharge& GetInstance ();
+    static WallCharge& GetInstance ();
 
-    HallWallCharge (HallWallCharge const&) = delete;
-    HallWallCharge (HallWallCharge&&) = delete;
-    HallWallCharge& operator=(HallWallCharge const&) = delete;
-    HallWallCharge& operator=(HallWallCharge&&) = delete;
+    WallCharge (WallCharge const&) = delete;
+    WallCharge (WallCharge&&) = delete;
+    WallCharge& operator=(WallCharge const&) = delete;
+    WallCharge& operator=(WallCharge&&) = delete;
 
     /** Define the persistent source on the electrostatic rho layout once. */
     void prepare (ablastr::fields::MultiLevelScalarField const& rho,
@@ -146,8 +146,8 @@ class HallWallCharge {
     [[nodiscard]] amrex::Real compositeCharge () const;
 
   private:
-    HallWallCharge () = default;
-    ~HallWallCharge () = default;
+    WallCharge () = default;
+    ~WallCharge () = default;
 
     void assertLayout (ablastr::fields::MultiLevelScalarField const& rho,
                        int max_level) const;
@@ -160,4 +160,4 @@ class HallWallCharge {
 
 } // namespace Insert
 
-#endif // WARPX_INSERT_HALLWALLCHARGE_H_
+#endif // WARPX_INSERT_WALL_CHARGE_H_

@@ -14,7 +14,7 @@
 
 /**
  * Export normalized azimuthal density profiles of the spoke distributions
- * used by the Hall injection framework, for 1-4 spokes, as an ASCII table
+ * used by the particle injection framework, for 1-4 spokes, as an ASCII table
  * suitable for plotting (e.g. in Origin).
  *
  * Usage:
@@ -25,7 +25,7 @@
  *     num_points   Number of theta samples over [0, 360) deg (default: 3601)
  *
  * The profiles replicate the exact formulas in
- * Source/Insert/Injection/HallDistribution1D.cpp:
+ * Source/Insert/Injection/Distribution1D.cpp:
  *     - neutral_spoke: azimuthal depletion profile of the neutral gas
  *     - multi_spoke:   superposition of spoke_count Gaussian peaks (plasma)
  *
@@ -104,7 +104,7 @@ gaussianDensity (double x, double center, double sigma) noexcept
     return std::exp(-0.5 * normalized * normalized);
 }
 
-// Mirrors NeutralSpokeDensity() in HallDistribution1D.cpp
+// Mirrors NeutralSpokeDensity() in Distribution1D.cpp
 [[nodiscard]]
 double
 neutralSpokeDensity (double theta, double ion_width, double min_ratio,
@@ -125,7 +125,7 @@ neutralSpokeDensity (double theta, double ion_width, double min_ratio,
     return min_ratio + (1.0 - min_ratio) * s;
 }
 
-// Mirrors the pdf lambda of MakeMultiSpokeSampler() in HallDistribution1D.cpp
+// Mirrors the pdf lambda of MakeMultiSpokeSampler() in Distribution1D.cpp
 [[nodiscard]]
 double
 multiSpokeDensity (double theta, int spoke_count, double sigma,

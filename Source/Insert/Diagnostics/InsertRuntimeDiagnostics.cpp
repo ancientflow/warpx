@@ -56,7 +56,7 @@ DiagEnabled (const char* const name) {
     return enabled;
 }
 
-#ifdef HALL3D
+#ifdef WARPX_INSERT_3D
 
 struct OutletIonParticleData
 {
@@ -226,7 +226,7 @@ ShowAndWriteIonzationNum (amrex::Vector<int> num) {
 
 void
 ThrustCalc () {
-#ifdef HALL3D
+#ifdef WARPX_INSERT_3D
     static bool const diag_enabled = DiagEnabled("thrust_diag");
     if (!diag_enabled) { return; }
 
@@ -285,7 +285,7 @@ ThrustCalc () {
 
 void
 BeamDivergenceCalc () {
-#ifdef HALL3D
+#ifdef WARPX_INSERT_3D
     static bool const diag_enabled = DiagEnabled("beam_divergence_diag");
     if (!diag_enabled) { return; }
 
@@ -352,7 +352,7 @@ BeamDivergenceCalc () {
 
 void
 IEDFCalc () {
-#ifdef HALL3D
+#ifdef WARPX_INSERT_3D
     static bool const diag_enabled = DiagEnabled("iedf_diag");
     if (!diag_enabled) { return; }
 
@@ -453,10 +453,10 @@ IEDFCalc () {
 }
 
 void
-ClearHallBoundaryParticleCache () {
-#ifdef HALL3D
+ClearBoundaryParticleCache () {
+#ifdef WARPX_INSERT_3D
     static bool const diag_enabled =
-        DiagEnabled("clear_hall_boundary_particle_cache_diag");
+        DiagEnabled("clear_boundary_particle_cache_diag");
     if (!diag_enabled) { return; }
 
     WarpX& warpx_instance = WarpX::GetInstance();

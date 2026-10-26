@@ -14,16 +14,16 @@ namespace Insert {
 
 namespace {
 
-constexpr int default_hall_diag_interval = 10;
+constexpr int default_boundary_particle_diag_interval = 10;
 
 } // namespace
 
 int
 BoundaryParticleDiagInterval () {
     static int const interval = [] () {
-        int gap = default_hall_diag_interval;
+        int gap = default_boundary_particle_diag_interval;
         amrex::ParmParse pp_mc("my_constants");
-        pp_mc.query("hall_diag_interval", gap);
+        pp_mc.query("boundary_particle_diag_interval", gap);
         return std::max(gap, 1);
     }();
     return interval;
@@ -122,8 +122,8 @@ TwoPi ()
     return amrex::ParticleReal(2.0) * amrex::Math::pi<amrex::ParticleReal>();
 }
 
-HallAnodeRingConfig
-ReadHallAnodeRingConfig (amrex::Geometry const& geom)
+LegacyAnnularElectrodeConfig
+ReadLegacyAnnularElectrodeConfig (amrex::Geometry const& geom)
 {
     amrex::ParmParse pp_mc("my_constants");
     auto voltage = amrex::Real(0.0);
@@ -145,7 +145,7 @@ ReadHallAnodeRingConfig (amrex::Geometry const& geom)
     amrex::ParticleReal const r_max =
         amrex::ParticleReal(0.031) / amrex::ParticleReal(2.0) / l_factor;
 
-    return HallAnodeRingConfig{
+    return LegacyAnnularElectrodeConfig{
         voltage,
         center_x,
         center_y,

@@ -10,8 +10,8 @@
 #define WARPX_LABFRAMEEXPLICITES_H_
 
 #include "ElectrostaticSolver.H"
-#include "Insert/Config/HallElectrostaticConfig.H"
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#include "Insert/Config/ElectrostaticMaterialConfig.H"
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
 #include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 
@@ -74,7 +74,7 @@ private:
         m_phi_extrapolation_cache;
     int m_phi_extrapolation_history_depth = 0;
 
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     Insert::MaterialPoissonSolver m_material_solver;
 #endif
 

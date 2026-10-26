@@ -4,13 +4,13 @@
 #include "Insert/Boundary/AnalyticBoundaryInteraction.h"
 #include "Insert/Boundary/InsertBoundaryPhi.h"
 #include "Insert/Collisions/IonizationSourceTable.h"
-#include "Insert/Config/HallElectrostaticConfig.H"
+#include "Insert/Config/ElectrostaticMaterialConfig.H"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Config/WarpXSimulationConfig.h"
 #include "Insert/Diagnostics/InsertRuntimeDiagnostics.h"
 #include "Insert/Diagnostics/ZmaxRadialExitStats.h"
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-#include "Insert/Fields/HallElectrostaticMaterial.H"
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/ElectrostaticMaterial.H"
 #endif
 #include "Insert/Injection/InsertInjection.h"
 #include "Utils/TextMsg.H"
@@ -31,7 +31,26 @@ namespace Insert {
 void
 BackwardCompatibility ()
 {
-    amrex::ParmParse const pp_mc("my_constants");
+    amrex::ParmParse pp_mc("my_constants");
+    // Accept historical device-specific diagnostic names without silently
+    // choosing one value when old and new spellings conflict.
+    auto migrate_diagnostic = [&pp_mc](char const* old_name, char const* new_name,
+                                      auto value) {
+        if (pp_mc.query(old_name, value)) {
+            auto current = value;
+            if (pp_mc.query(new_name, current)) {
+                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(current == value,
+                    std::string("Conflicting my_constants.") + old_name + " and " +
+                    "my_constants." + new_name + "; use the new parameter name.");
+            } else {
+                pp_mc.add(new_name, value);
+            }
+        }
+    };
+    migrate_diagnostic("hall_diag_interval", "boundary_particle_diag_interval", 10);
+    migrate_diagnostic("clear_hall_boundary_particle_cache_diag",
+                       "clear_boundary_particle_cache_diag", false);
+
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!pp_mc.contains("anode_current_path"),
         "my_constants.anode_current_path has been removed. Use "
         "my_constants.anode_current_prefix with insert.analytic_walls; "
@@ -62,8 +81,8 @@ void
 ParticleInjection () {
 #if defined(WARPX_DIM_XZ) && defined(BENCHMARK_2D)
     Benchmark2DParticleInjection();
-#elif defined(HALL3D) || defined(HALL3D_INIT)
-    InjectHallParticles();
+#elif defined(WARPX_INSERT_3D) || defined(WARPX_INSERT_INITIALIZATION_3D)
+    InjectConfiguredParticles();
 #endif
 }
 
@@ -114,9 +133,9 @@ PhiAdjustmentEntrance () {
 void
 SetBoundaryPhi () {
 #if defined(WARPX_DIM_3D)
-#   ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#   ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     // 材料 (体阳极 overset mask) 路径启用时跳过 zmin 面电势设置
-    if (HallElectrostaticMaterial::GetInstance().enabled()) {
+    if (ElectrostaticMaterial::GetInstance().enabled()) {
         return;
     }
 #   endif
@@ -130,9 +149,9 @@ SetBoundaryPhi () {
 void
 SetPhiGuards () {
 #if defined(WARPX_DIM_3D)
-#   ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#   ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     // 材料路径有自己的 ghost 处理, 启用时跳过
-    if (HallElectrostaticMaterial::GetInstance().enabled()) {
+    if (ElectrostaticMaterial::GetInstance().enabled()) {
         return;
     }
 #   endif
@@ -158,8 +177,8 @@ Initialize () {
 #ifdef MCC_DENSITY
     GlobalBackgroundDensityInit();
 #endif
-#ifdef HALL3D
-    InitializeHallInjection();
+#ifdef WARPX_INSERT_3D
+    InitializeParticleInjection();
 #endif
 }
 
@@ -176,17 +195,17 @@ CollisionRecord (amrex::Vector<int> vec) {
 void
 AfterDiagnostics () {
     // Must run before any diagnostic that clears the boundary buffer
-    // (e.g. ClearHallBoundaryParticleCache), otherwise the zmax exit
+    // (e.g. ClearBoundaryParticleCache), otherwise the zmax exit
     // statistics see an already-cleared buffer and record nothing.
     ZmaxRadialExitStatsCalc();
-    // Written outside the HALL3D block: the diagnostic accumulates inside the
+    // Written outside the WARPX_INSERT_3D block: the diagnostic accumulates inside the
     // analytic wall interaction, which is guarded by WARPX_DIM_3D only.
     AnodeCurrentDiagOutput();
-#ifdef HALL3D
+#ifdef WARPX_INSERT_3D
     ThrustCalc();
     BeamDivergenceCalc();
     IEDFCalc();
-    ClearHallBoundaryParticleCache();
+    ClearBoundaryParticleCache();
 #endif
 }
 

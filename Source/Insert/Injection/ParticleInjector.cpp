@@ -1,10 +1,10 @@
-#include "HallInjector.h"
+#include "ParticleInjector.h"
 
 #include "WarpX.H"
 
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Geometry/TruncatedConeSurfaceSampler.h"
-#include "Insert/Injection/HallCoordinateDistribution.h"
+#include "Insert/Injection/CoordinateDistribution.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
@@ -30,7 +30,7 @@ namespace {
 #ifdef IONIZATION_SOURCE_INJECT
 constexpr amrex::ParticleReal BirthElectronTemperatureEV = 1.0;
 
-class IonizationSourceRateModel final : public HallRateModel
+class IonizationSourceRateModel final : public InjectionRateModel
 {
 public:
     IonizationSourceRateModel (
@@ -64,10 +64,10 @@ HasParameter (std::string const& name)
     return pp.contains(name);
 }
 
-class HallTruncatedConePositionSampler final : public HallPositionSampler
+class TruncatedConePositionSampler final : public PositionSampler
 {
 public:
-    explicit HallTruncatedConePositionSampler (
+    explicit TruncatedConePositionSampler (
         TruncatedConeSurfaceSampler sampler)
         : m_sampler(std::move(sampler))
     {}
@@ -76,7 +76,7 @@ public:
     samplePosition (amrex::RandomEngine const& engine) const override
     {
         return MakeEmissionSample(
-            HallCoordinateSystem::cartesian,
+            CoordinateSystem::cartesian,
             m_sampler.sampleCoordinates(engine));
     }
 
@@ -84,8 +84,8 @@ private:
     TruncatedConeSurfaceSampler m_sampler;
 };
 
-std::unique_ptr<HallPositionSampler>
-MakeHallTruncatedConePositionSampler (
+std::unique_ptr<PositionSampler>
+MakeTruncatedConePositionSampler (
     amrex::ParmParse const& pp, std::string const& prefix)
 {
     const auto r_min =
@@ -93,7 +93,7 @@ MakeHallTruncatedConePositionSampler (
     const auto r_max =
         GetWithParser<amrex::ParticleReal>(pp, prefix, "r_max");
 
-    return std::make_unique<HallTruncatedConePositionSampler>(
+    return std::make_unique<TruncatedConePositionSampler>(
         TruncatedConeSurfaceSampler{
             GetWithParser<amrex::ParticleReal>(pp, prefix, "slope"),
             r_min,
@@ -110,12 +110,12 @@ MakeHallTruncatedConePositionSampler (
                     amrex::Math::pi<amrex::ParticleReal>())});
 }
 
-HallSpeciesVelocityConfig
+SpeciesVelocityConfig
 MakeSpecies (
     std::string species_name, amrex::ParticleReal macro_weight,
-    std::unique_ptr<HallCoordinateDistribution> velocity_space)
+    std::unique_ptr<CoordinateDistribution> velocity_space)
 {
-    HallSpeciesVelocityConfig species;
+    SpeciesVelocityConfig species;
     species.species_name = std::move(species_name);
     species.macro_weight = macro_weight;
     species.velocity_space = std::move(velocity_space);
@@ -143,11 +143,11 @@ ReadSourceSpecies (amrex::ParmParse const& pp, std::string const& prefix)
         }
     }
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        !species.empty(), "Hall injection source requires species.");
+        !species.empty(), "Particle injection source requires species.");
     return species;
 }
 
-std::unique_ptr<HallPositionSampler>
+std::unique_ptr<PositionSampler>
 MakeConfiguredPositionDistribution (
     amrex::ParmParse const& pp, std::string const& source_name)
 {
@@ -157,28 +157,28 @@ MakeConfiguredPositionDistribution (
                              coupled_distribution)) {
         coupled_distribution = ToLower(coupled_distribution);
         if (coupled_distribution == "truncated_cone_surface") {
-            return MakeHallTruncatedConePositionSampler(pp, prefix);
+            return MakeTruncatedConePositionSampler(pp, prefix);
         }
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             coupled_distribution == "hole_array_plane",
-            "Unsupported Hall coupled position distribution: " +
+            "Unsupported coupled position distribution: " +
                 coupled_distribution);
         // hole_array_plane implements no distribution itself: position.*
         // must define the within-hole distribution, which the hole layer
         // then dispatches and offsets to each hole center.
-        return MakeHallCoordinateDistribution(
-            pp, prefix, HallCoordinateSpace::position, "hole_array_plane");
+        return MakeCoordinateDistribution(
+            pp, prefix, CoordinateSpace::position, "hole_array_plane");
     }
-    return MakeHallCoordinateDistribution(pp, prefix, HallCoordinateSpace::position);
+    return MakeCoordinateDistribution(pp, prefix, CoordinateSpace::position);
 }
 
-HallInjectionSource
+ParticleInjectionSource
 MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name)
 {
-    auto rate_model = MakeHallRateModel(pp, source_name);
+    auto rate_model = MakeInjectionRateModel(pp, source_name);
     auto position = MakeConfiguredPositionDistribution(pp, source_name);
 
-    std::vector<HallSpeciesVelocityConfig> species_configs;
+    std::vector<SpeciesVelocityConfig> species_configs;
     for (auto const& species_name : ReadSourceSpecies(pp, source_name)) {
         const auto species_prefix = source_name + "." + species_name;
         const auto weight = static_cast<amrex::ParticleReal>(
@@ -194,15 +194,15 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
                 : source_name + ".velocity";
         species_configs.push_back(MakeSpecies(
             species_name, weight,
-            MakeHallCoordinateDistribution(
-                pp, velocity_prefix, HallCoordinateSpace::velocity)));
+            MakeCoordinateDistribution(
+                pp, velocity_prefix, CoordinateSpace::velocity)));
     }
 
     const auto x_offset = static_cast<amrex::ParticleReal>(
         QueryWithParser<amrex::Real>(pp, source_name, "x_offset", 0.0));
     const auto y_offset = static_cast<amrex::ParticleReal>(
         QueryWithParser<amrex::Real>(pp, source_name, "y_offset", 0.0));
-    HallInjectionSource source(
+    ParticleInjectionSource source(
         source_name, std::move(rate_model), std::move(position),
         std::move(species_configs), x_offset, y_offset);
 
@@ -217,7 +217,7 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
     if (utils::parser::query(pp, position_prefix, "coupled_distribution",
                              coupled_distribution) &&
         ToLower(coupled_distribution) == "hole_array_plane") {
-        HallHoleArrayPlaneConfig hole_config;
+        HoleArrayPlaneConfig hole_config;
         hole_config.hole_count =
             QueryWithParser<int>(pp, source_name, "hole_count", 48);
         amrex::Real ring_radius = 0.0;
@@ -235,13 +235,13 @@ MakeConfiguredSource (amrex::ParmParse const& pp, std::string const& source_name
 }
 
 #ifdef IONIZATION_SOURCE_INJECT
-HallInjectionSource
+ParticleInjectionSource
 MakeIonizationSource ();
 #endif
 
 void
 AppendConfiguredSources (
-    std::vector<HallInjectionSource>& sources,
+    std::vector<ParticleInjectionSource>& sources,
     std::vector<std::string> const& source_names)
 {
     amrex::ParmParse pp;
@@ -257,22 +257,22 @@ AppendConfiguredSources (
 }
 
 #ifdef IONIZATION_SOURCE_INJECT
-std::unique_ptr<HallCoordinateDistribution>
+std::unique_ptr<CoordinateDistribution>
 MakeCartesianGaussianVelocityDistribution (
     amrex::ParticleReal sigma_x, amrex::ParticleReal sigma_y,
     amrex::ParticleReal sigma_z)
 {
-    return std::make_unique<HallCoordinateDistribution>(
-        HallCoordinateSystem::cartesian,
-        std::make_unique<HallGaussianDistribution1D>(
+    return std::make_unique<CoordinateDistribution>(
+        CoordinateSystem::cartesian,
+        std::make_unique<GaussianDistribution1D>(
             amrex::ParticleReal(0.0), sigma_x),
-        std::make_unique<HallGaussianDistribution1D>(
+        std::make_unique<GaussianDistribution1D>(
             amrex::ParticleReal(0.0), sigma_y),
-        std::make_unique<HallGaussianDistribution1D>(
+        std::make_unique<GaussianDistribution1D>(
             amrex::ParticleReal(0.0), sigma_z));
 }
 
-HallInjectionSource
+ParticleInjectionSource
 MakeIonizationSource ()
 {
     amrex::ParmParse pp_mc("my_constants");
@@ -291,7 +291,7 @@ MakeIonizationSource ()
     const auto electron_sigma = static_cast<amrex::ParticleReal>(
         Math::ThermalVelocityFromEV(BirthElectronTemperatureEV, PhysConst::m_e));
 
-    std::vector<HallSpeciesVelocityConfig> species;
+    std::vector<SpeciesVelocityConfig> species;
     species.push_back(MakeSpecies(
         "electrons", elec_weight,
         MakeCartesianGaussianVelocityDistribution(
@@ -303,7 +303,7 @@ MakeIonizationSource ()
             amrex::ParticleReal(1212.41))));
 
     const auto total_rate = position_sampler->totalRate();
-    return HallInjectionSource(
+    return ParticleInjectionSource(
         "average_ionization_source",
         std::make_unique<IonizationSourceRateModel>(total_rate, elec_weight),
         std::move(position_sampler), std::move(species));
@@ -312,15 +312,15 @@ MakeIonizationSource ()
 
 } // namespace
 
-HallInjector&
-HallInjector::GetInstance ()
+ParticleInjector&
+ParticleInjector::GetInstance ()
 {
-    static HallInjector injector;
+    static ParticleInjector injector;
     return injector;
 }
 
 void
-HallInjector::ReadParameters ()
+ParticleInjector::ReadParameters ()
 {
     if (m_initialized) {
         return;
@@ -343,7 +343,7 @@ HallInjector::ReadParameters ()
 }
 
 void
-HallInjector::InitializePlasma (WarpX& warpx)
+ParticleInjector::InitializePlasma (WarpX& warpx)
 {
     ReadParameters();
     for (auto& source : m_initial_sources) {
@@ -352,7 +352,7 @@ HallInjector::InitializePlasma (WarpX& warpx)
 }
 
 void
-HallInjector::InjectParticles (WarpX& warpx, amrex::Real dt, int step)
+ParticleInjector::InjectParticles (WarpX& warpx, amrex::Real dt, int step)
 {
     amrex::ignore_unused(step);
     ReadParameters();

@@ -1,10 +1,10 @@
-#ifndef CHT_MONOPOLE_BOUNDARY_H_
-#define CHT_MONOPOLE_BOUNDARY_H_
+#ifndef WARPX_INSERT_POISSON_MONOPOLE_BOUNDARY_H_
+#define WARPX_INSERT_POISSON_MONOPOLE_BOUNDARY_H_
 
 #include <AMReX_Box.H>
 #include <AMReX_GpuContainers.H>
 
-namespace cht {
+namespace Insert::Poisson {
 // Andrews et al., PSST 31 (2022) 035022, Eq. (7), Appendix A Eq. (A.7).
 // Both normal-dependent terms change sign on converting inward to outward n.
 // Thus dphi/dn + (n.r)/|r|^2 * (phi-phi_infinity) = 0 also holds outward.
@@ -29,5 +29,5 @@ struct MonopoleBoundary {
         return (face%2 ? r[face/2] : -r[face/2])/radius2;
     }
 };
-} // namespace cht
+} // namespace Insert::Poisson
 #endif

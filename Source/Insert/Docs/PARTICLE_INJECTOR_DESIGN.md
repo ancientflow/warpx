@@ -1,13 +1,15 @@
-# Hall Injector Design
+# Particle Injector Design
 
 ## 背景和目标
 
-`Source/Insert` 中的粒子注入逻辑只服务当前霍尔推力器模型，不再以合并回
-WarpX 官方 `PlasmaInjector` 为设计约束。设计目标是把现有电子、离子、原子
-注入逻辑整理成可组合、可扩展、便于维护的私有注入框架，并为后续真实空心
-阴极点发射、孔阵列发射和 spoke 初始化分布预留接口。
+`Source/Insert` 的粒子注入框架按位置分布、速度分布、注入速率和物种组合，
+不依赖 CHT、PHT 或霍尔推力器分类。具体装置通过源配置表达，框架可用于
+其他等离子体和粒子源问题。WarpX 官方 `PlasmaInjector` 仍是独立入口。
 
-当前实现主要分散在 `InsertInjection.cpp`：
+本文保留早期设计的演进步骤；当前接口与参数以
+[PARTICLE_INJECTION_CONFIG.md](../Injection/PARTICLE_INJECTION_CONFIG.md) 为准。
+
+早期装置相关实现位于 `InsertInjection.cpp`，其具体物理含义保留：
 
 - `PlasmaInit()`：初始化环形等离子体，同时生成电子和 Xe 离子。
 - `CathodeInjection3D()`：按阴极电流持续注入电子。
@@ -20,10 +22,10 @@ WarpX 官方 `PlasmaInjector` 为设计约束。设计目标是把现有电子�
 
 ## 设计原则
 
-1. `Insert` 注入只表达霍尔推力器物理，不为通用 PIC 注入抽象付出额外复杂度。
+1. `Insert` 注入按粒子源功能组织；具体装置、物种和几何由配置或明确的专用模型表达。
 2. 位置空间、速度空间和注入速率必须可组合。
-3. 位置空间和速度空间分别选择坐标系；霍尔推力器默认位置采用柱坐标，速度采用
-   笛卡尔坐标。
+3. 位置空间和速度空间分别选择坐标系；为兼容既有输入，默认位置采用柱坐标，
+   速度采用笛卡尔坐标，其他坐标系可显式配置。
 4. 每个坐标方向独立配置分布函数并采样，后续再扩展多坐标耦合分布。
 5. spoke 是柱坐标角向分布的一种，不应硬编码在 `PlasmaInit()` 中。
 6. 空心阴极点发射需要位置、法向和权重因子，不能只返回坐标。
@@ -37,20 +39,20 @@ WarpX 官方 `PlasmaInjector` 为设计约束。设计目标是把现有电子�
 
 ```text
 Source/Insert/Injection/
-  HallInjector.h
-  HallInjector.cpp
-  HallInjectionConfig.h
-  HallInjectionConfig.cpp
-  HallInjectionSource.h
-  HallInjectionSource.cpp
-  HallCoordinateDistribution.h
-  HallCoordinateDistribution.cpp
-  HallCoordinateTransform.h
-  HallCoordinateTransform.cpp
-  HallDistribution1D.h
-  HallDistribution1D.cpp
-  HallRateModel.h
-  HallRateModel.cpp
+  ParticleInjector.h
+  ParticleInjector.cpp
+  ParticleInjectionConfig.h
+  ParticleInjectionConfig.cpp
+  ParticleInjectionSource.h
+  ParticleInjectionSource.cpp
+  CoordinateDistribution.h
+  CoordinateDistribution.cpp
+  CoordinateTransform.h
+  CoordinateTransform.cpp
+  Distribution1D.h
+  Distribution1D.cpp
+  InjectionRateModel.h
+  InjectionRateModel.cpp
   DistributionSampler1D.H
   DistributionSampler1D.cpp
 ```
@@ -84,12 +86,12 @@ struct EmissionSample
 - `nx/ny/nz`：局部发射法向。体积初始化可使用零向量或默认轴向。
 - `weight_factor`：几何或发射点权重，例如不同孔面积、不同点源强度。
 
-### HallInjectionSource
+### ParticleInjectionSource
 
 每个源负责一个 species 的一次注入配置：
 
 ```cpp
-class HallInjectionSource
+class ParticleInjectionSource
 {
 public:
     void Initialize();
@@ -98,9 +100,9 @@ public:
 private:
     std::string m_species_name;
     amrex::ParticleReal m_macro_weight;
-    HallRateModel m_rate;
-    HallCoordinateDistribution m_position_space;
-    HallCoordinateDistribution m_velocity_space;
+    InjectionRateModel m_rate;
+    CoordinateDistribution m_position_space;
+    CoordinateDistribution m_velocity_space;
     amrex::Real m_fractional_particles = 0.0;
 };
 ```
@@ -112,12 +114,12 @@ private:
 3. 调用速度空间分布采样速度坐标。
 4. 调用对应 species 的 `AddNParticles()`。
 
-### HallInjector
+### ParticleInjector
 
 全局入口只做调度：
 
 ```cpp
-class HallInjector
+class ParticleInjector
 {
 public:
     void ReadParameters();
@@ -125,8 +127,8 @@ public:
     void InjectParticles(WarpX& warpx, amrex::Real dt, int step);
 
 private:
-    amrex::Vector<HallInjectionSource> m_initial_sources;
-    amrex::Vector<HallInjectionSource> m_continuous_sources;
+    amrex::Vector<ParticleInjectionSource> m_initial_sources;
+    amrex::Vector<ParticleInjectionSource> m_continuous_sources;
 };
 ```
 
@@ -135,7 +137,7 @@ private:
 
 ## 注入速率模型
 
-`HallRateModel` 负责把物理量转成宏粒子数，并维护小数残差。
+`InjectionRateModel` 负责把物理量转成宏粒子数，并维护小数残差。
 
 建议支持：
 
@@ -189,7 +191,7 @@ macro_particles = real_particles / macro_weight
 
 ## 坐标空间分布
 
-`HallCoordinateDistribution` 是位置和速度共用的分布描述。每个空间先选择坐标系，
+`CoordinateDistribution` 是位置和速度共用的分布描述。每个空间先选择坐标系，
 再为每个坐标方向选择一维分布函数。第一阶段只支持方向独立采样，即联合分布为：
 
 ```text
@@ -206,7 +208,7 @@ cartesian:   x y z      或 vx vy vz
 cylindrical: r theta z  或 vr vtheta vz
 ```
 
-霍尔推力器默认约定：
+为兼容已有输入保留的默认约定（可显式配置）：
 
 ```text
 position.coordinate_system = cylindrical
@@ -307,10 +309,10 @@ spoke_phase
 基类建议为：
 
 ```cpp
-class HallDistribution1D
+class Distribution1D
 {
 public:
-    virtual ~HallDistribution1D() = default;
+    virtual ~Distribution1D() = default;
 
     [[nodiscard]] virtual amrex::ParticleReal
     sample(amrex::RandomEngine const& engine) const = 0;
@@ -332,36 +334,36 @@ public:
 各分布对应派生类：
 
 ```text
-HallConstantDistribution1D
-HallUniformDistribution1D
-HallAreaUniformDistribution1D
-HallGaussianDistribution1D
-HallPositiveGaussianDistribution1D
-HallSingleSpokeDistribution1D
-HallMultiSpokeDistribution1D
-HallDiscreteDistribution1D
-HallTabulatedDistribution1D
-HallParserDistribution1D
+ConstantDistribution1D
+UniformDistribution1D
+AreaUniformDistribution1D
+GaussianDistribution1D
+PositiveGaussianDistribution1D
+SingleSpokeDistribution1D
+MultiSpokeDistribution1D
+DiscreteDistribution1D
+TabulatedDistribution1D
+ParserDistribution1D
 ```
 
-`HallCoordinateDistribution` 持有三个方向分布：
+`CoordinateDistribution` 持有三个方向分布：
 
 ```cpp
-class HallCoordinateDistribution
+class CoordinateDistribution
 {
 private:
     CoordinateSystem m_coordinate_system;
-    std::unique_ptr<HallDistribution1D> m_q0;
-    std::unique_ptr<HallDistribution1D> m_q1;
-    std::unique_ptr<HallDistribution1D> m_q2;
+    std::unique_ptr<Distribution1D> m_q0;
+    std::unique_ptr<Distribution1D> m_q1;
+    std::unique_ptr<Distribution1D> m_q2;
 };
 ```
 
 分布解析通过工厂函数集中处理：
 
 ```cpp
-std::unique_ptr<HallDistribution1D>
-MakeHallDistribution1D(amrex::ParmParse const& pp,
+std::unique_ptr<Distribution1D>
+MakeDistribution1D(amrex::ParmParse const& pp,
                        std::string const& prefix);
 ```
 
@@ -501,13 +503,13 @@ sigma。这个功能应显式建模为共享位置样本。
 建议提供：
 
 ```cpp
-class HallCoupledInitialSource
+class CoupledInitialSource
 {
 public:
     void InitializePair(WarpX& warpx);
 
 private:
-    HallCoordinateDistribution m_position_space;
+    CoordinateDistribution m_position_space;
     amrex::Vector<SpeciesVelocityConfig> m_species;
 };
 ```
@@ -620,7 +622,7 @@ cathode_electron.angle_sigma = cathode_angle_sigma
 
 ### 阶段 1：无行为改变的工具提取
 
-1. 提取 `HallCoordinateDistribution` 和一维方向分布函数，保持当前
+1. 提取 `CoordinateDistribution` 和一维方向分布函数，保持当前
    `PlasmaInit()` 和 `CathodeInjection3D()` 的采样结果一致。
 2. 提取柱坐标到笛卡尔坐标的转换，位置空间默认使用 `cylindrical`，速度空间默认
    使用 `cartesian`。
@@ -631,14 +633,14 @@ cathode_electron.angle_sigma = cathode_angle_sigma
 
 验收标准：
 
-- 当前 `HALL3D` 和 `HALL3D_INIT` 宏路径仍可编译。
+- 当前 `WARPX_INSERT_3D` 和 `WARPX_INSERT_INITIALIZATION_3D` 宏路径仍可编译。
 - 相同随机种子下统计分布一致，粒子数量一致。
 
 ### 阶段 2：统一源配置
 
-1. 新增 `HallInjectionSource` 和 `HallInjector`。
-2. `Insert::Initialize()` 通过 `HallInjector` 执行初始源。
-3. `Insert::ParticleInjection()` 通过 `HallInjector` 执行连续源。
+1. 新增 `ParticleInjectionSource` 和 `ParticleInjector`。
+2. `Insert::Initialize()` 通过 `ParticleInjector` 执行初始源。
+3. `Insert::ParticleInjection()` 通过 `ParticleInjector` 执行连续源。
 4. 旧函数变为兼容包装或删除。
 
 验收标准：
@@ -673,7 +675,7 @@ cathode_electron.angle_sigma = cathode_angle_sigma
 
 ## 与 PlasmaInjector 的边界
 
-WarpX 官方 `PlasmaInjector` 仍负责官方通用注入路径。`Insert` 的 Hall 注入器只在
+WarpX 官方 `PlasmaInjector` 仍负责官方通用注入路径。`Insert` 的粒子注入器只在
 `Insert::Initialize()` 和 `Insert::ParticleInjection()` 中调用，不新增
 `PlasmaInjector` 派生类，也不修改官方 `injection_style`。
 
@@ -689,7 +691,7 @@ WarpX 官方 `PlasmaInjector` 仍负责官方通用注入路径。`Insert` 的 H
 - 不使用 `PlasmaInjector` 的 `enum + union` GPU 可拷贝限制作为第一阶段约束；
   一维分布优先使用共同基类和虚函数实现。
 - 不追求输入文件参数与 WarpX 官方注入参数一致。
-- 不把 Hall 专用概念塞入 WarpX 通用 `Source/Initialization`。
+- 不把装置专用概念放入 WarpX 通用 `Source/Initialization`。
 
 ## 风险和注意事项
 

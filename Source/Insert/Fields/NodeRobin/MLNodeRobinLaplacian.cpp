@@ -1,5 +1,5 @@
-#include "CHT_MLNodeRobinLaplacian.H"
-#include "CHT_NodeRobin_K.H"
+#include "MLNodeRobinLaplacian.H"
+#include "NodeRobin_K.H"
 #include <AMReX_MLNodeLinOp_K.H>
 #include <AMReX_MultiFabUtil.H>
 #include <AMReX_Reduce.H>
@@ -7,7 +7,7 @@
 #include <cmath>
 #include <limits>
 
-namespace cht {
+namespace Insert::Poisson {
 using namespace amrex;
 namespace {
 
@@ -80,18 +80,24 @@ MLNodeRobinLaplacian::MLNodeRobinLaplacian(
     const Vector<DistributionMapping>& dmap, const LPInfo& info)
 {
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(geom.size()==1 && grids.size()==1 && dmap.size()==1,
-        "CHT Robin currently supports one AMR level (multiple MG levels are supported)");
+        "Material nodal Poisson currently supports one AMR level (multiple MG levels are supported)");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(geom[0].Coord()==0 && !geom[0].isAnyPeriodic(),
-        "CHT Robin requires nonperiodic Cartesian geometry");
+        "Material nodal Poisson requires nonperiodic Cartesian geometry");
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(grids[0].ixType().cellCentered(),
-        "Pass cell-centered grids to CHT Robin constructor");
+        "Pass cell-centered grids to the nodal Robin constructor");
     // Explicitly override the EB-enabled AMReX build's default RAP strategy.
     m_coarsening_strategy = CoarseningStrategy::Sigma;
     MLNodeLinOp::define(geom, grids, dmap, info, {}, 0);
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_domain_covered[0], "CHT Robin requires full domain coverage");
+    if (!m_domain_covered[0]) {
+        for (int n = 0; n < grids[0].size(); ++n) {
+            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+                geom[0].Domain().contains(amrex::grow(grids[0][n], 1)),
+                "Local material patches must lie strictly inside the physical domain");
+        }
+    }
     for (const auto& ratio : mg_coarsen_ratio_vec) {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(ratio == IntVect(2),
-            "CHT Robin currently requires factor-two coarsening in all directions");
+            "Material nodal Poisson currently requires factor-two coarsening in all directions");
     }
     m_sigma.resize(m_num_mg_levels[0]);
     for (int m=0; m<m_num_mg_levels[0]; ++m) {
@@ -126,7 +132,7 @@ void MLNodeRobinLaplacian::setRobinBC(const Faces& faces)
     Array<LinOpBCType,3> lo, hi;
     bool operator_changed = !m_prepared;
     bool const was_singular = m_singular;
-    m_singular = !m_internal_mask;
+    m_singular = m_domain_covered[0] && !m_overset_dirichlet_mask;
     m_has_robin_diagonal = false;
     operator_changed |= m_monopole.enabled;
     m_monopole.enabled = false;
@@ -163,6 +169,8 @@ void MLNodeRobinLaplacian::setRobinBC(const Faces& faces)
 
 void MLNodeRobinLaplacian::setMonopoleBC(GpuArray<Real,3> const& center, Real phi_infinity)
 {
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(m_domain_covered[0],
+        "Monopole boundary conditions require a full-domain operator");
     auto const lo=m_geom[0][0].ProbLoArray(), hi=m_geom[0][0].ProbHiArray();
     AMREX_ALWAYS_ASSERT(std::isfinite(phi_infinity));
     for (int d=0; d<3; ++d) {
@@ -189,20 +197,21 @@ void MLNodeRobinLaplacian::setOversetMask(int amrlev, const iMultiFab& mask, Rea
     AMREX_ALWAYS_ASSERT_WITH_MESSAGE(mask.nComp()==1 &&
         mask.boxArray()==amrex::convert(m_grids[0][0],IntVect(1)) &&
         mask.DistributionMap()==m_dmap[0][0], "Internal mask must use the scalar nodal solution layout");
-    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(mask.min(0)==0 && mask.max(0)==1,
-        "Internal mask requires binary values, at least one fixed node and at least one unknown");
+    bool const has_electrode = mask.min(0) == 0;
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(mask.min(0)>=0 && mask.max(0)==1,
+        "Internal mask requires binary values and at least one unknown");
     Box const domain=amrex::surroundingNodes(m_geom[0][0].Domain());
     for (int face=0; face<6; ++face) {
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(mask.min(face_box(domain,domain,face),0)==1,
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(mask.min(face_box(domain,domain,face),0)!=0,
             "The internal electrode must not touch the external boundary");
     }
     m_internal_mask=std::make_unique<iMultiFab>(mask.boxArray(),mask.DistributionMap(),1,0);
     iMultiFab::Copy(*m_internal_mask,mask,0,0,1,0);
     // Deterministic owner synchronization for Box-shared electrode nodes.
     m_internal_mask->OverrideSync(m_geom[0][0].periodicity());
-    MLNodeLinOp::setOversetMask(0,*m_internal_mask);
+    if (has_electrode) { MLNodeLinOp::setOversetMask(0,*m_internal_mask); }
     setInternalDirichletValue(value);
-    m_singular=false;
+    if (has_electrode) { m_singular=false; }
     m_dirty=true;
 }
 
@@ -278,7 +287,7 @@ void MLNodeRobinLaplacian::validate_internal_mask()
         });
         finish_kernel();
         Long const count=fixed.sum(0);
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(count>0,
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(count>0 || !m_overset_dirichlet_mask,
             "Coarsening erased the internal electrode; reduce LPInfo max coarsening level");
         m_internal_counts.push_back(count);
     }
@@ -360,6 +369,9 @@ void MLNodeRobinLaplacian::validate_dirichlet_values() const
 void MLNodeRobinLaplacian::fill_sigma_boundary(int mglev)
 {
     MultiFab& s=*m_sigma[mglev];
+    // Uncovered interior cells contribute no coefficient. Same-level neighbors
+    // overwrite these zeros, including at Box seams; only physical ghosts mirror.
+    s.setBndry(0);
     s.FillBoundary();
     Box const domain=m_geom[0][mglev].Domain();
     for (MFIter mfi(s); mfi.isValid(); ++mfi) {
@@ -379,7 +391,7 @@ void MLNodeRobinLaplacian::fill_sigma_boundary(int mglev)
 
 void MLNodeRobinLaplacian::prepareForSolve()
 {
-    BL_PROFILE("cht::MLNodeRobinLaplacian::prepareForSolve");
+    BL_PROFILE("Insert::Poisson::MLNodeRobinLaplacian::prepareForSolve");
     MLNodeLinOp::prepareForSolve();
     validate_internal_mask();
     buildMasks();
@@ -472,7 +484,7 @@ void MLNodeRobinLaplacian::applyInhomogNeumannTerm(int amrlev,MultiFab& rhs) con
 
 void MLNodeRobinLaplacian::Fapply(int amrlev,int mglev,MultiFab& out,const MultiFab& in) const
 {
-    BL_PROFILE("cht::MLNodeRobinLaplacian::Fapply");
+    BL_PROFILE("Insert::Poisson::MLNodeRobinLaplacian::Fapply");
     auto const x=in.const_arrays(); auto const y=out.arrays();
     auto const s=m_sigma[mglev]->const_arrays();
     auto const mask=m_dirichlet_mask[amrlev][mglev]->const_arrays();
@@ -505,7 +517,7 @@ void MLNodeRobinLaplacian::compPhysicalResidual(MultiFab& residual, MultiFab& ph
 
 void MLNodeRobinLaplacian::Fsmooth(int amrlev,int mglev,MultiFab& sol,const MultiFab& rhs) const
 {
-    BL_PROFILE("cht::MLNodeRobinLaplacian::Fsmooth");
+    BL_PROFILE("Insert::Poisson::MLNodeRobinLaplacian::Fsmooth");
     auto const u=sol.arrays(); auto const r=rhs.const_arrays();
     auto const s=m_sigma[mglev]->const_arrays();
     auto const mask=m_dirichlet_mask[amrlev][mglev]->const_arrays();
@@ -565,6 +577,7 @@ void MLNodeRobinLaplacian::restriction(int amrlev,int cmglev,MultiFab& coarse,Mu
     });
     finish_kernel();
     if (copy) { coarse.ParallelCopy(temp); }
+    setDirichletNodesToZero(amrlev, cmglev, coarse);
 }
 
 void MLNodeRobinLaplacian::interpolation(int amrlev,int fmglev,MultiFab& fine,const MultiFab& coarse) const
@@ -591,4 +604,4 @@ void MLNodeRobinLaplacian::resizeMultiGrid(int new_size)
     MLNodeLinOp::resizeMultiGrid(new_size);
     if (new_size>0 && new_size<static_cast<int>(m_sigma.size())) { m_sigma.resize(new_size); }
 }
-} // namespace cht
+} // namespace Insert::Poisson

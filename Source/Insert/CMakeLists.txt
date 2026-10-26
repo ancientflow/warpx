@@ -15,16 +15,16 @@ foreach(D IN LISTS WarpX_DIMS)
         Diagnostics/InsertRuntimeDiagnostics.cpp
         Diagnostics/ZmaxRadialExitStats.cpp
         Fields/ECDIChargeFilter.cpp
-        Fields/HallElectrostaticMaterial.cpp
-        Fields/HallWallCharge.cpp
+        Fields/ElectrostaticMaterial.cpp
+        Fields/WallCharge.cpp
         Geometry/TruncatedConeSurfaceSampler.cpp
         Injection/DistributionSampler1D.cpp
-        Injection/HallCoordinateDistribution.cpp
-        Injection/HallCoordinateTransform.cpp
-        Injection/HallDistribution1D.cpp
-        Injection/HallInjectionSource.cpp
-        Injection/HallInjector.cpp
-        Injection/HallRateModel.cpp
+        Injection/CoordinateDistribution.cpp
+        Injection/CoordinateTransform.cpp
+        Injection/Distribution1D.cpp
+        Injection/ParticleInjectionSource.cpp
+        Injection/ParticleInjector.cpp
+        Injection/InjectionRateModel.cpp
         Injection/IonizationSourceSampler.cpp
         Injection/InsertInjection.cpp
         Utils/InsertUtils.cpp
@@ -33,7 +33,7 @@ foreach(D IN LISTS WarpX_DIMS)
         target_sources(lib_${SD}
           PRIVATE
             Fields/MaterialPoissonSolver.cpp
-            Fields/NodeRobin/CHT_MLNodeRobinLaplacian.cpp
+            Fields/NodeRobin/MLNodeRobinLaplacian.cpp
         )
     endif()
 endforeach()
