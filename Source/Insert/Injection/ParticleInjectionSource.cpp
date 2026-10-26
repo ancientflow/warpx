@@ -1,4 +1,4 @@
-#include "HallInjectionSource.h"
+#include "ParticleInjectionSource.h"
 
 #include "WarpX.H"
 
@@ -28,11 +28,11 @@ RandomHoleStart (int hole_count, amrex::RandomEngine const& engine)
 
 } // namespace
 
-HallInjectionSource::HallInjectionSource (
+ParticleInjectionSource::ParticleInjectionSource (
     std::string source_name,
-    std::unique_ptr<HallRateModel> rate_model,
-    std::unique_ptr<HallPositionSampler> position_space,
-    std::vector<HallSpeciesVelocityConfig> species,
+    std::unique_ptr<InjectionRateModel> rate_model,
+    std::unique_ptr<PositionSampler> position_space,
+    std::vector<SpeciesVelocityConfig> species,
     amrex::ParticleReal x_offset,
     amrex::ParticleReal y_offset)
     : m_source_name(std::move(source_name)),
@@ -43,54 +43,54 @@ HallInjectionSource::HallInjectionSource (
       m_y_offset(y_offset)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_rate_model != nullptr, "HallInjectionSource requires a rate model.");
+        m_rate_model != nullptr, "ParticleInjectionSource requires a rate model.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_position_space != nullptr,
-        "HallInjectionSource requires a position distribution.");
+        "ParticleInjectionSource requires a position distribution.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         !m_species.empty(),
-        "HallInjectionSource requires at least one species.");
+        "ParticleInjectionSource requires at least one species.");
     for (auto const& species_config : m_species) {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             species_config.velocity_space != nullptr,
-            "HallInjectionSource species requires a velocity distribution.");
+            "ParticleInjectionSource species requires a velocity distribution.");
     }
 }
 
 void
-HallInjectionSource::setHoleArrayPlane (HallHoleArrayPlaneConfig config)
+ParticleInjectionSource::setHoleArrayPlane (HoleArrayPlaneConfig config)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         config.hole_count > 0,
-        "Hall hole_array_plane requires hole_count > 0.");
+        "hole_array_plane requires hole_count > 0.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         config.ring_radius >= amrex::ParticleReal(0.0),
-        "Hall hole_array_plane requires ring_radius >= 0.");
+        "hole_array_plane requires ring_radius >= 0.");
     m_hole_array_plane = config;
     m_use_hole_array_plane = true;
 }
 
 void
-HallInjectionSource::setTimeStepOverride (amrex::Real dt)
+ParticleInjectionSource::setTimeStepOverride (amrex::Real dt)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         std::isfinite(dt) && dt >= 0.0,
-        "HallInjectionSource time step override must be finite and non-negative.");
+        "ParticleInjectionSource time step override must be finite and non-negative.");
     m_dt_override = dt;
     m_has_dt_override = true;
 }
 
 void
-HallInjectionSource::setBatchMultiplier (amrex::Real batch_multiplier)
+ParticleInjectionSource::setBatchMultiplier (amrex::Real batch_multiplier)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         std::isfinite(batch_multiplier) && batch_multiplier >= 1.0,
-        "HallInjectionSource batch multiplier must be larger than 1");
+        "ParticleInjectionSource batch multiplier must be larger than 1");
     m_batch_multiplier = batch_multiplier;
 }
 
 void
-HallInjectionSource::Inject (WarpX& warpx, amrex::Real dt)
+ParticleInjectionSource::Inject (WarpX& warpx, amrex::Real dt)
 {
     const int count = consumeParticleCount(
         m_rate_model->expectedMacroParticles(m_has_dt_override ? m_dt_override : dt));
@@ -116,13 +116,13 @@ HallInjectionSource::Inject (WarpX& warpx, amrex::Real dt)
 }
 
 std::string const&
-HallInjectionSource::name () const noexcept
+ParticleInjectionSource::name () const noexcept
 {
     return m_source_name;
 }
 
 int
-HallInjectionSource::consumeParticleCount (amrex::Real expected_macro_particles)
+ParticleInjectionSource::consumeParticleCount (amrex::Real expected_macro_particles)
 {
     if (m_batch_multiplier <= 0.0) {
         return m_accumulator.consume(expected_macro_particles);
@@ -130,12 +130,12 @@ HallInjectionSource::consumeParticleCount (amrex::Real expected_macro_particles)
 
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         expected_macro_particles >= 0.0,
-        "HallInjectionSource requires non-negative particle counts.");
+        "ParticleInjectionSource requires non-negative particle counts.");
     const auto batch_count = static_cast<int>(
         expected_macro_particles * m_batch_multiplier + 1.0);
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         batch_count > 0,
-        "HallInjectionSource batch threshold must be positive.");
+        "ParticleInjectionSource batch threshold must be positive.");
 
     m_batch_remainder += expected_macro_particles;
     if (m_batch_remainder > static_cast<amrex::Real>(batch_count)) {
@@ -146,7 +146,7 @@ HallInjectionSource::consumeParticleCount (amrex::Real expected_macro_particles)
 }
 
 EmissionSample
-HallInjectionSource::samplePosition (
+ParticleInjectionSource::samplePosition (
     int particle_index, amrex::RandomEngine& engine)
 {
     EmissionSample sample = m_position_space->samplePosition(engine);
@@ -172,8 +172,8 @@ HallInjectionSource::samplePosition (
 }
 
 void
-HallInjectionSource::addSpeciesParticles (
-    WarpX& warpx, HallSpeciesVelocityConfig const& species,
+ParticleInjectionSource::addSpeciesParticles (
+    WarpX& warpx, SpeciesVelocityConfig const& species,
     std::vector<EmissionSample> const& positions,
     amrex::RandomEngine& normal_engine) const
 {

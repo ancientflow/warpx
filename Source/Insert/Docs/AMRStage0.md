@@ -15,7 +15,7 @@ Insert 材料头文件、缓存类型、材料开关或阳极恢复逻辑。
 | 数据/操作 | 所有者及调用约定 |
 |---|---|
 | rho/phi、Geometry、BoxArray、DistributionMapping | WarpX / fields；回调只借用当前求解期间的数据 |
-| 材料 epsilon、mask、指定电势 | `HallElectrostaticMaterial`；适配器借用，公共求解器不解释其物理含义 |
+| 材料 epsilon、mask、指定电势 | `ElectrostaticMaterial`；适配器借用，公共求解器不解释其物理含义 |
 | 材料 linop/MLMG | `LabFrameExplicitES` 的逐层材料缓存持有，先析构 MLMG 再析构算子 |
 | 回调对象 | 当前 `ComputeSpaceChargeField` 调用的局部变量；不存入 MLMG，不跨时间步保存借用引用 |
 | RHS 缩放与还原 | 公共层保留当前 `-rho/epsilon0` 与求解后还原；材料回调不得再次缩放 |
@@ -44,9 +44,9 @@ FFT/IGF 和 EB 原生调用仍走既有分支。
 | 时间初值 | `warpx.self_fields_phi_extrapolation_order/alpha/beta` | 无新增总开关；order 0 是沿用上一解，不代表关闭历史 | 当前深度仍全层共享，细层初值仍会被粗插值覆盖 |
 | 耦合 MCC | `<collision>.type=coupled_background_mcc`；背景由 `collisions.background_species` 指定 | 未选择该类型时不构造其碰撞对象；背景列表为空时不创建密度 MultiFab/bins，更新/清理直接返回 | 当前仍有 `flvl==0` 限制，阶段 2 适配 |
 
-`WARPX_USE_HALL_ELECTROSTATIC_MATERIALS` 当前由 3D 配置头自动定义，不是独立 CMake
+`WARPX_USE_ELECTROSTATIC_MATERIALS` 当前由 3D 配置头自动定义，不是独立 CMake
 功能开关；不能以运行时材料关闭冒充“材料代码未编译”。本次公共求解头已不依赖该宏。
-`MCC_DENSITY`、`MCC_DELETE`、`NUMP`、`BENCHMARK_2D` 及 3D `HALL3D` 的原有宏
+`MCC_DENSITY`、`MCC_DELETE`、`NUMP`、`BENCHMARK_2D` 及 3D `WARPX_INSERT_3D` 的原有宏
 未修改。显式指定背景物种仍会创建背景数据，即使未选择耦合碰撞；这不是材料模块隐式启用。
 
 ## 时间、提交与失效契约

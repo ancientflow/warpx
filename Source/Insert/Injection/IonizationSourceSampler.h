@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Insert/Injection/HallPositionSampler.h"
+#include "Insert/Injection/PositionSampler.h"
 
 #include <AMReX_REAL.H>
 #include <AMReX_RandomEngine.H>
@@ -10,7 +10,7 @@
 
 namespace Insert {
 
-class IonizationSourceSampler final : public HallPositionSampler
+class IonizationSourceSampler final : public PositionSampler
 {
 public:
     explicit IonizationSourceSampler (

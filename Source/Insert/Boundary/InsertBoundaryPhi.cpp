@@ -1,11 +1,11 @@
 #include "InsertBoundaryPhi.h"
 
 #include "Fields.H"
-#include "Insert/Config/HallElectrostaticConfig.H"
+#include "Insert/Config/ElectrostaticMaterialConfig.H"
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Core/WarpXInsert.h"
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-#include "Insert/Fields/HallElectrostaticMaterial.H"
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/ElectrostaticMaterial.H"
 #include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 #include "Insert/Utils/InsertUtils.h"
@@ -35,7 +35,7 @@ void FillPhiGhosts (
     ablastr::fields::MultiLevelScalarField const& phi,
     MaterialPoissonSolver* material_solver)
 {
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     if (material_solver && material_solver->isMonopole()) {
         phi[0]->FillBoundary();
         if (WarpX::grid_type == ablastr::utils::enums::GridType::Collocated) {
@@ -47,8 +47,8 @@ void FillPhiGhosts (
     amrex::ignore_unused(material_solver);
 #endif
     SetPhiGuards();
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    HallElectrostaticMaterial::GetInstance().fillPhiGhosts(phi);
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+    ElectrostaticMaterial::GetInstance().fillPhiGhosts(phi);
 #endif
 }
 
@@ -57,7 +57,7 @@ AnodeVoltage ()
 {
 #if defined(WARPX_DIM_3D)
     // Runtime switch: insert.zmin_ring_anode = 1 sets the zmin domain-face
-    // nodes inside the Hall anode ring to my_constants.voltage (the rest of
+    // nodes inside the legacy annular electrode to my_constants.voltage (the rest of
     // the face keeps boundary.potential_lo_z). Skipped when the electrostatic
     // material (volume anode) path is active; see Insert::SetBoundaryPhi.
     static bool const enabled = [] () {
@@ -72,7 +72,7 @@ AnodeVoltage ()
 
     WarpX& warpx_instance = WarpX::GetInstance();
     auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
-    auto const config = ReadHallAnodeRingConfig(warpx_instance.Geom(0));
+    auto const config = ReadLegacyAnnularElectrodeConfig(warpx_instance.Geom(0));
 
     amrex::Box domain = warpx_instance.Geom(0).Domain();
     domain.surroundingNodes();
@@ -95,7 +95,7 @@ AnodeVoltage ()
             if (k == zlo) {
                 amrex::Real const x = problo_x + amrex::Real(i - xlo) * dx;
                 amrex::Real const y = problo_y + amrex::Real(j - ylo) * dy;
-                if (IsHallAnodeRingHit(x, y, config)) {
+                if (IsAnnularElectrodeHit(x, y, config)) {
                     phi(i, j, k) = config.voltage;
                 }
             }

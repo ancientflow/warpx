@@ -12,10 +12,10 @@
 
 namespace Insert {
 
-class HallDistribution1D
+class Distribution1D
 {
 public:
-    virtual ~HallDistribution1D () = default;
+    virtual ~Distribution1D () = default;
 
     [[nodiscard]] virtual amrex::ParticleReal
     sample (amrex::RandomEngine const& engine) const = 0;
@@ -29,10 +29,10 @@ public:
     }
 };
 
-class HallConstantDistribution1D final : public HallDistribution1D
+class ConstantDistribution1D final : public Distribution1D
 {
 public:
-    explicit HallConstantDistribution1D (amrex::ParticleReal value) noexcept;
+    explicit ConstantDistribution1D (amrex::ParticleReal value) noexcept;
 
     [[nodiscard]] amrex::ParticleReal
     sample (amrex::RandomEngine const& engine) const override;
@@ -44,10 +44,10 @@ private:
     amrex::ParticleReal m_value;
 };
 
-class HallUniformDistribution1D final : public HallDistribution1D
+class UniformDistribution1D final : public Distribution1D
 {
 public:
-    HallUniformDistribution1D (amrex::ParticleReal min,
+    UniformDistribution1D (amrex::ParticleReal min,
                                amrex::ParticleReal max);
 
     [[nodiscard]] amrex::ParticleReal
@@ -61,10 +61,10 @@ private:
     amrex::ParticleReal m_max;
 };
 
-class HallAreaUniformDistribution1D final : public HallDistribution1D
+class AreaUniformDistribution1D final : public Distribution1D
 {
 public:
-    HallAreaUniformDistribution1D (amrex::ParticleReal min,
+    AreaUniformDistribution1D (amrex::ParticleReal min,
                                    amrex::ParticleReal max);
 
     [[nodiscard]] amrex::ParticleReal
@@ -78,10 +78,10 @@ private:
     amrex::ParticleReal m_max;
 };
 
-class HallGaussianDistribution1D final : public HallDistribution1D
+class GaussianDistribution1D final : public Distribution1D
 {
 public:
-    HallGaussianDistribution1D (amrex::ParticleReal mean,
+    GaussianDistribution1D (amrex::ParticleReal mean,
                                 amrex::ParticleReal sigma);
 
     [[nodiscard]] amrex::ParticleReal
@@ -95,10 +95,10 @@ private:
     amrex::ParticleReal m_sigma;
 };
 
-class HallPositiveGaussianDistribution1D final : public HallDistribution1D
+class PositiveGaussianDistribution1D final : public Distribution1D
 {
 public:
-    HallPositiveGaussianDistribution1D (amrex::ParticleReal mean,
+    PositiveGaussianDistribution1D (amrex::ParticleReal mean,
                                         amrex::ParticleReal sigma);
 
     [[nodiscard]] amrex::ParticleReal
@@ -112,10 +112,10 @@ private:
     amrex::ParticleReal m_sigma;
 };
 
-class HallFluxGaussianDistribution1D final : public HallDistribution1D
+class FluxGaussianDistribution1D final : public Distribution1D
 {
 public:
-    explicit HallFluxGaussianDistribution1D (amrex::ParticleReal sigma);
+    explicit FluxGaussianDistribution1D (amrex::ParticleReal sigma);
 
     [[nodiscard]] amrex::ParticleReal
     sample (amrex::RandomEngine const& engine) const override;
@@ -127,10 +127,10 @@ private:
     amrex::ParticleReal m_sigma;
 };
 
-class HallSingleSpokeDistribution1D final : public HallDistribution1D
+class SingleSpokeDistribution1D final : public Distribution1D
 {
 public:
-    HallSingleSpokeDistribution1D (amrex::ParticleReal center,
+    SingleSpokeDistribution1D (amrex::ParticleReal center,
                                    amrex::ParticleReal sigma, int num_bins);
 
     [[nodiscard]] amrex::ParticleReal
@@ -144,10 +144,10 @@ private:
     NumericalInverseCDFSampler1D m_sampler;
 };
 
-class HallMultiSpokeDistribution1D final : public HallDistribution1D
+class MultiSpokeDistribution1D final : public Distribution1D
 {
 public:
-    HallMultiSpokeDistribution1D (int spoke_count, amrex::ParticleReal sigma,
+    MultiSpokeDistribution1D (int spoke_count, amrex::ParticleReal sigma,
                                   amrex::ParticleReal phase, int num_bins);
 
     [[nodiscard]] amrex::ParticleReal
@@ -161,10 +161,10 @@ private:
     NumericalInverseCDFSampler1D m_sampler;
 };
 
-class HallNeutralSpokeDistribution1D final : public HallDistribution1D
+class NeutralSpokeDistribution1D final : public Distribution1D
 {
 public:
-    HallNeutralSpokeDistribution1D (
+    NeutralSpokeDistribution1D (
         amrex::ParticleReal ion_width, amrex::ParticleReal min_ratio,
         amrex::ParticleReal drop_exponent, amrex::ParticleReal phase,
         bool reverse, int spoke_count, int num_bins);
@@ -180,10 +180,10 @@ private:
     NumericalInverseCDFSampler1D m_sampler;
 };
 
-class HallDiscreteDistribution1D final : public HallDistribution1D
+class DiscreteDistribution1D final : public Distribution1D
 {
 public:
-    HallDiscreteDistribution1D (std::vector<amrex::ParticleReal> values,
+    DiscreteDistribution1D (std::vector<amrex::ParticleReal> values,
                                 std::vector<amrex::ParticleReal> weights);
 
     [[nodiscard]] amrex::ParticleReal
@@ -201,10 +201,10 @@ private:
     amrex::ParticleReal m_integral;
 };
 
-class HallTabulatedDistribution1D final : public HallDistribution1D
+class TabulatedDistribution1D final : public Distribution1D
 {
 public:
-    HallTabulatedDistribution1D (std::vector<amrex::ParticleReal> values,
+    TabulatedDistribution1D (std::vector<amrex::ParticleReal> values,
                                  std::vector<amrex::ParticleReal> pdf,
                                  int num_bins);
 
@@ -221,10 +221,10 @@ private:
     NumericalInverseCDFSampler1D m_sampler;
 };
 
-class HallParserDistribution1D final : public HallDistribution1D
+class ParserDistribution1D final : public Distribution1D
 {
 public:
-    HallParserDistribution1D (amrex::ParticleReal min, amrex::ParticleReal max,
+    ParserDistribution1D (amrex::ParticleReal min, amrex::ParticleReal max,
                               int num_bins, std::string const& variable_name,
                               std::string const& expression);
 
@@ -241,7 +241,7 @@ private:
     NumericalInverseCDFSampler1D m_sampler;
 };
 
-std::unique_ptr<HallDistribution1D>
-MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix);
+std::unique_ptr<Distribution1D>
+MakeDistribution1D (amrex::ParmParse const& pp, std::string const& prefix);
 
 } // namespace Insert

@@ -1,6 +1,10 @@
 # Insert 诊断与注入参数
 
-本文档整理 `Source/Insert` 当前运行时诊断和 Hall 注入输入参数。参数名按
+`Source/Insert` 按功能组织材料静电、壁面交互、粒子注入、碰撞和诊断，
+不按 CHT/PHT 或推力器类型划分。具体材料、Hall 物理项和装置算例仍使用其物理名称。
+[命名与模块职责说明](ModuleNaming.md) 列出本次迁移及保留的专用模型。
+
+本文档整理 `Source/Insert` 当前运行时诊断和粒子注入输入参数。参数名按
 AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 
 ## 已移除的旧边界参数
@@ -37,18 +41,23 @@ insert.zmin_ring_anode = 1
 
 ## 静电介质与体阳极
 
-当前统一材料后端只用于 3D Cartesian、lab-frame、MLMG、完整静态单层域，不支持 EB、IGF、
+当前统一材料后端用于 3D Cartesian、lab-frame、MLMG、非周期静态网格，不支持 EB、IGF、
 relativistic electrostatic solver 或 Python `poissonsolver` callback。
 
 官方 WarpX/ablastr 求解路径由唯一的编译宏
-`WARPX_USE_HALL_ELECTROSTATIC_MATERIALS` 控制。宏在
-`Source/Insert/Config/HallElectrostaticConfig.H` 中只为 3D target 定义。注释对应的
+`WARPX_USE_ELECTROSTATIC_MATERIALS` 控制。宏在
+`Source/Insert/Config/ElectrostaticMaterialConfig.H` 中只为 3D target 定义。注释对应的
 `#define` 行并重新编译，即可使官方目录编译原有求解路径；
 Insert 下的材料实现仍可保留在源文件列表中。
 
 启用后，`LabFrameExplicitES` 持有统一材料 Poisson 求解器，其缓存按需初始化。
 静态网格、介电常数和阳极 mask 在首次调用时初始化，后续求解复用多重网格层级。
-每步求解都恢复阳极指定电势。局部多层材料求解待 AMR 计划阶段 4–5。
+每步求解都恢复阳极指定电势。Dirichlet 已支持局部多层网格，每层持有独立算子和 MLMG；
+monopole 仍限完整单层域。细层必须严格位于物理域内部，各方向细化比均为 2。
+不检查阳极与粗细接口之间的模板缓冲，也不以此限制 MG 粗化。
+局部细层可以不含阳极，此时只使用物理/覆盖约束，不人为添加固定节点。
+同层 Box 接缝仍由邻接网格提供数据，不作为粗细固定边界。
+详细实现、运行记录和精度限制见 [阶段 4 记录](AMRStage4.md)。
 该路径不支持运行期间 regrid、moving window 或重新分配网格，
 需设置 `warpx.regrid_int = -1`、`algo.load_balance_intervals = 0`。
 
@@ -124,8 +133,8 @@ staggering 从粗层插值并执行同层通信，供粒子 gather 使用。
 ### 单层单极 Robin 求解
 
 `insert.electrostatic_boundary` 默认为 `dirichlet`。材料启用时，两种模式统一使用
-`cht::MLNodeRobinLaplacian` 和同一缓存生命周期；非材料路径保留原生算子。
-当前两种材料模式均限于完整单层域，局部 AMR 尚未支持。
+`Insert::Poisson::MLNodeRobinLaplacian` 和同一缓存生命周期；非材料路径保留原生算子。
+Dirichlet 已接入公共逐层求解和粗到细插值；monopole 仍限完整单层域，多层支持留待阶段 5。
 Dirichlet 保留原生 `boundary.potential_*` 时间函数及非零值，每步将已设置的节点面值
 复制为 `a=1,b=0` 的 forcing。选择 `monopole` 后，同一算子施加六面单极 Robin 条件，
 内部阳极仍固定电势：
@@ -172,7 +181,8 @@ insert.robin_diagnostics = 1
 `robin_diagnostics=1` 对两种材料模式都生效，输出实际 MG 层数和固定节点数、
 粗化上限、有效 pre/post、迭代次数、材料层次构建次数、`compPhysicalResidual` 最大范数，
 以及准备/求解/额外残差计算耗时；提高 MLMG/bottom 日志等级以记录 bottom 失败或回退。
-诊断默认关闭，不额外分配残差场。
+Dirichlet 多层诊断另检查固定节点误差（必须为零）并统计 Box 边界上的未知节点条目；
+条目统计包含同层共享节点副本。诊断默认关闭，不额外分配残差场。
 
 Robin 面将边界节点保留为未知数。两种模式均通过统一选项入口应用
 `warpx.self_fields_num_pre_smooth` 和 `warpx.self_fields_num_post_smooth`，默认 2/2；
@@ -309,8 +319,14 @@ Poisson 路径已启用，以分配和求解持久壁面电荷。
 壁面电流和边界粒子缓存相关诊断共享同一个间隔：
 
 ```text
-my_constants.hall_diag_interval = 10
+my_constants.boundary_particle_diag_interval = 10
 ```
+
+旧参数 `my_constants.hall_diag_interval` 和
+`my_constants.clear_hall_boundary_particle_cache_diag` 继续作为兼容别名，分别映射到
+`my_constants.boundary_particle_diag_interval` 和
+`my_constants.clear_boundary_particle_cache_diag`。新旧名称同时出现时必须取相同值，
+否则初始化报错。
 
 默认值为 `10`，内部会限制为至少 `1`。`AnodeCurrentDiagOutput` 使用该间隔
 作为阳极电流的采样窗口（写出并清零累加器）。以下路径均使用该间隔读取
@@ -319,7 +335,7 @@ my_constants.hall_diag_interval = 10
 - `ThrustCalc`
 - `BeamDivergenceCalc`
 - `IEDFCalc`
-- `ClearHallBoundaryParticleCache`
+- `ClearBoundaryParticleCache`
 
 这意味着边界粒子缓存的读取和清理使用同一时步判断，避免诊断间隔不一致导致
 粒子在被统计前被清掉。
@@ -333,12 +349,12 @@ my_constants.hall_diag_interval = 10
 | `my_constants.collision_record_diag` | `0` | 写出碰撞产生的电子和离子宏粒子数到 `collision_record.dat`。需要编译宏 `COLLISION_RECORD`。 |
 | `my_constants.anode_current_diag` | `0` | 统计每面解析壁面吸收的电流，每壁面一个输出文件。需要启用 `insert.analytic_walls`。 |
 | `my_constants.anode_current_prefix` | `anode_current` | 壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
-| `my_constants.thrust_diag` | `0` | 统计出口离子轴向动量并计算推力。需要 `HALL3D`。 |
-| `my_constants.beam_divergence_diag` | `0` | 统计出口离子束流发散角。需要 `HALL3D`。 |
-| `my_constants.iedf_diag` | `0` | 统计出口离子能量分布函数。需要 `HALL3D`。 |
-| `my_constants.clear_hall_boundary_particle_cache_diag` | `0` | 按 `hall_diag_interval` 清理边界粒子缓存。需要 `HALL3D`。 |
+| `my_constants.thrust_diag` | `0` | 统计出口离子轴向动量并计算推力。需要 `WARPX_INSERT_3D`。 |
+| `my_constants.beam_divergence_diag` | `0` | 统计出口离子束流发散角。需要 `WARPX_INSERT_3D`。 |
+| `my_constants.iedf_diag` | `0` | 统计出口离子能量分布函数。需要 `WARPX_INSERT_3D`。 |
+| `my_constants.clear_boundary_particle_cache_diag` | `0` | 按 `boundary_particle_diag_interval` 清理边界粒子缓存。需要 `WARPX_INSERT_3D`。 |
 
-`clear_hall_boundary_particle_cache_diag` 应在所有读取边界缓存的诊断之后执行。
+`clear_boundary_particle_cache_diag` 应在所有读取边界缓存的诊断之后执行。
 当前 `Insert::AfterDiagnostics()` 中的调用顺序已满足这一点。
 
 ### 解析壁面交互计数
@@ -360,7 +376,7 @@ my_constants.wall_interaction_diag = 1
 
 计数跨 MPI ranks 和所有解析壁面求和，只由 IO rank 输出；仅统计配置了解析
 壁面策略的物种。没有事件（包括该物种本步未推进）时输出零。每步重新计数，
-不受 `hall_diag_interval` 控制，不包括计算域外边界和 EB 的交互。
+不受 `boundary_particle_diag_interval` 控制，不包括计算域外边界和 EB 的交互。
 所有数值均为宏粒子事件计数，不是权重之和，也不是 species 净增减量。
 产物数归属于入射物种：例如 `xe_ions` 的 `emitted products` 表示由离子撞壁
 产生的原子，不会记入 `xe_neutral` 的入射事件。
@@ -377,7 +393,7 @@ my_constants.anode_current_prefix = "anode_current"
 
 壁面电流统计基于解析壁面（`insert.analytic_walls`）：每步在
 `AnalyticBoundaryInteraction` 的壁面吸收 kernel 中累加，按
-`hall_diag_interval` 在诊断阶段写出并清零，即每行是一个采样窗口内的
+`boundary_particle_diag_interval` 在诊断阶段写出并清零，即每行是一个采样窗口内的
 累计量。**每面解析壁面一个输出文件**，文件名为
 `<anode_current_prefix>_<wall>.dat`（如 `anode_current_anode_ring.dat`、
 `anode_current_ceramic_wall.dat`）；阳极电流即阳极壁面对应的文件。
@@ -425,7 +441,7 @@ time    dt    ion_weight    thrust_N    axial_momentum_kg_m_per_s
 ```
 
 `dt` 为本次诊断与上次诊断之间的物理时间；首次统计时如果无法由时间差得到，
-使用 `hall_diag_interval * WarpX::getdt(0)` 估算。
+使用 `boundary_particle_diag_interval * WarpX::getdt(0)` 估算。
 
 ### 束流发散
 
@@ -471,11 +487,11 @@ current_A    pdf_per_eV
 
 每次诊断块写完后会额外写一个空行。
 
-## Hall 注入
+## 粒子注入
 
 ### 入口参数
 
-当前 `HALL3D` / `HALL3D_INIT` 注入入口统一走 `HallInjector`。全局入口参数为：
+当前 `WARPX_INSERT_3D` / `WARPX_INSERT_INITIALIZATION_3D` 注入入口统一走 `ParticleInjector`。全局入口参数为：
 
 ```text
 insert.initial_sources = source1 source2
@@ -771,9 +787,9 @@ xe_neutral_inlet.velocity.vz.sigma = sqrt(kb * Tz / m_xe)
 
 - `Source/Insert/Diagnostics/InsertRuntimeDiagnostics.cpp`
 - `Source/Insert/Utils/InsertUtils.cpp`
-- `Source/Insert/Injection/HallInjector.cpp`
-- `Source/Insert/Injection/HallRateModel.cpp`
-- `Source/Insert/Injection/HallCoordinateDistribution.cpp`
-- `Source/Insert/Injection/HallDistribution1D.cpp`
-- `Source/Insert/Injection/HallInjectionSource.cpp`
+- `Source/Insert/Injection/ParticleInjector.cpp`
+- `Source/Insert/Injection/InjectionRateModel.cpp`
+- `Source/Insert/Injection/CoordinateDistribution.cpp`
+- `Source/Insert/Injection/Distribution1D.cpp`
+- `Source/Insert/Injection/ParticleInjectionSource.cpp`
 - `Source/Insert/Geometry/TruncatedConeSurfaceSampler.cpp`

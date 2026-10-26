@@ -16,9 +16,9 @@
 #include "Insert/Fields/ECDIChargeFilter.h"
 #include "Python/callbacks.H"
 #include "WarpX.H"
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-#include "Insert/Fields/HallElectrostaticMaterial.H"
-#include "Insert/Fields/HallWallCharge.H"
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+#include "Insert/Fields/ElectrostaticMaterial.H"
+#include "Insert/Fields/WallCharge.H"
 #include "Insert/Fields/MaterialPoissonSolver.H"
 #endif
 
@@ -31,13 +31,11 @@ using namespace amrex;
 
 void LabFrameExplicitES::InitData() {
     auto & warpx = WarpX::GetInstance();
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     m_material_solver.readParameters(warpx.Geom(0));
-    if (Insert::HallElectrostaticMaterial::GetInstance().enabled()) {
-        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1 && warpx.maxLevel() == 0 &&
-            warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
-            "The unified material solver requires one full nonperiodic Cartesian level; "
-            "local fine patches are not yet supported.");
+    if (Insert::ElectrostaticMaterial::GetInstance().enabled()) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
+            "The material solver requires nonperiodic Cartesian geometry.");
     }
     if (m_material_solver.isMonopole()) {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
@@ -47,7 +45,7 @@ void LabFrameExplicitES::InitData() {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1 && warpx.maxLevel() == 0 &&
             warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
             "Monopole Robin requires one full nonperiodic Cartesian AMR level.");
-        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(Insert::HallElectrostaticMaterial::GetInstance().enabled(),
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(Insert::ElectrostaticMaterial::GetInstance().enabled(),
             "Monopole Robin requires insert.use_electrostatic_materials = 1.");
         for (int d = 0; d < 3; ++d) {
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
@@ -78,8 +76,8 @@ void LabFrameExplicitES::InitData() {
         "insert.electrostatic_boundary = monopole requires 3D.");
 #endif
     m_poisson_boundary_handler->DefinePhiBCs(warpx.Geom(0));
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    if (Insert::HallElectrostaticMaterial::GetInstance().enabled()) {
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+    if (Insert::ElectrostaticMaterial::GetInstance().enabled()) {
         for (int d = 0; d < 3; ++d) {
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
                 m_poisson_boundary_handler->lobc[d] == amrex::LinOpBCType::Dirichlet &&
@@ -237,7 +235,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     bool const skip_lev0_coarse_patch = true;
     bool const use_robin =
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
         m_material_solver.isMonopole();
 #else
         false;
@@ -256,11 +254,11 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
     ExecutePythonCallback("afterdeposition");
 
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-    auto& electrostatic_material = Insert::HallElectrostaticMaterial::GetInstance();
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+    auto& electrostatic_material = Insert::ElectrostaticMaterial::GetInstance();
     if (electrostatic_material.enabled() && max_level > 0) {
         // Add raw persistent contributions once. Only this working rho is synchronized.
-        Insert::HallWallCharge::GetInstance().addTo(rho_fp, max_level);
+        Insert::WallCharge::GetInstance().addTo(rho_fp, max_level);
     }
 #endif
 
@@ -293,14 +291,14 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 
     // set the boundary potentials appropriately
     if (!use_robin) { setPhiBC(phi_fp, warpx.gett_new(0)); }
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     std::optional<amrex::Vector<amrex::iMultiFab const*>> anode_masks = std::nullopt;
     ablastr::fields::ConstMultiLevelScalarField const* relative_permittivity = nullptr;
     if (electrostatic_material.enabled()) {
         if (max_level == 0) {
             // Preserve the single-level source ordering: wall charge bypasses
             // particle filtering and PEC image-charge processing.
-            Insert::HallWallCharge::GetInstance().addTo(rho_fp, max_level);
+            Insert::WallCharge::GetInstance().addTo(rho_fp, max_level);
         }
         electrostatic_material.prepare(rho_fp, phi_fp, max_level);
         anode_masks = *electrostatic_material.anodeMasks();
@@ -319,7 +317,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
             hibc = m_poisson_boundary_handler->hibc;
         }
         amrex::Vector<amrex::iMultiFab const*> fixed_masks;
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
         if (anode_masks) { fixed_masks = *anode_masks; }
         if (use_robin) {
             // Monopole owns the physical boundary; its face nodes are unknowns.
@@ -356,11 +354,20 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
                     m_nodal_initial_guess.prepare(lev, phi, verbosity);
                 };
         }
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
-        if (relative_permittivity) {
-            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(max_level == 0,
-                "The unified material solver currently supports one full AMR level; "
-                "local fine patches require the stage 4 operator extension.");
+        ablastr::fields::PoissonLevelSolver level_solver;
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
+        if (relative_permittivity && !use_robin) {
+            level_solver = [&](int lev, amrex::LPInfo const&, amrex::MultiFab& phi,
+                               amrex::MultiFab& rhs,
+                               ablastr::fields::MLMGOptions const& options,
+                               amrex::Real absolute_tolerance) -> amrex::MLMG& {
+                return m_material_solver.solveLevel(lev, rhs, phi,
+                    *relative_permittivity->at(lev), *anode_masks->at(lev),
+                    *electrostatic_material.anodePotentials()->at(lev), warpx.Geom(lev),
+                    options, absolute_tolerance);
+            };
+        }
+        if (use_robin) {
             if (prepare_level) { prepare_level(0, *phi_fp[0]); }
             m_material_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
                 *anode_masks->at(0), *electrostatic_material.anodePotentials()->at(0),
@@ -369,12 +376,12 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #endif
         {
             computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                       Efield_fp, std::nullopt, {}, prepare_level);
+                       Efield_fp, std::nullopt, level_solver, prepare_level);
         }
 #endif
     }
     Insert::FillPhiGhosts(phi_fp
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
                           , &m_material_solver
 #endif
     );
@@ -393,7 +400,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     if (!EB::enabled() || IsPythonCallbackInstalled("poissonsolver")) {
         computeE(Efield_fp, phi_fp, beta);
     }
-#ifdef WARPX_USE_HALL_ELECTROSTATIC_MATERIALS
+#ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     if (use_robin) {
         for (auto* field : Efield_fp[0]) { field->FillBoundary(); }
     } else {

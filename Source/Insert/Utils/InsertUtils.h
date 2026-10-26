@@ -13,7 +13,9 @@
 
 namespace Insert {
 
-struct HallAnodeRingConfig
+// Compatibility geometry for the original z-min annular electrode. General
+// electrodes use the implicit material mask or configured analytic walls.
+struct LegacyAnnularElectrodeConfig
 {
     amrex::Real voltage = amrex::Real(0.0);
     amrex::ParticleReal center_x = amrex::ParticleReal(0.0);
@@ -40,7 +42,7 @@ amrex::RandomEngine MakeRandomEngine ();
 
 amrex::ParticleReal TwoPi ();
 
-HallAnodeRingConfig ReadHallAnodeRingConfig (amrex::Geometry const& geom);
+LegacyAnnularElectrodeConfig ReadLegacyAnnularElectrodeConfig (amrex::Geometry const& geom);
 
 template <typename T>
 T
@@ -64,8 +66,8 @@ QueryWithParser (amrex::ParmParse const& pp, std::string const& prefix,
 
 template <typename T>
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE bool
-IsHallAnodeRingHit (T const x, T const y,
-                    HallAnodeRingConfig const config) noexcept
+IsAnnularElectrodeHit (T const x, T const y,
+                    LegacyAnnularElectrodeConfig const config) noexcept
 {
     amrex::ParticleReal const dx =
         static_cast<amrex::ParticleReal>(x) - config.center_x;

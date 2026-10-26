@@ -27,6 +27,7 @@ using PoissonLevelPrepare = std::function<void (int, amrex::MultiFab&)>;
 /** Optional per-level solve used by computePhi; an empty callback uses the native solver.
  *
  * Called synchronously after coarse interpolation and RHS scaling by -1/epsilon0.
+ * RHS is a private working copy; masking it cannot change the deposited rho.
  * The callback restores its fixed potentials, configures its MLMG, synchronizes
  * the RHS, and solves this level. It must not rescale the RHS, interpolate to the
  * next AMR level, or commit time history. The caller still owns those operations.

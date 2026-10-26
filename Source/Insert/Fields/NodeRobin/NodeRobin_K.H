@@ -30,13 +30,13 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef CHT_NODE_ROBIN_KERNELS_H_
-#define CHT_NODE_ROBIN_KERNELS_H_
+#ifndef WARPX_INSERT_POISSON_NODE_ROBIN_KERNELS_H_
+#define WARPX_INSERT_POISSON_NODE_ROBIN_KERNELS_H_
 #include <AMReX_Array4.H>
 #include <AMReX_Gpu.H>
 #include <AMReX_IntVect.H>
-static_assert(AMREX_SPACEDIM == 3, "CHT nodal Robin requires three dimensions");
-namespace cht::detail {
+static_assert(AMREX_SPACEDIM == 3, "Nodal Robin requires three dimensions");
+namespace Insert::Poisson::detail {
 using amrex::Array4;
 using amrex::Real;
 using amrex::GpuArray;
@@ -237,5 +237,5 @@ void mlndlap_restriction (int i, int j, int k, Array4<Real> const& crse,
                       + Real(1./8.)*fine(ii,jj,kk);
     }
 }
-} // namespace cht::detail
+} // namespace Insert::Poisson::detail
 #endif

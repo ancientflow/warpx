@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Insert/Injection/HallInjectionSource.h"
+#include "Insert/Injection/ParticleInjectionSource.h"
 
 #include <AMReX_REAL.H>
 
@@ -10,21 +10,21 @@ class WarpX;
 
 namespace Insert {
 
-class HallInjector
+class ParticleInjector
 {
 public:
-    static HallInjector& GetInstance ();
+    static ParticleInjector& GetInstance ();
 
     void ReadParameters ();
     void InitializePlasma (WarpX& warpx);
     void InjectParticles (WarpX& warpx, amrex::Real dt, int step);
 
 private:
-    HallInjector () = default;
+    ParticleInjector () = default;
 
     bool m_initialized = false;
-    std::vector<HallInjectionSource> m_initial_sources;
-    std::vector<HallInjectionSource> m_continuous_sources;
+    std::vector<ParticleInjectionSource> m_initial_sources;
+    std::vector<ParticleInjectionSource> m_continuous_sources;
 };
 
 } // namespace Insert

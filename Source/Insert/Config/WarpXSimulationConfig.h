@@ -6,8 +6,8 @@
  * Uncomment a disabled #define to enable the corresponding optional path.
  */
 
-/* 3D Hall simulation hooks. */
+/* 3D Insert simulation hooks. */
 #ifdef WARPX_DIM_3D
-#define HALL3D
-// #define HALL3D_INIT
+#define WARPX_INSERT_3D
+// #define WARPX_INSERT_INITIALIZATION_3D
 #endif

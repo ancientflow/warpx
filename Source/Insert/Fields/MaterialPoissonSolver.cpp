@@ -1,6 +1,6 @@
 #include "MaterialPoissonSolver.H"
 
-#include "NodeRobin/CHT_MLNodeRobinLaplacian.H"
+#include "NodeRobin/MLNodeRobinLaplacian.H"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
 
@@ -116,7 +116,8 @@ int coarseningLimit (amrex::iMultiFab const& mask, amrex::MultiFab const& epsilo
         amrex::ParallelDescriptor::ReduceIntMax(bad);
         amrex::ParallelDescriptor::ReduceIntMin(klo);
         amrex::ParallelDescriptor::ReduceIntMax(khi);
-        if (bad || khi <= klo) { break; }
+        bool const has_electrode = klo != std::numeric_limits<int>::max();
+        if (bad || (has_electrode && khi <= klo)) { break; }
         coarse = std::move(next);
         coarse_sigma = std::move(next_sigma);
         current = coarse.get();
@@ -137,7 +138,7 @@ struct MaterialPoissonSolver::Cache
     std::unique_ptr<amrex::MultiFab> rhs;
     std::unique_ptr<amrex::MultiFab> residual;
     // Reverse destruction order: MLMG must die before the operator it references.
-    std::unique_ptr<cht::MLNodeRobinLaplacian> op;
+    std::unique_ptr<Insert::Poisson::MLNodeRobinLaplacian> op;
     std::unique_ptr<amrex::MLMG> mlmg;
     int solves = 0;
     int coarsening_cap = 0;
@@ -148,7 +149,7 @@ MaterialPoissonSolver::~MaterialPoissonSolver () = default;
 
 void MaterialPoissonSolver::readParameters (amrex::Geometry const& geom)
 {
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!m_cache,
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(m_caches.empty(),
         "Material boundary parameters cannot change after the first solve.");
     amrex::ParmParse pp("insert");
     std::string boundary = "dirichlet";
@@ -179,7 +180,25 @@ void MaterialPoissonSolver::solve (
     amrex::MultiFab const& voltage, amrex::Geometry const& geom,
     ablastr::fields::MLMGOptions const& options)
 {
+    amrex::MultiFab rhs(rho.boxArray(), rho.DistributionMap(), 1, 0);
+    amrex::MultiFab::Copy(rhs, rho, 0, 0, 1, 0);
+    if (m_monopole) { normalizeBoundarySource(rhs, geom); }
+    rhs.mult(-1.0/ablastr::constant::SI::epsilon_0);
+    solveLevel(0, rhs, phi, epsilon, mask, voltage, geom, options,
+               options.absolute_tolerance);
+}
+
+amrex::MLMG& MaterialPoissonSolver::solveLevel (
+    int lev, amrex::MultiFab const& rho, amrex::MultiFab& phi,
+    amrex::MultiFab const& epsilon, amrex::iMultiFab const& mask,
+    amrex::MultiFab const& voltage, amrex::Geometry const& geom,
+    ablastr::fields::MLMGOptions const& options, amrex::Real absolute_tolerance)
+{
     auto const prepare_start = amrex::second();
+    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(lev >= 0 && (!m_monopole || lev == 0),
+        "Multi-level monopole material solves are not supported yet.");
+    if (static_cast<int>(m_caches.size()) <= lev) { m_caches.resize(lev+1); }
+    auto& cache = m_caches[lev];
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(geom.Coord() == 0 && !geom.isAnyPeriodic(),
         "Material Poisson requires nonperiodic 3D Cartesian geometry.");
     auto const nodal_grids = amrex::convert(epsilon.boxArray(), amrex::IntVect(1));
@@ -201,9 +220,9 @@ void MaterialPoissonSolver::solve (
         "Material Poisson supports only the native smoother and Krylov bottom solvers.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(voltage.is_finite(0, 1, 0),
         "Material Poisson anode voltage must be finite.");
-    if (!m_cache) {
-        m_cache = std::make_unique<Cache>();
-        auto& c = *m_cache;
+    if (!cache) {
+        cache = std::make_unique<Cache>();
+        auto& c = *cache;
         c.geom = geom;
         c.epsilon = &epsilon;
         c.mask = &mask;
@@ -214,7 +233,7 @@ void MaterialPoissonSolver::solve (
         int const cap = coarseningLimit(mask, epsilon, geom, options.max_coarsening_level);
         info.setMaxCoarseningLevel(cap);
         c.coarsening_cap = cap;
-        c.op = std::make_unique<cht::MLNodeRobinLaplacian>(
+        c.op = std::make_unique<Insert::Poisson::MLNodeRobinLaplacian>(
             amrex::Vector<amrex::Geometry>{geom},
             amrex::Vector<amrex::BoxArray>{epsilon.boxArray()},
             amrex::Vector<amrex::DistributionMapping>{epsilon.DistributionMap()}, info);
@@ -222,7 +241,7 @@ void MaterialPoissonSolver::solve (
         if (m_monopole) {
             c.op->setMonopoleBC(m_center, m_phi_infinity);
         } else {
-            cht::MLNodeRobinLaplacian::Faces faces;
+            Insert::Poisson::MLNodeRobinLaplacian::Faces faces;
             for (auto& face : faces) { face = {1, 0, 0}; }
             c.op->setRobinBC(faces);
         }
@@ -235,7 +254,7 @@ void MaterialPoissonSolver::solve (
             amrex::Print() << "Material Poisson cache: max coarsening level = " << cap << '\n';
         }
     }
-    auto& c = *m_cache;
+    auto& c = *cache;
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(c.epsilon == &epsilon && c.mask == &mask &&
         c.rhs->boxArray() == phi.boxArray() && c.rhs->DistributionMap() == phi.DistributionMap() &&
         c.geom.Domain() == geom.Domain() &&
@@ -258,22 +277,13 @@ void MaterialPoissonSolver::solve (
         for (int face = 0; face < 6; ++face) { c.op->setRobinForcing(face, phi); }
     }
     amrex::MultiFab::Copy(*c.rhs, rho, 0, 0, 1, 0);
-    if (m_monopole) { normalizeBoundarySource(*c.rhs, geom); }
-    c.rhs->mult(-1.0/ablastr::constant::SI::epsilon_0);
-    // Fixed-node sources are private to the solve; retain deposited rho.
-    auto const domain = amrex::surroundingNodes(geom.Domain());
-    bool const dirichlet = !m_monopole;
-    for (amrex::MFIter mfi(*c.rhs); mfi.isValid(); ++mfi) {
-        auto const r = c.rhs->array(mfi);
-        auto const m = mask.const_array(mfi);
-        amrex::ParallelFor(mfi.validbox(),
-            [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                if (m(i,j,k) == 0 ||
-                    (dirichlet && !domain.strictly_contains(amrex::IntVect(i,j,k)))) {
-                    r(i,j,k) = 0;
-                }
-            });
-    }
+    // Coverage, physical Dirichlet faces and electrodes all constrain only the
+    // private solve RHS. The public deposition remains byte-for-byte unchanged.
+    c.op->prepareForSolve();
+    c.op->setDirichletNodesToZero(0, 0, *c.rhs);
+    c.op->applyBC(0, 0, phi, amrex::MLLinOp::BCMode::Inhomogeneous,
+                  amrex::MLLinOp::StateMode::Solution);
+    if (m_diagnostics) { amrex::MultiFab::Copy(*c.residual, phi, 0, 0, 1, 0); }
     c.rhs->OverrideSync(geom.periodicity());
     auto effective_options = options;
     if (m_diagnostics) {
@@ -283,9 +293,12 @@ void MaterialPoissonSolver::solve (
         effective_options.bottom_verbosity = std::max(1, options.bottom_verbosity);
     }
     ablastr::fields::applyMLMGOptions(*c.mlmg, effective_options);
+    // Keep coarse-interpolated exterior ghosts in the caller's phi. MLMG's
+    // private nodal solution can have zero ghosts outside a local patch.
+    c.mlmg->setFinalFillBC(false);
     c.mlmg->setConvergenceNormType(amrex::MLMGNormType::greater);
-    auto const abs_tol = options.absolute_tolerance == 0 && c.rhs->norm0() == 0
-        ? amrex::Real(1.e-6) : options.absolute_tolerance;
+    auto const abs_tol = absolute_tolerance == 0 && c.rhs->norm0() == 0
+        ? amrex::Real(1.e-6) : absolute_tolerance;
     amrex::Gpu::streamSynchronize();
     auto const solve_start = amrex::second();
     c.mlmg->solve({&phi}, {c.rhs.get()}, options.relative_tolerance, abs_tol);
@@ -293,7 +306,7 @@ void MaterialPoissonSolver::solve (
     auto const solve_end = amrex::second();
     ++c.solves;
     if (m_diagnostics || options.verbosity > 0) {
-        amrex::Print() << "Material Poisson level 0 ("
+        amrex::Print() << "Material Poisson level " << lev << " ("
                        << (m_monopole ? "monopole" : "dirichlet") << ") solve " << c.solves
                        << ": MG levels = " << c.op->NMGLevels(0)
                        << ", coarsening cap = " << c.coarsening_cap
@@ -308,6 +321,31 @@ void MaterialPoissonSolver::solve (
     }
     if (m_diagnostics) {
         auto const diagnostic_start = amrex::second();
+        amrex::ReduceOps<amrex::ReduceOpMax, amrex::ReduceOpSum> ops;
+        amrex::ReduceData<amrex::Real, amrex::Long> data(ops);
+        using Tuple = decltype(data)::Type;
+        for (amrex::MFIter mfi(phi); mfi.isValid(); ++mfi) {
+            auto const p = phi.const_array(mfi);
+            auto const before = c.residual->const_array(mfi);
+            auto const fixed = c.op->dirichletMask().const_array(mfi);
+            auto const valid = mfi.validbox();
+            ops.eval(valid, data,
+                [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept -> Tuple {
+                    bool const seam = !valid.strictly_contains(amrex::IntVect(i,j,k));
+                    return {fixed(i,j,k) ? amrex::Math::abs(p(i,j,k)-before(i,j,k)) : 0,
+                            amrex::Long(seam && !fixed(i,j,k))};
+                });
+        }
+        auto const result = data.value();
+        auto fixed_error = amrex::get<0>(result);
+        auto seam_unknowns = amrex::get<1>(result);
+        amrex::ParallelDescriptor::ReduceRealMax(fixed_error);
+        amrex::ParallelDescriptor::ReduceLongSum(seam_unknowns);
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(fixed_error == 0,
+            "Material solve changed a prescribed physical, electrode or coarse/fine node.");
+        amrex::Print() << "Material Poisson level " << lev
+                       << ": fixed-node error = " << fixed_error
+                       << ", unknown Box-boundary entries = " << seam_unknowns << '\n';
         c.op->compPhysicalResidual(*c.residual, phi, *c.rhs);
         auto const residual = c.residual->norm0();
         amrex::Gpu::streamSynchronize();
@@ -322,6 +360,7 @@ void MaterialPoissonSolver::solve (
         for (auto count : c.mlmg->getNumCGIters()) { amrex::Print() << ' ' << count; }
         amrex::Print() << '\n';
     }
+    return *c.mlmg;
 }
 
 void MaterialPoissonSolver::normalizeBoundarySource (

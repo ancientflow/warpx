@@ -1,4 +1,4 @@
-#include "HallRateModel.h"
+#include "InjectionRateModel.h"
 
 #include "Insert/Utils/InsertUtils.h"
 #include "Utils/Parser/ParserUtils.H"
@@ -20,55 +20,55 @@ AssertPositive (amrex::Real value, std::string const& name)
 
 } // namespace
 
-HallFixedCountRateModel::HallFixedCountRateModel (amrex::Real count)
+FixedCountRateModel::FixedCountRateModel (amrex::Real count)
     : m_count(count)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_count >= 0.0, "HallFixedCountRateModel count must be non-negative.");
+        m_count >= 0.0, "FixedCountRateModel count must be non-negative.");
 }
 
 amrex::Real
-HallFixedCountRateModel::expectedMacroParticles (amrex::Real dt) const
+FixedCountRateModel::expectedMacroParticles (amrex::Real dt) const
 {
     amrex::ignore_unused(dt);
     return m_count;
 }
 
-HallDensityVolumeRateModel::HallDensityVolumeRateModel (
+DensityVolumeRateModel::DensityVolumeRateModel (
     amrex::Real density, amrex::Real volume, amrex::Real macro_weight)
     : m_density(density), m_volume(volume), m_macro_weight(macro_weight)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_density >= 0.0, "HallDensityVolumeRateModel density must be non-negative.");
+        m_density >= 0.0, "DensityVolumeRateModel density must be non-negative.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_volume >= 0.0, "HallDensityVolumeRateModel volume must be non-negative.");
-    AssertPositive(m_macro_weight, "HallDensityVolumeRateModel macro_weight");
+        m_volume >= 0.0, "DensityVolumeRateModel volume must be non-negative.");
+    AssertPositive(m_macro_weight, "DensityVolumeRateModel macro_weight");
 }
 
 amrex::Real
-HallDensityVolumeRateModel::expectedMacroParticles (amrex::Real dt) const
+DensityVolumeRateModel::expectedMacroParticles (amrex::Real dt) const
 {
     amrex::ignore_unused(dt);
     return m_density * m_volume / m_macro_weight;
 }
 
-HallCurrentRateModel::HallCurrentRateModel (
+CurrentRateModel::CurrentRateModel (
     amrex::Real current, amrex::Real macro_weight, amrex::Real l_factor)
     : m_current(current), m_macro_weight(macro_weight), m_l_factor(l_factor)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_current >= 0.0, "HallCurrentRateModel current must be non-negative.");
-    AssertPositive(m_macro_weight, "HallCurrentRateModel macro_weight");
-    AssertPositive(m_l_factor, "HallCurrentRateModel l_factor");
+        m_current >= 0.0, "CurrentRateModel current must be non-negative.");
+    AssertPositive(m_macro_weight, "CurrentRateModel macro_weight");
+    AssertPositive(m_l_factor, "CurrentRateModel l_factor");
 }
 
 amrex::Real
-HallCurrentRateModel::expectedMacroParticles (amrex::Real dt) const
+CurrentRateModel::expectedMacroParticles (amrex::Real dt) const
 {
     return m_current * dt / (m_l_factor * m_l_factor * PhysConst::q_e * m_macro_weight);
 }
 
-HallMassFlowRateModel::HallMassFlowRateModel (
+MassFlowRateModel::MassFlowRateModel (
     amrex::Real mass_flow, amrex::Real particle_mass,
     amrex::Real macro_weight, amrex::Real l_factor)
     : m_mass_flow(mass_flow),
@@ -77,25 +77,25 @@ HallMassFlowRateModel::HallMassFlowRateModel (
       m_l_factor(l_factor)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_mass_flow >= 0.0, "HallMassFlowRateModel mass_flow must be non-negative.");
-    AssertPositive(m_particle_mass, "HallMassFlowRateModel particle_mass");
-    AssertPositive(m_macro_weight, "HallMassFlowRateModel macro_weight");
-    AssertPositive(m_l_factor, "HallMassFlowRateModel l_factor");
+        m_mass_flow >= 0.0, "MassFlowRateModel mass_flow must be non-negative.");
+    AssertPositive(m_particle_mass, "MassFlowRateModel particle_mass");
+    AssertPositive(m_macro_weight, "MassFlowRateModel macro_weight");
+    AssertPositive(m_l_factor, "MassFlowRateModel l_factor");
 }
 
 amrex::Real
-HallMassFlowRateModel::expectedMacroParticles (amrex::Real dt) const
+MassFlowRateModel::expectedMacroParticles (amrex::Real dt) const
 {
     return m_mass_flow * dt / (m_l_factor * m_l_factor * m_particle_mass * m_macro_weight);
 }
 
 int
-HallFractionalParticleAccumulator::consume (
+FractionalParticleAccumulator::consume (
     amrex::Real expected_macro_particles)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         expected_macro_particles >= 0.0,
-        "HallFractionalParticleAccumulator requires non-negative particle counts.");
+        "FractionalParticleAccumulator requires non-negative particle counts.");
     m_remainder += expected_macro_particles;
     const auto count = static_cast<int>(std::floor(m_remainder));
     m_remainder -= static_cast<amrex::Real>(count);
@@ -103,13 +103,13 @@ HallFractionalParticleAccumulator::consume (
 }
 
 amrex::Real
-HallFractionalParticleAccumulator::remainder () const noexcept
+FractionalParticleAccumulator::remainder () const noexcept
 {
     return m_remainder;
 }
 
-std::unique_ptr<HallRateModel>
-MakeHallRateModel (
+std::unique_ptr<InjectionRateModel>
+MakeInjectionRateModel (
     amrex::ParmParse const& pp, std::string const& prefix)
 {
     std::string rate;
@@ -117,30 +117,30 @@ MakeHallRateModel (
     rate = ToLower(rate);
 
     if (rate == "fixed_count") {
-        return std::make_unique<HallFixedCountRateModel>(
+        return std::make_unique<FixedCountRateModel>(
             GetWithParser<amrex::Real>(pp, prefix, "count"));
     }
     if (rate == "density_volume") {
-        return std::make_unique<HallDensityVolumeRateModel>(
+        return std::make_unique<DensityVolumeRateModel>(
             GetWithParser<amrex::Real>(pp, prefix, "density"),
             GetWithParser<amrex::Real>(pp, prefix, "volume"),
             GetWithParser<amrex::Real>(pp, prefix, "macro_weight"));
     }
     if (rate == "current") {
-        return std::make_unique<HallCurrentRateModel>(
+        return std::make_unique<CurrentRateModel>(
             GetWithParser<amrex::Real>(pp, prefix, "current"),
             GetWithParser<amrex::Real>(pp, prefix, "macro_weight"),
             QueryWithParser<amrex::Real>(pp, prefix, "l_factor", 1.0));
     }
     if (rate == "mass_flow") {
-        return std::make_unique<HallMassFlowRateModel>(
+        return std::make_unique<MassFlowRateModel>(
             GetWithParser<amrex::Real>(pp, prefix, "mass_flow"),
             GetWithParser<amrex::Real>(pp, prefix, "mass"),
             GetWithParser<amrex::Real>(pp, prefix, "macro_weight"),
             QueryWithParser<amrex::Real>(pp, prefix, "l_factor", 1.0));
     }
 
-    WARPX_ABORT_WITH_MESSAGE("Unknown HallRateModel type: " + rate);
+    WARPX_ABORT_WITH_MESSAGE("Unknown InjectionRateModel type: " + rate);
     return nullptr;
 }
 

@@ -165,7 +165,7 @@ cd Source/Insert/tool
 
 - 共 9 列：角度（度）+ 1–4 个 spoke 的中性/等离子体密度各 4 列
 - 每条曲线按各自最大值归一化（峰值 = 1）
-- 分布公式与 `Source/Insert/Injection/HallDistribution1D.cpp` 完全一致
+- 分布公式与 `Source/Insert/Injection/Distribution1D.cpp` 完全一致
 - 形状参数取自当前 spoke 工况（`Script/3d_hall_spoke`）：中性耗尽宽度 0.30π、最小比 1/6、下降指数 4、reverse=1；等离子体峰 σ=π/8，相位相对中性最小值向峰方向偏移 15°
 - **相位经过平移**：整体平移 180°，中性峰在 200°、等离子体峰在 161°，坐标取整便于绘图标注，仅为绘图方便，不改变形状
 - 修改默认参数需编辑源文件顶部的常量并重新编译

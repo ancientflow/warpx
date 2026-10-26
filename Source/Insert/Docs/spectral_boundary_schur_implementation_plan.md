@@ -254,7 +254,7 @@ sigma_s_device[i + nx_face * j] = sigma_s(i,j)
 ## 6. 面 mask 构造
 
 复用当前阳极判断逻辑，例如 `InsertBoundaryPhi.cpp` 中的
-`IsHallAnodeRingNode` 所表达的 zmin 阳极区域。
+`IsAnnularElectrodeNode` 所表达的 zmin 阳极区域。
 
 构造二维面 mask。第一版直接使用一个二维 `bool` 数组表示自由 Neumann
 节点，避免在 Schur 模块内部重复维护多套 mask：
@@ -500,7 +500,7 @@ mask 会导致模式耦合，所以该预处理只是近似。
 建议调整：
 
 - 将阳极几何配置从 `InsertBoundaryPhi.cpp` 的匿名命名空间迁出；
-- 新增 `Boundary/HallAnodeGeometry.h/.cpp` 或等价小工具；
+- 新增 `Boundary/AnnularElectrodeGeometry.h/.cpp` 或等价小工具；
 - `AnodeVoltage()` 和 Schur mask 构造共用同一判断函数；
 - 新增 Schur 模块只依赖该几何工具和 WarpX 场数据。
 
@@ -555,7 +555,7 @@ u_N = Schur 求得的边界未知量
 需要覆盖：
 
 - `insert.schur_boundary.enabled = 0` 的默认路径；
-- `HALL3D` 下阳极 mask 与 overset mask 一致；
+- `WARPX_INSERT_3D` 下阳极 mask 与 overset mask 一致；
 - 非 3D、EB、AMR、多 level 情况下给出明确报错或自动禁用；
 - MPI 运行模式下的数据 gather/scatter 一致性。
 

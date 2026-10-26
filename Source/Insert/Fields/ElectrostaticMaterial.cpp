@@ -1,12 +1,10 @@
-#include "Insert/Fields/HallElectrostaticMaterial.H"
+#include "Insert/Fields/ElectrostaticMaterial.H"
 
 #include "EmbeddedBoundary/Enabled.H"
 #include "Python/callbacks.H"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/TextMsg.H"
 #include "WarpX.H"
-
-#include <ablastr/fields/PoissonSolver.H>
 
 #include <AMReX_CoordSys.H>
 #include <AMReX_Gpu.H>
@@ -133,22 +131,22 @@ InitializeMaterialLevel (
 
 } // namespace
 
-HallElectrostaticMaterial&
-HallElectrostaticMaterial::GetInstance ()
+ElectrostaticMaterial&
+ElectrostaticMaterial::GetInstance ()
 {
-    static HallElectrostaticMaterial material;
+    static ElectrostaticMaterial material;
     return material;
 }
 
 bool
-HallElectrostaticMaterial::enabled ()
+ElectrostaticMaterial::enabled ()
 {
     readParametersOnce();
     return m_enabled;
 }
 
 void
-HallElectrostaticMaterial::readParametersOnce ()
+ElectrostaticMaterial::readParametersOnce ()
 {
     if (m_parameters_read) {
         return;
@@ -208,7 +206,7 @@ HallElectrostaticMaterial::readParametersOnce ()
 }
 
 void
-HallElectrostaticMaterial::prepare (
+ElectrostaticMaterial::prepare (
     ablastr::fields::MultiLevelScalarField const& rho,
     ablastr::fields::MultiLevelScalarField const& phi,
     int const max_level)
@@ -228,6 +226,16 @@ HallElectrostaticMaterial::prepare (
             rho[lev] && phi[lev] && phi[lev]->ixType().nodeCentered() &&
             warpx.Geom(lev).Coord() == amrex::CoordSys::cartesian,
             "Electrostatic materials require nodal fields in Cartesian geometry on every level.");
+        if (lev > 0) {
+            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(warpx.refRatio(lev-1) == amrex::IntVect(2),
+                "Material AMR requires factor-two refinement in every direction.");
+            auto const grids = amrex::convert(phi[lev]->boxArray(), amrex::IntVect(0));
+            for (int n = 0; n < grids.size(); ++n) {
+                WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+                    warpx.Geom(lev).Domain().contains(amrex::grow(grids[n], 1)),
+                    "Material fine patches must lie strictly inside the physical domain.");
+            }
+        }
     }
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         !warpx.get_load_balance_intervals().isActivated(),
@@ -256,7 +264,7 @@ HallElectrostaticMaterial::prepare (
 }
 
 void
-HallElectrostaticMaterial::initialize (
+ElectrostaticMaterial::initialize (
     ablastr::fields::MultiLevelScalarField const& phi,
     int const max_level)
 {
@@ -317,10 +325,10 @@ HallElectrostaticMaterial::initialize (
         masked_nodes += level_masked_nodes;
 
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-            level_masked_nodes > 0,
+            lev > 0 || level_masked_nodes > 0,
             "insert.anode_implicit_function did not select any nodal point.");
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-            level_max_masked_k > level_min_masked_k,
+            level_masked_nodes == 0 || level_max_masked_k > level_min_masked_k,
             "The volume anode must cover at least two nodal layers in z.");
     }
 
@@ -335,7 +343,7 @@ HallElectrostaticMaterial::initialize (
     m_defined = true;
 
     if (warpx.Verbose()) {
-        amrex::Print() << "Hall electrostatic material initialized: epsilon_r in ["
+        amrex::Print() << "Electrostatic material initialized: epsilon_r in ["
                        << epsilon_min << ", " << epsilon_max << "], "
                        << masked_nodes << " masked nodal entries.\n"
                        << "  relative permittivity (dimensionless): "
@@ -346,25 +354,25 @@ HallElectrostaticMaterial::initialize (
 }
 
 ablastr::fields::ConstMultiLevelScalarField const*
-HallElectrostaticMaterial::relativePermittivity () const noexcept
+ElectrostaticMaterial::relativePermittivity () const noexcept
 {
     return m_enabled && m_defined ? &m_epsilon_r_ptrs : nullptr;
 }
 
 amrex::Vector<amrex::iMultiFab const*> const*
-HallElectrostaticMaterial::anodeMasks () const noexcept
+ElectrostaticMaterial::anodeMasks () const noexcept
 {
     return m_enabled && m_defined ? &m_anode_mask_ptrs : nullptr;
 }
 
 ablastr::fields::ConstMultiLevelScalarField const*
-HallElectrostaticMaterial::anodePotentials () const noexcept
+ElectrostaticMaterial::anodePotentials () const noexcept
 {
     return m_enabled && m_defined ? &m_anode_phi_ptrs : nullptr;
 }
 
 void
-HallElectrostaticMaterial::fillPhiGhosts (
+ElectrostaticMaterial::fillPhiGhosts (
     ablastr::fields::MultiLevelScalarField const& phi) const
 {
     if (!m_enabled || WarpX::grid_type != ablastr::utils::enums::GridType::Collocated) {
@@ -375,23 +383,8 @@ HallElectrostaticMaterial::fillPhiGhosts (
         auto& field = *phi[lev];
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(field.nGrowVect().min() >= 1,
             "Collocated material fields need at least one phi ghost node.");
-        if (lev > 0) {
-            amrex::MultiFab coarse_phi(field.boxArray(), field.DistributionMap(), 1, 1);
-            ablastr::fields::interpolatePhiBetweenLevels(
-                phi[lev-1], &coarse_phi, warpx.Geom(lev-1),
-                WarpX::do_single_precision_comms, warpx.refRatio(lev-1), 1, 1);
-            for (amrex::MFIter mfi(field); mfi.isValid(); ++mfi) {
-                auto const valid = mfi.validbox();
-                auto const dst = field.array(mfi);
-                auto const src = coarse_phi.const_array(mfi);
-                amrex::ParallelFor(amrex::grow(valid, 1),
-                    [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                        if (!valid.contains(amrex::IntVect(AMREX_D_DECL(i,j,k)))) {
-                            dst(i,j,k) = src(i,j,k);
-                        }
-                    });
-            }
-        }
+        // The common hierarchy interpolation already supplied coarse/fine
+        // ghosts; MLMG copies back valid nodes only. Refresh same-level donors.
         field.FillBoundary();
         auto const domain = amrex::surroundingNodes(warpx.Geom(lev).Domain());
         // Second-order one-sided differentiation at physical Dirichlet faces.
@@ -423,7 +416,7 @@ HallElectrostaticMaterial::fillPhiGhosts (
 }
 
 void
-HallElectrostaticMaterial::fillElectricFieldGhosts (
+ElectrostaticMaterial::fillElectricFieldGhosts (
     ablastr::fields::MultiLevelVectorField const& field) const
 {
     if (!m_enabled) { return; }
@@ -431,53 +424,9 @@ HallElectrostaticMaterial::fillElectricFieldGhosts (
     for (int lev = 0; lev < static_cast<int>(field.size()); ++lev) {
         for (int dir = 0; dir < 3; ++dir) {
             auto& fine = *field[lev][dir];
-            auto const ng = fine.nGrowVect();
             auto const type = fine.ixType().toIntVect();
             auto const domain = amrex::convert(warpx.Geom(lev).Domain(), type);
-            if (lev > 0) {
-                auto const ratio = warpx.refRatio(lev-1);
-                auto ba = fine.boxArray();
-                ba.coarsen(ratio);
-                amrex::IntVect coarse_ng;
-                for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-                    coarse_ng[d] = (ng[d]+ratio[d]-1)/ratio[d]+1;
-                }
-                amrex::MultiFab coarse(ba, fine.DistributionMap(), 1, coarse_ng);
-                coarse.setVal(0.0);
-                coarse.ParallelCopy(*field[lev-1][dir], 0, 0, 1,
-                    field[lev-1][dir]->nGrowVect(), coarse_ng);
-                for (amrex::MFIter mfi(fine); mfi.isValid(); ++mfi) {
-                    auto const valid = mfi.validbox();
-                    auto const dst = fine.array(mfi);
-                    auto const src = coarse.const_array(mfi);
-                    amrex::ParallelFor(mfi.fabbox(),
-                        [=] AMREX_GPU_DEVICE (int i, int j, int k) noexcept {
-                            amrex::IntVect p(AMREX_D_DECL(i,j,k));
-                            if (valid.contains(p)) { return; }
-                            amrex::IntVect left;
-                            amrex::GpuArray<amrex::Real, AMREX_SPACEDIM> w;
-                            for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-                                amrex::Real const shift = 0.5*(1-type[d]);
-                                amrex::Real const u = (p[d]+shift)/ratio[d]-shift;
-                                left[d] = static_cast<int>(amrex::Math::floor(u));
-                                w[d] = u-left[d];
-                            }
-                            amrex::Real value = 0.0;
-                            for (int corner = 0; corner < (1 << AMREX_SPACEDIM); ++corner) {
-                                auto q = left;
-                                amrex::Real weight = 1.0;
-                                for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-                                    bool const high = (corner & (1 << d)) != 0;
-                                    q[d] += high ? 1 : 0;
-                                    weight *= high ? w[d] : 1.0-w[d];
-                                }
-                                value += weight*src(q);
-                            }
-                            dst(p) = value;
-                        });
-                }
-            }
-            // Prefer same-level neighbors over interpolated coarse ghost values.
+            // Coarse/fine E and particle buffers use WarpX's common field path.
             fine.FillBoundary();
             // Supply exterior values for particle stencils at physical boundaries;
             // AddExternalFields subsequently applies the configured E boundary policy.

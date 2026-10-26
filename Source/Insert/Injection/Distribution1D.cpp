@@ -1,4 +1,4 @@
-#include "HallDistribution1D.h"
+#include "Distribution1D.h"
 
 #include "Insert/Math/CdfUtils.h"
 #include "Insert/Math/Sampling.h"
@@ -58,27 +58,27 @@ ValidateNeutralSpokeParameters (amrex::ParticleReal ion_width,
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         spoke_count > 0,
-        "HallNeutralSpokeDistribution1D requires spoke_count > 0.");
+        "NeutralSpokeDistribution1D requires spoke_count > 0.");
     const amrex::ParticleReal period =
         TwoPi() / static_cast<amrex::ParticleReal>(spoke_count);
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         ion_width > amrex::ParticleReal(0.0) && ion_width < period,
-        "HallNeutralSpokeDistribution1D requires "
+        "NeutralSpokeDistribution1D requires "
         "0 < ion_width < 2*pi/spoke_count.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         min_ratio >= amrex::ParticleReal(0.0) &&
             min_ratio < amrex::ParticleReal(1.0),
-        "HallNeutralSpokeDistribution1D requires 0 <= min_ratio < 1.");
+        "NeutralSpokeDistribution1D requires 0 <= min_ratio < 1.");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         drop_exponent > amrex::ParticleReal(0.0),
-        "HallNeutralSpokeDistribution1D requires drop_exponent > 0.");
+        "NeutralSpokeDistribution1D requires drop_exponent > 0.");
 }
 
 NumericalInverseCDFSampler1D
 MakeSingleSpokeSampler (amrex::ParticleReal center, amrex::ParticleReal sigma,
                         int num_bins)
 {
-    ValidatePositiveSigma(sigma, "HallSingleSpokeDistribution1D");
+    ValidatePositiveSigma(sigma, "SingleSpokeDistribution1D");
     return NumericalInverseCDFSampler1D(
         amrex::ParticleReal(0.0), TwoPi(), num_bins,
         [=] (amrex::ParticleReal theta) {
@@ -92,8 +92,8 @@ MakeMultiSpokeSampler (int spoke_count, amrex::ParticleReal sigma,
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         spoke_count > 0,
-        "HallMultiSpokeDistribution1D requires spoke_count > 0.");
-    ValidatePositiveSigma(sigma, "HallMultiSpokeDistribution1D");
+        "MultiSpokeDistribution1D requires spoke_count > 0.");
+    ValidatePositiveSigma(sigma, "MultiSpokeDistribution1D");
     return NumericalInverseCDFSampler1D(
         amrex::ParticleReal(0.0), TwoPi(), num_bins,
         [=] (amrex::ParticleReal theta) {
@@ -134,12 +134,12 @@ MakeTabulatedSampler (std::vector<amrex::ParticleReal> const& values,
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(values.size() == pdf.size() &&
                                          values.size() >= 2,
-                                     "HallTabulatedDistribution1D requires "
+                                     "TabulatedDistribution1D requires "
                                      "values and pdf arrays of size >= 2.");
     for (std::size_t i = 1; i < values.size(); ++i) {
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             values[i] > values[i - 1],
-            "HallTabulatedDistribution1D values must be strictly increasing.");
+            "TabulatedDistribution1D values must be strictly increasing.");
     }
 
     return NumericalInverseCDFSampler1D(values.front(), values.back(), num_bins,
@@ -232,7 +232,7 @@ AxisNameFromPrefix (std::string const& prefix)
 }
 
 /** True when <prefix>.<name>(r) is given, i.e. the parameter is a parser
- *  function of the local radius evaluated in HallCoordinateDistribution;
+ *  function of the local radius evaluated in CoordinateDistribution;
  *  the constant <prefix>.<name> is then unused. */
 bool
 HasRadialParam (amrex::ParmParse const& pp, std::string const& prefix,
@@ -245,93 +245,93 @@ HasRadialParam (amrex::ParmParse const& pp, std::string const& prefix,
 
 } // namespace
 
-HallConstantDistribution1D::HallConstantDistribution1D (
+ConstantDistribution1D::ConstantDistribution1D (
     amrex::ParticleReal value) noexcept
     : m_value(value)
 {}
 
 amrex::ParticleReal
-HallConstantDistribution1D::sample (amrex::RandomEngine const& engine) const
+ConstantDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     amrex::ignore_unused(engine);
     return m_value;
 }
 
 amrex::ParticleReal
-HallConstantDistribution1D::min () const noexcept
+ConstantDistribution1D::min () const noexcept
 {
     return m_value;
 }
 
 amrex::ParticleReal
-HallConstantDistribution1D::max () const noexcept
+ConstantDistribution1D::max () const noexcept
 {
     return m_value;
 }
 
-HallUniformDistribution1D::HallUniformDistribution1D (amrex::ParticleReal min,
+UniformDistribution1D::UniformDistribution1D (amrex::ParticleReal min,
                                                       amrex::ParticleReal max)
     : m_min(min), m_max(max)
 {
-    ValidateRange(m_min, m_max, "HallUniformDistribution1D");
+    ValidateRange(m_min, m_max, "UniformDistribution1D");
 }
 
 amrex::ParticleReal
-HallUniformDistribution1D::sample (amrex::RandomEngine const& engine) const
+UniformDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     return Math::SampleUniform(m_min, m_max, engine);
 }
 
 amrex::ParticleReal
-HallUniformDistribution1D::min () const noexcept
+UniformDistribution1D::min () const noexcept
 {
     return m_min;
 }
 
 amrex::ParticleReal
-HallUniformDistribution1D::max () const noexcept
+UniformDistribution1D::max () const noexcept
 {
     return m_max;
 }
 
-HallAreaUniformDistribution1D::HallAreaUniformDistribution1D (
+AreaUniformDistribution1D::AreaUniformDistribution1D (
     amrex::ParticleReal min, amrex::ParticleReal max)
     : m_min(min), m_max(max)
 {
-    ValidateRange(m_min, m_max, "HallAreaUniformDistribution1D");
+    ValidateRange(m_min, m_max, "AreaUniformDistribution1D");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_min >= amrex::ParticleReal(0.0),
-        "HallAreaUniformDistribution1D requires min >= 0.");
+        "AreaUniformDistribution1D requires min >= 0.");
 }
 
 amrex::ParticleReal
-HallAreaUniformDistribution1D::sample (
+AreaUniformDistribution1D::sample (
     amrex::RandomEngine const& engine) const
 {
     return Math::SampleAreaUniformRadius(m_min, m_max, engine);
 }
 
 amrex::ParticleReal
-HallAreaUniformDistribution1D::min () const noexcept
+AreaUniformDistribution1D::min () const noexcept
 {
     return m_min;
 }
 
 amrex::ParticleReal
-HallAreaUniformDistribution1D::max () const noexcept
+AreaUniformDistribution1D::max () const noexcept
 {
     return m_max;
 }
 
-HallGaussianDistribution1D::HallGaussianDistribution1D (
+GaussianDistribution1D::GaussianDistribution1D (
     amrex::ParticleReal mean, amrex::ParticleReal sigma)
     : m_mean(mean), m_sigma(sigma)
 {
-    ValidateSigma(m_sigma, "HallGaussianDistribution1D");
+    ValidateSigma(m_sigma, "GaussianDistribution1D");
 }
 
 amrex::ParticleReal
-HallGaussianDistribution1D::sample (amrex::RandomEngine const& engine) const
+GaussianDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     if (m_sigma == amrex::ParticleReal(0.0)) {
         return m_mean;
@@ -340,30 +340,30 @@ HallGaussianDistribution1D::sample (amrex::RandomEngine const& engine) const
 }
 
 amrex::ParticleReal
-HallGaussianDistribution1D::min () const noexcept
+GaussianDistribution1D::min () const noexcept
 {
     return std::numeric_limits<amrex::ParticleReal>::lowest();
 }
 
 amrex::ParticleReal
-HallGaussianDistribution1D::max () const noexcept
+GaussianDistribution1D::max () const noexcept
 {
     return std::numeric_limits<amrex::ParticleReal>::max();
 }
 
-HallPositiveGaussianDistribution1D::HallPositiveGaussianDistribution1D (
+PositiveGaussianDistribution1D::PositiveGaussianDistribution1D (
     amrex::ParticleReal mean, amrex::ParticleReal sigma)
     : m_mean(mean), m_sigma(sigma)
 {
-    ValidateSigma(m_sigma, "HallPositiveGaussianDistribution1D");
+    ValidateSigma(m_sigma, "PositiveGaussianDistribution1D");
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE((m_sigma > amrex::ParticleReal(0.0)) ||
                                          (m_mean >= amrex::ParticleReal(0.0)),
-                                     "HallPositiveGaussianDistribution1D with "
+                                     "PositiveGaussianDistribution1D with "
                                      "sigma == 0 requires mean >= 0.");
 }
 
 amrex::ParticleReal
-HallPositiveGaussianDistribution1D::sample (
+PositiveGaussianDistribution1D::sample (
     amrex::RandomEngine const& engine) const
 {
     if (m_sigma == amrex::ParticleReal(0.0)) {
@@ -378,26 +378,26 @@ HallPositiveGaussianDistribution1D::sample (
 }
 
 amrex::ParticleReal
-HallPositiveGaussianDistribution1D::min () const noexcept
+PositiveGaussianDistribution1D::min () const noexcept
 {
     return amrex::ParticleReal(0.0);
 }
 
 amrex::ParticleReal
-HallPositiveGaussianDistribution1D::max () const noexcept
+PositiveGaussianDistribution1D::max () const noexcept
 {
     return std::numeric_limits<amrex::ParticleReal>::max();
 }
 
-HallFluxGaussianDistribution1D::HallFluxGaussianDistribution1D (
+FluxGaussianDistribution1D::FluxGaussianDistribution1D (
     amrex::ParticleReal sigma)
     : m_sigma(sigma)
 {
-    ValidateSigma(m_sigma, "HallFluxGaussianDistribution1D");
+    ValidateSigma(m_sigma, "FluxGaussianDistribution1D");
 }
 
 amrex::ParticleReal
-HallFluxGaussianDistribution1D::sample (
+FluxGaussianDistribution1D::sample (
     amrex::RandomEngine const& engine) const
 {
     // Flux-weighted half-Maxwellian (Rayleigh) normal component,
@@ -411,78 +411,78 @@ HallFluxGaussianDistribution1D::sample (
 }
 
 amrex::ParticleReal
-HallFluxGaussianDistribution1D::min () const noexcept
+FluxGaussianDistribution1D::min () const noexcept
 {
     return amrex::ParticleReal(0.0);
 }
 
 amrex::ParticleReal
-HallFluxGaussianDistribution1D::max () const noexcept
+FluxGaussianDistribution1D::max () const noexcept
 {
     return std::numeric_limits<amrex::ParticleReal>::max();
 }
 
-HallSingleSpokeDistribution1D::HallSingleSpokeDistribution1D (
+SingleSpokeDistribution1D::SingleSpokeDistribution1D (
     amrex::ParticleReal center, amrex::ParticleReal sigma, int num_bins)
     : m_sampler(MakeSingleSpokeSampler(center, sigma, num_bins))
 {}
 
 amrex::ParticleReal
-HallSingleSpokeDistribution1D::sample (
+SingleSpokeDistribution1D::sample (
     amrex::RandomEngine const& engine) const
 {
     return m_sampler.sample(engine);
 }
 
 amrex::ParticleReal
-HallSingleSpokeDistribution1D::min () const noexcept
+SingleSpokeDistribution1D::min () const noexcept
 {
     return m_sampler.xmin();
 }
 
 amrex::ParticleReal
-HallSingleSpokeDistribution1D::max () const noexcept
+SingleSpokeDistribution1D::max () const noexcept
 {
     return m_sampler.xmax();
 }
 
 amrex::ParticleReal
-HallSingleSpokeDistribution1D::integral () const noexcept
+SingleSpokeDistribution1D::integral () const noexcept
 {
     return m_sampler.integral();
 }
 
-HallMultiSpokeDistribution1D::HallMultiSpokeDistribution1D (
+MultiSpokeDistribution1D::MultiSpokeDistribution1D (
     int spoke_count, amrex::ParticleReal sigma, amrex::ParticleReal phase,
     int num_bins)
     : m_sampler(MakeMultiSpokeSampler(spoke_count, sigma, phase, num_bins))
 {}
 
 amrex::ParticleReal
-HallMultiSpokeDistribution1D::sample (amrex::RandomEngine const& engine) const
+MultiSpokeDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     return m_sampler.sample(engine);
 }
 
 amrex::ParticleReal
-HallMultiSpokeDistribution1D::min () const noexcept
+MultiSpokeDistribution1D::min () const noexcept
 {
     return m_sampler.xmin();
 }
 
 amrex::ParticleReal
-HallMultiSpokeDistribution1D::max () const noexcept
+MultiSpokeDistribution1D::max () const noexcept
 {
     return m_sampler.xmax();
 }
 
 amrex::ParticleReal
-HallMultiSpokeDistribution1D::integral () const noexcept
+MultiSpokeDistribution1D::integral () const noexcept
 {
     return m_sampler.integral();
 }
 
-HallNeutralSpokeDistribution1D::HallNeutralSpokeDistribution1D (
+NeutralSpokeDistribution1D::NeutralSpokeDistribution1D (
     amrex::ParticleReal ion_width, amrex::ParticleReal min_ratio,
     amrex::ParticleReal drop_exponent, amrex::ParticleReal phase,
     bool reverse, int spoke_count, int num_bins)
@@ -492,42 +492,42 @@ HallNeutralSpokeDistribution1D::HallNeutralSpokeDistribution1D (
 {}
 
 amrex::ParticleReal
-HallNeutralSpokeDistribution1D::sample (
+NeutralSpokeDistribution1D::sample (
     amrex::RandomEngine const& engine) const
 {
     return m_sampler.sample(engine);
 }
 
 amrex::ParticleReal
-HallNeutralSpokeDistribution1D::min () const noexcept
+NeutralSpokeDistribution1D::min () const noexcept
 {
     return m_sampler.xmin();
 }
 
 amrex::ParticleReal
-HallNeutralSpokeDistribution1D::max () const noexcept
+NeutralSpokeDistribution1D::max () const noexcept
 {
     return m_sampler.xmax();
 }
 
 amrex::ParticleReal
-HallNeutralSpokeDistribution1D::integral () const noexcept
+NeutralSpokeDistribution1D::integral () const noexcept
 {
     return m_sampler.integral();
 }
 
-HallDiscreteDistribution1D::HallDiscreteDistribution1D (
+DiscreteDistribution1D::DiscreteDistribution1D (
     std::vector<amrex::ParticleReal> values,
     std::vector<amrex::ParticleReal> weights)
     : m_values(std::move(values))
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        !m_values.empty(), "HallDiscreteDistribution1D requires values.");
+        !m_values.empty(), "DiscreteDistribution1D requires values.");
     if (weights.empty()) {
         weights.assign(m_values.size(), amrex::ParticleReal(1.0));
     }
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(weights.size() == m_values.size(),
-                                     "HallDiscreteDistribution1D requires "
+                                     "DiscreteDistribution1D requires "
                                      "values and weights with equal sizes.");
 
     m_min = *std::min_element(m_values.begin(), m_values.end());
@@ -536,7 +536,7 @@ HallDiscreteDistribution1D::HallDiscreteDistribution1D (
 }
 
 amrex::ParticleReal
-HallDiscreteDistribution1D::sample (amrex::RandomEngine const& engine) const
+DiscreteDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     const amrex::ParticleReal selector = amrex::Random(engine);
     auto const upper = std::lower_bound(m_cdf.begin(), m_cdf.end(), selector);
@@ -545,24 +545,24 @@ HallDiscreteDistribution1D::sample (amrex::RandomEngine const& engine) const
 }
 
 amrex::ParticleReal
-HallDiscreteDistribution1D::min () const noexcept
+DiscreteDistribution1D::min () const noexcept
 {
     return m_min;
 }
 
 amrex::ParticleReal
-HallDiscreteDistribution1D::max () const noexcept
+DiscreteDistribution1D::max () const noexcept
 {
     return m_max;
 }
 
 amrex::ParticleReal
-HallDiscreteDistribution1D::integral () const noexcept
+DiscreteDistribution1D::integral () const noexcept
 {
     return m_integral;
 }
 
-HallTabulatedDistribution1D::HallTabulatedDistribution1D (
+TabulatedDistribution1D::TabulatedDistribution1D (
     std::vector<amrex::ParticleReal> values,
     std::vector<amrex::ParticleReal> pdf, int num_bins)
     : m_min(values.empty() ? amrex::ParticleReal(0.0) : values.front()),
@@ -571,112 +571,112 @@ HallTabulatedDistribution1D::HallTabulatedDistribution1D (
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_max > m_min,
-        "HallTabulatedDistribution1D requires increasing values.");
+        "TabulatedDistribution1D requires increasing values.");
 }
 
 amrex::ParticleReal
-HallTabulatedDistribution1D::sample (amrex::RandomEngine const& engine) const
+TabulatedDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     return m_sampler.sample(engine);
 }
 
 amrex::ParticleReal
-HallTabulatedDistribution1D::min () const noexcept
+TabulatedDistribution1D::min () const noexcept
 {
     return m_min;
 }
 
 amrex::ParticleReal
-HallTabulatedDistribution1D::max () const noexcept
+TabulatedDistribution1D::max () const noexcept
 {
     return m_max;
 }
 
 amrex::ParticleReal
-HallTabulatedDistribution1D::integral () const noexcept
+TabulatedDistribution1D::integral () const noexcept
 {
     return m_sampler.integral();
 }
 
-HallParserDistribution1D::HallParserDistribution1D (
+ParserDistribution1D::ParserDistribution1D (
     amrex::ParticleReal min, amrex::ParticleReal max, int num_bins,
     std::string const& variable_name, std::string const& expression)
     : m_min(min), m_max(max),
       m_sampler(
           MakeParserSampler(min, max, num_bins, variable_name, expression))
 {
-    ValidateRange(m_min, m_max, "HallParserDistribution1D");
+    ValidateRange(m_min, m_max, "ParserDistribution1D");
 }
 
 amrex::ParticleReal
-HallParserDistribution1D::sample (amrex::RandomEngine const& engine) const
+ParserDistribution1D::sample (amrex::RandomEngine const& engine) const
 {
     return m_sampler.sample(engine);
 }
 
 amrex::ParticleReal
-HallParserDistribution1D::min () const noexcept
+ParserDistribution1D::min () const noexcept
 {
     return m_min;
 }
 
 amrex::ParticleReal
-HallParserDistribution1D::max () const noexcept
+ParserDistribution1D::max () const noexcept
 {
     return m_max;
 }
 
 amrex::ParticleReal
-HallParserDistribution1D::integral () const noexcept
+ParserDistribution1D::integral () const noexcept
 {
     return m_sampler.integral();
 }
 
-std::unique_ptr<HallDistribution1D>
-MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
+std::unique_ptr<Distribution1D>
+MakeDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
 {
     std::string distribution;
     utils::parser::get(pp, prefix, "distribution", distribution);
     distribution = ToLower(distribution);
 
     if (distribution == "constant") {
-        return std::make_unique<HallConstantDistribution1D>(
+        return std::make_unique<ConstantDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "value"));
     }
     if (distribution == "uniform") {
-        return std::make_unique<HallUniformDistribution1D>(
+        return std::make_unique<UniformDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "min"),
             GetWithParser<amrex::ParticleReal>(pp, prefix, "max"));
     }
     if (distribution == "area_uniform") {
-        return std::make_unique<HallAreaUniformDistribution1D>(
+        return std::make_unique<AreaUniformDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "min"),
             GetWithParser<amrex::ParticleReal>(pp, prefix, "max"));
     }
     if (distribution == "gaussian") {
         if (HasRadialParam(pp, prefix, "sigma")) {
             // sigma/mean are functions of r, evaluated per particle in
-            // HallCoordinateDistribution; the constant base is unused.
-            return std::make_unique<HallGaussianDistribution1D>(
+            // CoordinateDistribution; the constant base is unused.
+            return std::make_unique<GaussianDistribution1D>(
                 amrex::ParticleReal(0.0), amrex::ParticleReal(0.0));
         }
-        return std::make_unique<HallGaussianDistribution1D>(
+        return std::make_unique<GaussianDistribution1D>(
             QueryWithParser<amrex::ParticleReal>(
                 pp, prefix, "mean", amrex::ParticleReal(0.0)),
             GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "positive_gaussian") {
         if (HasRadialParam(pp, prefix, "sigma")) {
-            return std::make_unique<HallPositiveGaussianDistribution1D>(
+            return std::make_unique<PositiveGaussianDistribution1D>(
                 amrex::ParticleReal(0.0), amrex::ParticleReal(0.0));
         }
-        return std::make_unique<HallPositiveGaussianDistribution1D>(
+        return std::make_unique<PositiveGaussianDistribution1D>(
             QueryWithParser<amrex::ParticleReal>(
                 pp, prefix, "mean", amrex::ParticleReal(0.0)),
             GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "flux_gaussian") {
-        return std::make_unique<HallFluxGaussianDistribution1D>(
+        return std::make_unique<FluxGaussianDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "sigma"));
     }
     if (distribution == "single_spoke") {
@@ -686,12 +686,12 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
                 QueryWithParser<amrex::ParticleReal>(
                     pp, prefix, "spoke_center",
                     amrex::Math::pi<amrex::ParticleReal>()));
-        return std::make_unique<HallSingleSpokeDistribution1D>(
+        return std::make_unique<SingleSpokeDistribution1D>(
             center, GetSigmaWithFallback(pp, prefix),
             QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
     if (distribution == "multi_spoke") {
-        return std::make_unique<HallMultiSpokeDistribution1D>(
+        return std::make_unique<MultiSpokeDistribution1D>(
             QueryWithParser<int>(pp, prefix, "spoke_count", 1),
             GetSigmaWithFallback(pp, prefix),
             QueryWithParser<amrex::ParticleReal>(
@@ -700,7 +700,7 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
     }
     if (distribution == "neutral_spoke" ||
         distribution == "neutral_spoke_depletion") {
-        return std::make_unique<HallNeutralSpokeDistribution1D>(
+        return std::make_unique<NeutralSpokeDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "ion_width"),
             QueryWithParser<amrex::ParticleReal>(
                 pp, prefix, "min_ratio", amrex::ParticleReal(0.25)),
@@ -717,7 +717,7 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
         std::vector<amrex::ParticleReal> weights;
         utils::parser::getArrWithParser(pp, prefix, "values", values);
         utils::parser::queryArrWithParser(pp, prefix, "weights", weights);
-        return std::make_unique<HallDiscreteDistribution1D>(std::move(values),
+        return std::make_unique<DiscreteDistribution1D>(std::move(values),
                                                             std::move(weights));
     }
     if (distribution == "tabulated") {
@@ -734,7 +734,7 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
                 values[i] > values[i - 1],
                 "tabulated distribution values must be strictly increasing.");
         }
-        return std::make_unique<HallTabulatedDistribution1D>(
+        return std::make_unique<TabulatedDistribution1D>(
             std::move(values), std::move(pdf),
             QueryWithParser<int>(pp, prefix, "num_bins", 1024));
     }
@@ -747,14 +747,14 @@ MakeHallDistribution1D (amrex::ParmParse const& pp, std::string const& prefix)
             utils::parser::Store_parserString(pp, prefix + ".function",
                                               expression);
         }
-        return std::make_unique<HallParserDistribution1D>(
+        return std::make_unique<ParserDistribution1D>(
             GetWithParser<amrex::ParticleReal>(pp, prefix, "min"),
             GetWithParser<amrex::ParticleReal>(pp, prefix, "max"),
             QueryWithParser<int>(pp, prefix, "num_bins", 1024),
             axis_name, expression);
     }
 
-    WARPX_ABORT_WITH_MESSAGE("Unknown HallDistribution1D type: " +
+    WARPX_ABORT_WITH_MESSAGE("Unknown Distribution1D type: " +
                              distribution);
     return nullptr;
 }

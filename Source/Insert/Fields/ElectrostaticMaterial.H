@@ -1,5 +1,5 @@
-#ifndef WARPX_INSERT_HALLELECTROSTATICMATERIAL_H_
-#define WARPX_INSERT_HALLELECTROSTATICMATERIAL_H_
+#ifndef WARPX_INSERT_ELECTROSTATIC_MATERIAL_H_
+#define WARPX_INSERT_ELECTROSTATIC_MATERIAL_H_
 
 #include <ablastr/fields/MultiFabRegister.H>
 
@@ -13,16 +13,16 @@
 
 namespace Insert {
 
-/** Cached material data for the 3D lab-frame electrostatic Hall model. */
-class HallElectrostaticMaterial
+/** Cached material data for the 3D lab-frame electrostatic material model. */
+class ElectrostaticMaterial
 {
 public:
-    static HallElectrostaticMaterial& GetInstance ();
+    static ElectrostaticMaterial& GetInstance ();
 
-    HallElectrostaticMaterial (HallElectrostaticMaterial const&) = delete;
-    HallElectrostaticMaterial (HallElectrostaticMaterial&&) = delete;
-    HallElectrostaticMaterial& operator= (HallElectrostaticMaterial const&) = delete;
-    HallElectrostaticMaterial& operator= (HallElectrostaticMaterial&&) = delete;
+    ElectrostaticMaterial (ElectrostaticMaterial const&) = delete;
+    ElectrostaticMaterial (ElectrostaticMaterial&&) = delete;
+    ElectrostaticMaterial& operator= (ElectrostaticMaterial const&) = delete;
+    ElectrostaticMaterial& operator= (ElectrostaticMaterial&&) = delete;
 
     [[nodiscard]] bool enabled ();
 
@@ -38,7 +38,9 @@ public:
     [[nodiscard]] ablastr::fields::ConstMultiLevelScalarField const*
     anodePotentials () const noexcept;
 
-    /** Fill coarse/fine and physical ghosts before collocated differentiation. */
+    /** Refresh same-level and physical ghosts before collocated differentiation.
+     * Coarse/fine ghosts are supplied by the common Poisson hierarchy.
+     */
     void fillPhiGhosts (ablastr::fields::MultiLevelScalarField const& phi) const;
     void fillElectricFieldGhosts (ablastr::fields::MultiLevelVectorField const& field) const;
 
@@ -46,8 +48,8 @@ public:
     anodeMasks () const noexcept;
 
 private:
-    HallElectrostaticMaterial () = default;
-    ~HallElectrostaticMaterial () = default;
+    ElectrostaticMaterial () = default;
+    ~ElectrostaticMaterial () = default;
 
 public:
     void readParametersOnce ();
@@ -81,4 +83,4 @@ public:
 
 } // namespace Insert
 
-#endif // WARPX_INSERT_HALLELECTROSTATICMATERIAL_H_
+#endif // WARPX_INSERT_ELECTROSTATIC_MATERIAL_H_

@@ -7,8 +7,8 @@
 #include "Insert/Boundary/WallBehavior.h"
 #include "Insert/Boundary/WallInteractionData.h"
 #include "Insert/Core/WarpXInsert.h"
-#include "Insert/Fields/HallElectrostaticMaterial.H"
-#include "Insert/Fields/HallWallCharge.H"
+#include "Insert/Fields/ElectrostaticMaterial.H"
+#include "Insert/Fields/WallCharge.H"
 #include "Insert/Math/ThermalVelocity.h"
 #include "Insert/Utils/InsertUtils.h"
 #include "Particles/Gather/FieldGather.H"
@@ -661,7 +661,7 @@ template <typename Boundary>
 void
 ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary const& boundary,
                  amrex::Real const time, amrex::Real const dt,
-                 HallWallCharge::ImpactContainer* charge_impacts, MultiParticleContainer& mpc,
+                 WallCharge::ImpactContainer* charge_impacts, MultiParticleContainer& mpc,
                  amrex::Long* const counts,
                  amrex::Real* const anode_stats, int const wall_id)
 {
@@ -714,7 +714,7 @@ ApplyWallPolicy (WarpXParticleContainer& pc, WallPolicy const& policy, Boundary 
                 auto* const output = tile.GetArrayOfStructs().data();
                 amrex::ParallelFor(nhits, [=] AMREX_GPU_DEVICE (int const k) noexcept {
                     auto& p = output[offset + k];
-                    p = HallWallCharge::ImpactContainer::ParticleType{};
+                    p = WallCharge::ImpactContainer::ParticleType{};
                     p.cpu() = rank;
                     p.id() = -1;
                     auto const retained = record[k].event == WallBehavior::none ? 0.0_prt :
@@ -812,19 +812,19 @@ AnalyticBoundaryInteraction ()
                 need_wall_charge || (policy.active && policy.deposit_wall_charge);
         }
     }
-    HallWallCharge* wall_charge = nullptr;
-    std::unique_ptr<HallWallCharge::ImpactContainer> charge_impacts;
+    WallCharge* wall_charge = nullptr;
+    std::unique_ptr<WallCharge::ImpactContainer> charge_impacts;
     if (need_wall_charge) {
-        HallWallCharge& persistent_wall_charge = HallWallCharge::GetInstance();
+        WallCharge& persistent_wall_charge = WallCharge::GetInstance();
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-            HallElectrostaticMaterial::GetInstance().enabled(),
+            ElectrostaticMaterial::GetInstance().enabled(),
             "Analytic-wall charge deposition requires electrostatic materials.");
         persistent_wall_charge.prepare(
             warpx_instance.m_fields.get_mr_levels(
                 warpx::fields::FieldType::rho_fp, warpx_instance.finestLevel()),
             warpx_instance.finestLevel());
         wall_charge = &persistent_wall_charge;
-        charge_impacts = std::make_unique<HallWallCharge::ImpactContainer>(
+        charge_impacts = std::make_unique<WallCharge::ImpactContainer>(
             warpx_instance.Geom(), warpx_instance.DistributionMap(),
             warpx_instance.boxArray(), warpx_instance.refRatio());
     }

@@ -1,4 +1,4 @@
-#include "HallCoordinateTransform.h"
+#include "CoordinateTransform.h"
 
 #include "Insert/Math/Sampling.h"
 #include "Insert/Math/VectorOps.h"
@@ -23,8 +23,8 @@ LocalAzimuth (EmissionSample const& position) noexcept
 
 } // namespace
 
-HallRotatingAxisFrame
-MakeHallRotatingAxisFrame (amrex::XDim3 const& axis_at_theta0)
+RotatingAxisFrame
+MakeRotatingAxisFrame (amrex::XDim3 const& axis_at_theta0)
 {
     const auto z_axis = Math::NormalizeChecked(axis_at_theta0);
     const auto denominator = amrex::Real(1.0) + z_axis.z;
@@ -32,14 +32,14 @@ MakeHallRotatingAxisFrame (amrex::XDim3 const& axis_at_theta0)
                            std::numeric_limits<amrex::Real>::epsilon();
 
     if (denominator <= threshold) {
-        return HallRotatingAxisFrame{
+        return RotatingAxisFrame{
             amrex::XDim3{1.0, 0.0, 0.0},
             amrex::XDim3{0.0, -1.0, 0.0},
             amrex::XDim3{0.0, 0.0, -1.0}};
     }
 
     const auto inverse_denominator = amrex::Real(1.0) / denominator;
-    return HallRotatingAxisFrame{
+    return RotatingAxisFrame{
         amrex::XDim3{
             amrex::Real(1.0) - z_axis.x * z_axis.x * inverse_denominator,
             -z_axis.x * z_axis.y * inverse_denominator,
@@ -51,48 +51,48 @@ MakeHallRotatingAxisFrame (amrex::XDim3 const& axis_at_theta0)
         z_axis};
 }
 
-HallCoordinateSystem
-ParseHallCoordinateSystem (std::string value)
+CoordinateSystem
+ParseCoordinateSystem (std::string value)
 {
     value = ToLower(value);
     if (value == "cartesian") {
-        return HallCoordinateSystem::cartesian;
+        return CoordinateSystem::cartesian;
     }
     if (value == "cylindrical") {
-        return HallCoordinateSystem::cylindrical;
+        return CoordinateSystem::cylindrical;
     }
     if (value == "local_normal") {
-        return HallCoordinateSystem::local_normal;
+        return CoordinateSystem::local_normal;
     }
     if (value == "rotating_axis") {
-        return HallCoordinateSystem::rotating_axis;
+        return CoordinateSystem::rotating_axis;
     }
-    WARPX_ABORT_WITH_MESSAGE("Unknown Hall coordinate system: " + value);
-    return HallCoordinateSystem::cartesian;
+    WARPX_ABORT_WITH_MESSAGE("Unknown coordinate system: " + value);
+    return CoordinateSystem::cartesian;
 }
 
 std::array<std::string, 3>
-HallCoordinateAxisNames (
-    HallCoordinateSystem system, HallCoordinateSpace space)
+CoordinateAxisNames (
+    CoordinateSystem system, CoordinateSpace space)
 {
-    if (space == HallCoordinateSpace::position) {
-        if (system == HallCoordinateSystem::cartesian) {
+    if (space == CoordinateSpace::position) {
+        if (system == CoordinateSystem::cartesian) {
             return {"x", "y", "z"};
         }
-        if (system == HallCoordinateSystem::cylindrical) {
+        if (system == CoordinateSystem::cylindrical) {
             return {"r", "theta", "z"};
         }
         WARPX_ABORT_WITH_MESSAGE(
             "local_normal and rotating_axis are not valid position coordinate systems.");
     }
 
-    if (system == HallCoordinateSystem::cartesian) {
+    if (system == CoordinateSystem::cartesian) {
         return {"vx", "vy", "vz"};
     }
-    if (system == HallCoordinateSystem::cylindrical) {
+    if (system == CoordinateSystem::cylindrical) {
         return {"vr", "vtheta", "vz"};
     }
-    if (system == HallCoordinateSystem::rotating_axis) {
+    if (system == CoordinateSystem::rotating_axis) {
         return {"vx", "vy", "vz"};
     }
     return {"vnormal", "vt1", "vt2"};
@@ -100,10 +100,10 @@ HallCoordinateAxisNames (
 
 EmissionSample
 MakeEmissionSample (
-    HallCoordinateSystem system, amrex::XDim3 const& coordinates)
+    CoordinateSystem system, amrex::XDim3 const& coordinates)
 {
     EmissionSample sample;
-    if (system == HallCoordinateSystem::cartesian) {
+    if (system == CoordinateSystem::cartesian) {
         sample.x = static_cast<amrex::ParticleReal>(coordinates.x);
         sample.y = static_cast<amrex::ParticleReal>(coordinates.y);
         sample.z = static_cast<amrex::ParticleReal>(coordinates.z);
@@ -111,7 +111,7 @@ MakeEmissionSample (
     }
 
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        system == HallCoordinateSystem::cylindrical,
+        system == CoordinateSystem::cylindrical,
         "Only cartesian and cylindrical position coordinate systems are supported.");
     const auto planar = Math::PolarToCartesian(coordinates.x, coordinates.y);
     sample.x = static_cast<amrex::ParticleReal>(planar.x);
@@ -122,19 +122,19 @@ MakeEmissionSample (
 
 amrex::XDim3
 TransformVelocityToCartesian (
-    HallCoordinateSystem system, amrex::XDim3 const& velocity,
+    CoordinateSystem system, amrex::XDim3 const& velocity,
     EmissionSample const& position,
-    HallRotatingAxisFrame const& rotating_axis_frame)
+    RotatingAxisFrame const& rotating_axis_frame)
 {
-    if (system == HallCoordinateSystem::cartesian) {
+    if (system == CoordinateSystem::cartesian) {
         return velocity;
     }
 
-    if (system == HallCoordinateSystem::cylindrical) {
+    if (system == CoordinateSystem::cylindrical) {
         return Math::RotateAroundZ(velocity, LocalAzimuth(position));
     }
 
-    if (system == HallCoordinateSystem::rotating_axis) {
+    if (system == CoordinateSystem::rotating_axis) {
         const amrex::XDim3 velocity_at_theta0 = Math::ExpandInBasis(
             velocity, rotating_axis_frame.x_axis, rotating_axis_frame.y_axis,
             rotating_axis_frame.z_axis);

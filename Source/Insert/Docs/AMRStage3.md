@@ -5,7 +5,7 @@
 
 ## 实现
 
-`Insert::MaterialPoissonSolver` 统一持有 `cht::MLNodeRobinLaplacian` 和 MLMG。
+`Insert::MaterialPoissonSolver` 统一持有 `Insert::Poisson::MLNodeRobinLaplacian` 和 MLMG。
 旧的原生材料 `MaterialPoissonCache` 及独立 `NodeRobinSolver` 已移除。
 非材料调用仍进入原生 `computePhi`，不分配材料缓存。材料 AMR 在初始化时明确拒绝，
 局部覆盖待阶段 4；不回退到原生材料算子。

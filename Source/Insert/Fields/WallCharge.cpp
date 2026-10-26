@@ -1,4 +1,4 @@
-#include "Insert/Fields/HallWallCharge.H"
+#include "Insert/Fields/WallCharge.H"
 
 #if defined(WARPX_DIM_3D)
 #include "Insert/Fields/MaterialPoissonSolver.H"
@@ -45,15 +45,15 @@ MakeWallChargeGrid (amrex::Geometry const& geom)
 #endif
 }
 
-HallWallCharge&
-HallWallCharge::GetInstance ()
+WallCharge&
+WallCharge::GetInstance ()
 {
-    static HallWallCharge wall_charge;
+    static WallCharge wall_charge;
     return wall_charge;
 }
 
 void
-HallWallCharge::prepare (
+WallCharge::prepare (
     ablastr::fields::MultiLevelScalarField const& rho, int const max_level)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
@@ -96,7 +96,7 @@ HallWallCharge::prepare (
 }
 
 void
-HallWallCharge::addTo (
+WallCharge::addTo (
     ablastr::fields::MultiLevelScalarField const& rho, int const max_level)
 {
     prepare(rho, max_level);
@@ -120,7 +120,7 @@ HallWallCharge::addTo (
 }
 
 amrex::MultiFab&
-HallWallCharge::get (int const lev)
+WallCharge::get (int const lev)
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         m_defined && lev >= 0 && lev < static_cast<int>(m_wall_charge.size()),
@@ -129,7 +129,7 @@ HallWallCharge::get (int const lev)
 }
 
 void
-HallWallCharge::depositImpacts (ImpactContainer& impacts)
+WallCharge::depositImpacts (ImpactContainer& impacts)
 {
 #if defined(WARPX_DIM_3D)
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(m_defined, "Wall charge must be prepared before deposition.");
@@ -183,7 +183,7 @@ HallWallCharge::depositImpacts (ImpactContainer& impacts)
 }
 
 amrex::Vector<amrex::Real>
-HallWallCharge::chargeByLevel () const
+WallCharge::chargeByLevel () const
 {
     amrex::Vector<amrex::Real> result(m_wall_charge.size(), 0.0);
     auto const& warpx = WarpX::GetInstance();
@@ -210,7 +210,7 @@ HallWallCharge::chargeByLevel () const
 }
 
 amrex::Real
-HallWallCharge::compositeCharge () const
+WallCharge::compositeCharge () const
 {
     auto& warpx = WarpX::GetInstance();
     int const nlev = static_cast<int>(m_wall_charge.size());
@@ -280,7 +280,7 @@ HallWallCharge::compositeCharge () const
 }
 
 void
-HallWallCharge::assertLayout (
+WallCharge::assertLayout (
     ablastr::fields::MultiLevelScalarField const& rho, int const max_level) const
 {
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
