@@ -42,9 +42,12 @@ void LabFrameExplicitES::InitData() {
             WarpX::electrostatic_solver_id == ElectrostaticSolverAlgo::LabFrame &&
             warpx.evolve_scheme == EvolveScheme::Explicit,
             "Monopole Robin currently requires explicit lab-frame electrostatic evolution.");
-        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(num_levels == 1 && warpx.maxLevel() == 0 &&
-            warpx.Geom(0).Coord() == 0 && !warpx.Geom(0).isAnyPeriodic(),
-            "Monopole Robin requires one full nonperiodic Cartesian AMR level.");
+        // The material backend owns the physical Robin boundary. The common
+        // hierarchy and history still receive an explicitly initialized handler.
+        m_poisson_boundary_handler->lobc.fill(amrex::LinOpBCType::Robin);
+        m_poisson_boundary_handler->hibc.fill(amrex::LinOpBCType::Robin);
+        m_poisson_boundary_handler->dirichlet_flag.fill(false);
+        m_poisson_boundary_handler->has_non_periodic = true;
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(Insert::ElectrostaticMaterial::GetInstance().enabled(),
             "Monopole Robin requires insert.use_electrostatic_materials = 1.");
         for (int d = 0; d < 3; ++d) {
@@ -356,7 +359,7 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         }
         ablastr::fields::PoissonLevelSolver level_solver;
 #ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
-        if (relative_permittivity && !use_robin) {
+        if (relative_permittivity) {
             level_solver = [&](int lev, amrex::LPInfo const&, amrex::MultiFab& phi,
                                amrex::MultiFab& rhs,
                                ablastr::fields::MLMGOptions const& options,
@@ -367,17 +370,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
                     options, absolute_tolerance);
             };
         }
-        if (use_robin) {
-            if (prepare_level) { prepare_level(0, *phi_fp[0]); }
-            m_material_solver.solve(*rho_fp[0], *phi_fp[0], *relative_permittivity->at(0),
-                *anode_masks->at(0), *electrostatic_material.anodePotentials()->at(0),
-                warpx.Geom(0), mlmg_options);
-        } else
 #endif
-        {
-            computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
-                       Efield_fp, std::nullopt, level_solver, prepare_level);
-        }
+        computePhi(rho_fp, phi_fp, beta, mlmg_options, is_igf_2d_slices,
+                   Efield_fp, std::nullopt, level_solver, prepare_level);
 #endif
     }
     Insert::FillPhiGhosts(phi_fp
@@ -402,7 +397,9 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
     }
 #ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     if (use_robin) {
-        for (auto* field : Efield_fp[0]) { field->FillBoundary(); }
+        for (auto const& level : Efield_fp) {
+            for (auto* field : level) { field->FillBoundary(); }
+        }
     } else {
         electrostatic_material.fillElectricFieldGhosts(Efield_fp);
     }

@@ -29,8 +29,9 @@ using PoissonLevelPrepare = std::function<void (int, amrex::MultiFab&)>;
  * Called synchronously after coarse interpolation and RHS scaling by -1/epsilon0.
  * RHS is a private working copy; masking it cannot change the deposited rho.
  * The callback restores its fixed potentials, configures its MLMG, synchronizes
- * the RHS, and solves this level. It must not rescale the RHS, interpolate to the
- * next AMR level, or commit time history. The caller still owns those operations.
+ * the RHS, and solves this level. Boundary dual-volume weights may be applied
+ * to the private RHS. It must not repeat the -1/epsilon0 conversion, interpolate
+ * to the next AMR level, or commit time history. The caller owns those operations.
  *
  * The returned MLMG and its operator must outlive the current level's post-solve
  * callback (at least until the next invocation). Captured state is borrowed only

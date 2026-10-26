@@ -37,7 +37,9 @@ void FillPhiGhosts (
 {
 #ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     if (material_solver && material_solver->isMonopole()) {
-        phi[0]->FillBoundary();
+        // All levels retain coarse-interpolated ghosts and refresh same-level
+        // donors. Only level zero touches the physical Robin boundary.
+        for (auto* field : phi) { field->FillBoundary(); }
         if (WarpX::grid_type == ablastr::utils::enums::GridType::Collocated) {
             material_solver->fillPhiGhosts(*phi[0], WarpX::GetInstance().Geom(0));
         }

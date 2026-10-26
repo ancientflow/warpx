@@ -15,7 +15,7 @@ namespace amrex { template <typename MF> class MLMGT; }
 namespace Insert {
 
 /** Material Poisson solver with one immutable operator/MLMG cache per AMR level.
- * Each operator solves one level; monopole is currently restricted to level zero.
+ * Each operator solves one level; only level zero has physical monopole faces.
  * No time history, particle data or interlevel interpolation is owned here.
  */
 class MaterialPoissonSolver
@@ -29,17 +29,9 @@ public:
     void readParameters (amrex::Geometry const& geom);
     [[nodiscard]] bool isMonopole () const noexcept { return m_monopole; }
 
-    /** Keep rho physical; scale a private RHS and reuse the static operator.
-     * In Dirichlet mode the caller must set current face potentials in phi
-     * before calling. Voltage may vary at each node and between solves.
-     */
-    void solve (amrex::MultiFab const& rho, amrex::MultiFab& phi,
-                amrex::MultiFab const& epsilon, amrex::iMultiFab const& mask,
-                amrex::MultiFab const& voltage, amrex::Geometry const& geom,
-                ablastr::fields::MLMGOptions const& options);
-
     /** Common hierarchy callback: RHS is already scaled by -1/epsilon0.
-     * Preserve interpolated coarse/fine values and ghosts; mask only a private RHS.
+     * Normalize Robin physical-face dual volumes only on level zero, in a private RHS.
+     * Preserve interpolated coarse/fine values and ghosts; mask only that private RHS.
      * The returned MLMG remains owned by this solver.
      */
     amrex::MLMGT<amrex::MultiFab>& solveLevel (

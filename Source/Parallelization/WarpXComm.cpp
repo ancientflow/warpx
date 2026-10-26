@@ -245,6 +245,25 @@ namespace
         }
     }
 
+    // Electrostatic buffer particles gather from the previous level's aux
+    // field on this level's coarsened layout. Refresh both E and B each update,
+    // including any grid external fields already added to the solved fields.
+    void UpdateElectrostaticCoarseAuxiliaryData (
+        ablastr::fields::MultiFabRegister& fields,
+        ablastr::fields::MultiLevelVectorField const& field_aux,
+        warpx::fields::FieldType const field_cax_type, int lev,
+        amrex::IntVect const& ng_src, amrex::Periodicity const& period)
+    {
+        if (!fields.has_vector(field_cax_type, lev)) { return; }
+        for (int dir = 0; dir < 3; ++dir) {
+            auto& coarse = *fields.get(field_cax_type, ablastr::fields::Direction{dir}, lev);
+            coarse.setVal(0.0);
+            ablastr::utils::communication::ParallelCopy(
+                coarse, *field_aux[lev-1][dir], 0, 0, coarse.nComp(),
+                ng_src, coarse.nGrowVect(), WarpX::do_single_precision_comms, period);
+        }
+    }
+
     /**
      * \brief Update one vector field on refined levels for staggered-to-nodal aux data.
      *
@@ -355,6 +374,8 @@ namespace
                 });
             }
         } else {
+            UpdateElectrostaticCoarseAuxiliaryData(
+                fields, field_aux, field_cax_type, lev, ng_src, cperiod);
             amrex::IntVect const& Fx_fp_stag = field_fp[lev][0]->ixType().toIntVect();
             amrex::IntVect const& Fy_fp_stag = field_fp[lev][1]->ixType().toIntVect();
             amrex::IntVect const& Fz_fp_stag = field_fp[lev][2]->ixType().toIntVect();
@@ -481,6 +502,8 @@ namespace
         }
         else // electrostatic
         {
+            UpdateElectrostaticCoarseAuxiliaryData(
+                fields, field_aux, field_cax_type, lev, ng_src, crse_period);
             for (int idim = 0; idim < 3; ++idim) {
                 MultiFab::Copy(
                     *field_aux[lev][idim], *field_fp[lev][idim],
