@@ -198,6 +198,15 @@ public:
                         const amrex::MultiFab& Bz,
                         MomentumPushType momentum_push_type) override;
 
+    /** Gather on the selected AMR level and update only a particle subset's momentum.
+     * Public access is required by the CUDA extended device lambda in this method.
+     */
+    void PushMomentum (
+        WarpXParIter& pti, int lev, int gather_lev, amrex::Real dt,
+        amrex::MultiFab const& Ex, amrex::MultiFab const& Ey, amrex::MultiFab const& Ez,
+        amrex::MultiFab const& Bx, amrex::MultiFab const& By, amrex::MultiFab const& Bz,
+        long offset, long np, MomentumPushType momentum_push_type);
+
     void PartitionParticlesInBuffers (
                         long& nfine_current,
                         long& nfine_gather,
@@ -443,7 +452,6 @@ public:
         warpx::particles::deposition::TemperatureDepositionPass pass) override;
 
 protected:
-
     /*
        Finds the box defining the region where refine injection should be used, if that
        option is enabled. Currently this only works for numLevels() == 2 and static mesh

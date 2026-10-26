@@ -324,9 +324,8 @@ ElectrostaticMaterial::initialize (
         epsilon_max = std::max(epsilon_max, level_epsilon_max);
         masked_nodes += level_masked_nodes;
 
-        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-            lev > 0 || level_masked_nodes > 0,
-            "insert.anode_implicit_function did not select any nodal point.");
+        // A dielectric or vacuum problem need not contain an internal electrode.
+        // Its physical and coarse/fine boundary conditions still constrain phi.
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
             level_masked_nodes == 0 || level_max_masked_k > level_min_masked_k,
             "The volume anode must cover at least two nodal layers in z.");
