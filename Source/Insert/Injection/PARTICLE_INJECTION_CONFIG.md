@@ -11,8 +11,11 @@ insert.initial_sources = source1 source2
 insert.continuous_sources = source3 source4
 ```
 
-- `insert.initial_sources`：初始化阶段执行一次，对应 `ParticleInjector::InitializePlasma()`。
-- `insert.continuous_sources`：每个注入步执行，对应 `ParticleInjector::InjectParticles()`。
+- `insert.initial_sources`：从头初始化时、首次场求解及初始诊断之前执行一次，
+  对应 `ParticleInjector::InitializePlasma()`。分段调用 `Evolve()` 不会重复注入，
+  checkpoint 重启也不会重新执行初始源。
+- `insert.continuous_sources`：每个注入步执行，对应 `ParticleInjector::InjectParticles()`，
+  使用当前实际场步长 `warpx.getdt(0)`；source 显式设置的步长覆盖仍然生效。
 - 如果这两个数组没有显式写出，内部 source 列表为空，不会进行任何默认初始化或默认注入。
 - source 名称没有固定集合。除特殊的 `average_ionization_source` 外，每个 source 都按 `<source_name>.*` 参数解析。
 
