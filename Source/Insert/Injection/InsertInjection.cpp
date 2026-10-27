@@ -634,11 +634,10 @@ void
 InjectConfiguredParticles ()
 {
 #if defined(WARPX_INSERT_3D) || defined(WARPX_INSERT_INITIALIZATION_3D)
-    amrex::Real dt = 0.0;
-    amrex::ParmParse pp_mc("my_constants");
-    // Parser-aware query: dt may be a math expression (e.g. 5e-8 / l_factor).
-    utils::parser::queryWithParser(pp_mc, "dt", dt);
-    ParticleInjector::GetInstance().InjectParticles(WarpX::GetInstance(), dt, 0);
+    auto& warpx = WarpX::GetInstance();
+    // Use the step actually advanced by Evolve, including timestep updates.
+    // Individual sources may still select their explicit time-step override.
+    ParticleInjector::GetInstance().InjectParticles(warpx, warpx.getdt(0), warpx.getistep(0));
 #endif
 }
 

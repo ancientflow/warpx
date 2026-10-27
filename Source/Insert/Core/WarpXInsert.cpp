@@ -177,9 +177,6 @@ Initialize () {
 #ifdef MCC_DENSITY
     GlobalBackgroundDensityInit();
 #endif
-#ifdef WARPX_INSERT_3D
-    InitializeParticleInjection();
-#endif
 }
 
 /**

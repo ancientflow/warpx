@@ -1,6 +1,6 @@
-# AMR 阶段 0：两层静态网格配置。实施记录见 AMR_IMPLEMENTATION_PLAN.md。
+# AMR 阶段 7：Hall 两层静态网格联合输入。实施记录见 Source/Insert/Docs/AMRStage7.md。
 # 工作目录为仓库内 <build>/bin，沿用主算例的 FILE 和数据相对路径。
-# 阶段 1 的材料/壁电荷/外场改动待构建验收；MCC 多层适配仍待阶段 2。
+# 生产 BP5 数据必须覆盖扩展域及外场插值 ghost；本输入尚待完整耦合运行验收。
 FILE = ../../Script/PHT/3d_hall_dielectric_slot
 
 # 扩展域独立于 lx/ly/lz；装置尺寸、注入位置、流量及宏粒子权重沿用主算例。
@@ -32,6 +32,14 @@ warpx.regrid_int = -1
 warpx.do_subcycling = 0
 algo.load_balance_intervals = 0
 
-# 沿用当前主算例的 staggered 布局；阶段 0 只改变域与网格配置。
+# 沿用主算例的 staggered 布局；其生产自力预算仍需验收，不能套用阶段 6
+# collocated 小问题的结论或直接复制其缓冲宽度。
 warpx.use_filter = 0
 insert.ecdi_control.enabled = 0
+
+# 显式选择第一类外边界；材料、二阶外推、MCC、墙面和文件磁场由主输入继承。
+insert.electrostatic_boundary = dirichlet
+insert.wall_charge_diagnostic = 1
+
+# 诊断写到当前运行目录；出口统计若启用，对应扩展域的 z=16.25 mm。
+ECDI_diag.file_prefix = diags/hall_amr

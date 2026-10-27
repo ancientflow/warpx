@@ -29,6 +29,7 @@
 #include "Filter/NCIGodfreyFilter.H"
 #include "Initialization/ExternalField.H"
 #include "Initialization/DivCleaner/ProjectionDivCleaner.H"
+#include "Insert/Injection/InsertInjection.h"
 #include "Particles/MultiParticleContainer.H"
 #include "Utils/Logo/GetLogo.H"
 #include "Utils/Parser/ParserUtils.H"
@@ -1019,6 +1020,11 @@ WarpX::InitFromScratch ()
 
     mypc->AllocData();
     mypc->InitData();
+
+    // Initial sources must contribute to the first field solve and its phi history.
+    // AddNParticles redistributes them to their owning levels before deposition.
+    // Keep this in the fresh-start path: Evolve may be called more than once.
+    Insert::InitializeParticleInjection();
 
     InitPML();
 
