@@ -7,6 +7,7 @@ namespace Insert {
 
 void ParticleNumber ();
 void ShowAndWriteIonzationNum (amrex::Vector<int> num);
+void AnodeCurrentCalc ();
 void ThrustCalc ();
 void BeamDivergenceCalc ();
 void IEDFCalc ();

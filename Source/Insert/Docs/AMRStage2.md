@@ -32,7 +32,7 @@
    GPU 粒子核继续并行执行。
 
 原生 CollisionHandler 的 start_step、subcycle/supercycle、传入时间及 dt 不变。
-species `ndt` 仍控制原有推进节奏，不作为碰撞 bins 有效性的判断依据。
+species `ndt` 仍控制原有推进节奏，并用于安排中性推进后的背景密度与 bins 重建。
 现有注入使用临时 level 0 写入及位置归属；原生边界处理后的完整 MR Redistribute
 继续负责双向跨层迁移和墙面产物归属。没有增加碰撞专用的场同步或粒子电荷沉积。
 
@@ -40,7 +40,7 @@ species `ndt` 仍控制原有推进节奏，不作为碰撞 bins 有效性的判
 
 背景仍只由本层中性粒子沉积，不跨层限制或补齐粗细接口缺项。主要电离区应与接口
 隔开；该近似的碰撞偏差仍需物理验收，不能由源码检查宣称满足误差预算。
-每次碰撞重建背景与 bins 增加计算和同步开销；性能尚未测量。
+背景与 bins 在中性推进后及排序步重建，其余碰撞调用复用缓存；电离消耗直接反馈到网格密度。
 
 已核对原生取场、aux/cax、gather/deposition、SyncRho、粒子分区、CollisionHandler、
 注入和墙面主路径没有修改。源码检查不等于 MPI/GPU 编译或守恒验证通过。

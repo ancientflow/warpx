@@ -11,7 +11,6 @@ AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 
 初始化时的 `BackwardCompatibility()` 会检查以下废弃参数，无论诊断是否开启：
 
-- `my_constants.anode_current_path`：改用 `my_constants.anode_current_prefix`。
 - `my_constants.zmin_wall_charge_diag`、`zmin_wall_charge_dir`、
   `zmin_wall_charge_interval` 和 `zmin_wall_charge_write_interval`：旧 zmin 面壁面
   电荷实现已移除，持久壁面电荷由静电介质与解析壁面处理。
@@ -341,9 +340,10 @@ my_constants.boundary_particle_diag_interval = 10
 否则初始化报错。
 
 默认值为 `10`，内部会限制为至少 `1`。`AnodeCurrentDiagOutput` 使用该间隔
-作为阳极电流的采样窗口（写出并清零累加器）。以下路径均使用该间隔读取
+作为解析壁面电流的采样窗口（写出并清零累加器）。以下路径均使用该间隔读取
 `ParticleBoundaryBuffer`：
 
+- `AnodeCurrentCalc`
 - `ThrustCalc`
 - `BeamDivergenceCalc`
 - `IEDFCalc`
@@ -359,8 +359,9 @@ my_constants.boundary_particle_diag_interval = 10
 | `my_constants.particle_number_diag` | `0` | 打印每个 species 当前粒子数。需要编译宏 `NUMP`。 |
 | `my_constants.wall_interaction_diag` | `0` | 每步按入射 species 打印解析壁面交互的宏粒子计数，同一物种的所有解析壁面合并统计。需要启用 `insert.analytic_walls`。 |
 | `my_constants.collision_record_diag` | `0` | 写出碰撞产生的电子和离子宏粒子数到 `collision_record.dat`。需要编译宏 `COLLISION_RECORD`。 |
-| `my_constants.anode_current_diag` | `0` | 统计每面解析壁面吸收的电流，每壁面一个输出文件。需要启用 `insert.analytic_walls`。 |
-| `my_constants.anode_current_prefix` | `anode_current` | 壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
+| `my_constants.anode_current_diag` | `0` | 同时启用 zmin 域边界缓存统计和解析壁面吸收统计；两条路径独立输出。 |
+| `my_constants.anode_current_path` | `anode_current.dat` | zmin 域边界缓存统计的单文件输出路径。需要 `HALL3D`。 |
+| `my_constants.anode_current_prefix` | `anode_current` | 解析壁面电流输出文件前缀，文件名为 `<prefix>_<wall>.dat`。 |
 | `my_constants.thrust_diag` | `0` | 统计出口离子轴向动量并计算推力。需要 `WARPX_INSERT_3D`。 |
 | `my_constants.beam_divergence_diag` | `0` | 统计出口离子束流发散角。需要 `WARPX_INSERT_3D`。 |
 | `my_constants.iedf_diag` | `0` | 统计出口离子能量分布函数。需要 `WARPX_INSERT_3D`。 |
@@ -398,6 +399,36 @@ my_constants.wall_interaction_diag = 1
 
 ### 阳极电流
 
+`my_constants.anode_current_diag = 1` 同时启用 zmin 域边界缓存统计和解析壁面
+吸收统计。两条路径相互独立，可同时输出；zmin 缓存路径不要求配置解析壁面，
+解析壁面路径则只在定义了 `insert.analytic_walls` 时生成对应文件。
+
+#### zmin 域边界缓存
+
+```text
+my_constants.anode_current_diag = 1
+my_constants.anode_current_path = "anode_current.dat"
+```
+
+`AnodeCurrentCalc` 在 `HALL3D` 下按 `hall_diag_interval` 读取 zlo 域边界粒子缓存，
+统计 `electrons` 和 `xe_ions`，并将 MPI 归约结果追加到
+`anode_current_path`。输出列为：
+
+```text
+time    zmin_electron    zmin_ion    anode_electron    anode_electron_cut
+```
+
+- `zmin_electron`：zmin 缓存中的全部电子宏粒子权重之和。
+- `zmin_ion`：回推到 zmin 平面后命中阳极环的离子宏粒子权重之和。
+- `anode_electron`：按缓存中粒子位置直接判断命中阳极环的电子权重之和。
+- `anode_electron_cut`：回推到 zmin 平面后命中阳极环的电子权重之和。
+
+阳极环几何与 `insert.zmin_ring_anode` 共用 `ReadLegacyAnnularElectrodeConfig`。这些列是
+采样窗口内的宏粒子权重累计量，不是直接以 A 为单位的电流。该路径在
+`ClearBoundaryParticleCache` 清理缓存之前执行。
+
+#### 解析壁面吸收
+
 ```text
 my_constants.anode_current_diag = 1
 my_constants.anode_current_prefix = "anode_current"
@@ -423,15 +454,10 @@ specular / diffuse 反射不产生净电流）：
 - `net_charge`：窗口内该壁面接收的净电荷，单位 C，口径与壁面电荷沉积
   一致，即 `(charge - q_out) * w`；除以窗口时长即为平均电流。
 
-对任何物种都没有配置 behaviors 的壁面也会生成文件（内容恒为零），
-便于后处理脚本统一处理。旧参数 `my_constants.anode_current_path`（单文件
-zlo 缓存实现）已移除，设置它会触发报错并提示改用
-`anode_current_prefix`。
-
-注意：旧实现从 zlo 域边界粒子缓存统计，新解析壁面吸收的粒子不再进入该
-缓存，故旧实现已删除。一步内穿越壁面到 domain zmin 之间区域的粒子
-（`v * dt` 大于壁面到 zmin 的距离）会被域边界吸收而不经壁面模型，两种
-实现都统计不到。
+对任何物种都没有配置 behaviors 的壁面也会生成文件（内容恒为零），便于后处理
+脚本统一处理。解析壁面吸收的粒子不再进入 zlo 域边界缓存；一步内穿越壁面到
+domain zmin 之间区域的粒子（`v * dt` 大于壁面到 zmin 的距离）会被域边界吸收
+而不经壁面模型，两种实现都统计不到。
 
 ### 推力
 

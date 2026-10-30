@@ -1820,8 +1820,13 @@ WarpX::ReadExternalFieldFromFile (
         }
     }
 
-    // Read external field openPMD data
-    const Box pbox = amrex::grow(mf->boxArray().minimalBox(), mf->nGrowVect());
+    // Read external field openPMD data. Physical-domain ghosts retain the
+    // single-level zero-outside convention; MR coverage checks apply within
+    // the physical domain, including local fine patches and their ghosts.
+    Box pbox = amrex::grow(mf->boxArray().minimalBox(), mf->nGrowVect());
+    if (maxLevel() > 0) {
+        pbox &= amrex::convert(target_geom.Domain(), nodal_flag);
+    }
     const bool distributed = true;
     ExternalFieldReader external_field_reader(read_fields_from_path, F_name, F_component,
                                               problo, dx, pbox, distributed, maxLevel() > 0);

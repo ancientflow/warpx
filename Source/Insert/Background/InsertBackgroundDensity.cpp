@@ -47,9 +47,7 @@ GlobalBackgroundDensityUpdate (const int step)
     if (global_background_density.empty()) {
         return;
     }
-#if !defined(MCC_DENSITY_AVERAGE_CALC)
-    // Direct density is refreshed at each actual coupled collision invocation.
-    // USE mode is loaded once; CALC retains its existing sampling schedule.
+#ifdef MCC_DENSITY_AVERAGE_USE
     amrex::ignore_unused(step);
     return;
 #else

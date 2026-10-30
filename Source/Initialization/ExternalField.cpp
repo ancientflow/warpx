@@ -282,11 +282,17 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
     // Keep the established single-level coordinate convention for existing maps.
     if (m_require_full_coverage) {
         auto const position = FC.position<double>();
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            position.size() == AMREX_SPACEDIM ||
+            (position.size() == 1 && position.front() == 0.0),
+            "External field map position must have one zero entry or one entry per axis.");
         auto const grid_unit = F.gridUnitSI();
         for (int d = 0; d < AMREX_SPACEDIM; ++d) {
             int const axis = xyz_order ? d : AMREX_SPACEDIM-1-d;
+            auto const component_position =
+                position.size() == 1 ? 0.0 : position.at(axis);
             m_offset[d] = static_cast<amrex::Real>(
-                (m_offset[d] + position.at(axis)*m_dx[d]) * grid_unit);
+                (m_offset[d] + component_position*m_dx[d]) * grid_unit);
             m_dx[d] *= static_cast<amrex::Real>(grid_unit);
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(std::isfinite(m_dx[d]) && m_dx[d] > 0.0 &&
                 std::isfinite(m_offset[d]), "External field map has invalid grid coordinates.");
@@ -328,12 +334,12 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
     }
 
     // MR may expose regions beyond a formerly single-level field map. Never
-    // silently return zero there: require both samples of each interpolation
-    // stencil, including all requested ghost cells and component staggering.
+    // silently return zero in the physical target: require every sample used
+    // for interpolation, including local-patch ghosts and component staggering.
     if (m_require_full_coverage) {
         for (int d = 0; d < AMREX_SPACEDIM; ++d) {
             auto const first = std::floor((pbox.lo(d)-m_offset[d])/m_dx[d]);
-            auto const last = std::floor((pbox.hi(d)-m_offset[d])/m_dx[d]) + 1;
+            auto const last = std::ceil((pbox.hi(d)-m_offset[d])/m_dx[d]);
             WARPX_ALWAYS_ASSERT_WITH_MESSAGE(first >= 0 && last < m_size[d],
                 "External field map " + m_file + " (" + m_name + "/" + m_component +
                 ") does not cover the MR target and its ghost interpolation stencil in axis " +

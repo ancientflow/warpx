@@ -193,7 +193,7 @@ public:
      * \param[in] pdx         cell size of WarpX
      * \param[in] dombox      WarpX domain box
      * \param[in] distributed read OpenPMD data distributely
-     * \param[in] require_full_coverage reject missing interpolation data, including ghosts
+     * \param[in] require_full_coverage reject missing interpolation data in the physical target
      */
     ExternalFieldReader (std::string read_fields_from_path,
                          std::string F_name, std::string F_component,

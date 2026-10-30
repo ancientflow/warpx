@@ -296,14 +296,6 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
     WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
         std::isfinite(dt) && dt >= 0 && std::isfinite(elec_weight) && elec_weight > 0,
         "Coupled MCC requires finite nonnegative dt and positive elec_weight.");
-#if !defined(MCC_DENSITY_AVERAGE_USE) && !defined(MCC_DENSITY_AVERAGE_CALC)
-    // Rebuild at each actual collision invocation, including collision substeps.
-    // Redistribution, injection, wall products or preceding collisions can change
-    // neutral tile storage even when the neutral species was not pushed.
-    m_background_density.backgroundDensityUpdate(
-        *mypc, elec_weight, warpx_instance.getistep(0));
-#endif
-
     if (!init_flag) {
         m_mass1 = species1.getMass();
 
