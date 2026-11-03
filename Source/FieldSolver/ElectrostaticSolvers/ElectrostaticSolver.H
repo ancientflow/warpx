@@ -67,10 +67,12 @@ public:
      * boundary.potential_lo and boundary.potential_hi.
      * \param[inout] phi The electrostatic potential
      * \param[in] t current time
+     * \param[in] only_lev If nonnegative, set physical boundaries on this level only
      */
     void setPhiBC (
         ablastr::fields::MultiLevelScalarField const& phi,
-        amrex::Real t
+        amrex::Real t,
+        int only_lev = -1
     ) const;
 
     /**
@@ -149,6 +151,9 @@ public:
 
     /** Boundary handler object to set potential for EB and on the domain boundary */
     std::unique_ptr<PoissonBoundaryHandler> m_poisson_boundary_handler;
+
+    /** Reapply physical Dirichlet values after coarse-to-fine potential interpolation */
+    bool apply_physical_phi_bc_on_fine = false;
 
     /** Parameters of the MLMG Poisson solve, set from the `warpx.self_fields_*`
      *  input parameters

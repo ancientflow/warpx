@@ -243,6 +243,10 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
 #else
         false;
 #endif
+    bool const apply_fine_physical_phi_bc =
+        apply_physical_phi_bc_on_fine && !use_robin &&
+        WarpX::poisson_solver_id == PoissonSolverAlgo::Multigrid &&
+        !IsPythonCallbackInstalled("poissonsolver");
 
     const MultiLevelScalarField rho_fp = fields.get_mr_levels(FieldType::rho_fp, max_level);
     const MultiLevelScalarField rho_cp = fields.get_mr_levels(FieldType::rho_cp, max_level, skip_lev0_coarse_patch);
@@ -351,10 +355,17 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
         ablastr::fields::MLMGOptions mlmg_options = m_mlmg_options;
         mlmg_options.verbosity = verbose_step ? m_mlmg_options.verbosity : 0;
         ablastr::fields::PoissonLevelPrepare prepare_level;
-        if (use_level_history) {
-            prepare_level = [this, verbosity = mlmg_options.verbosity]
-                (int lev, amrex::MultiFab& phi) {
-                    m_nodal_initial_guess.prepare(lev, phi, verbosity);
+        if (use_level_history || apply_fine_physical_phi_bc) {
+            prepare_level = [this, verbosity = mlmg_options.verbosity,
+                use_level_history, apply_fine_physical_phi_bc, phi_fp,
+                current_time = warpx.gett_new(0)] (int lev, amrex::MultiFab& phi) {
+                    if (apply_fine_physical_phi_bc && lev > 0) {
+                        setPhiBC(phi_fp, current_time, lev);
+                        Insert::SetBoundaryPhi(lev);
+                    }
+                    if (use_level_history) {
+                        m_nodal_initial_guess.prepare(lev, phi, verbosity);
+                    }
                 };
         }
         ablastr::fields::PoissonLevelSolver level_solver;
@@ -380,6 +391,11 @@ void LabFrameExplicitES::ComputeSpaceChargeField (
                           , &m_material_solver
 #endif
     );
+    if (apply_fine_physical_phi_bc) {
+        for (int lev = 1; lev <= max_level; ++lev) {
+            Insert::SetPhiGuards(lev);
+        }
+    }
     // Keep extrapolation history on the uncorrected Poisson potential.
     if (use_level_history) {
         m_nodal_initial_guess.commit(phi_fp);

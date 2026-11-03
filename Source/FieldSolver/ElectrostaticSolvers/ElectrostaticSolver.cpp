@@ -56,6 +56,8 @@ void ElectrostaticSolver::ReadParameters () {
     utils::parser::queryWithParser(
         pp_warpx, "self_fields_phi_extrapolation_beta",
         self_fields_phi_extrapolation_beta);
+    pp_warpx.query(
+        "apply_physical_phi_bc_on_fine", apply_physical_phi_bc_on_fine);
 
     utils::parser::queryWithParser(
         pp_warpx, "self_fields_num_final_sweeps", m_mlmg_options.num_final_sweeps);
@@ -113,7 +115,8 @@ void ElectrostaticSolver::ReadParameters () {
 void
 ElectrostaticSolver::setPhiBC (
     ablastr::fields::MultiLevelScalarField const& phi,
-    amrex::Real t
+    amrex::Real t,
+    int only_lev
 ) const
 {
     // check if any dimension has non-periodic boundary conditions
@@ -141,6 +144,7 @@ ElectrostaticSolver::setPhiBC (
 
     // loop over all mesh refinement levels and set the boundary values
     for (int lev=0; lev < num_levels; lev++) {
+        if (only_lev >= 0 && lev != only_lev) { continue; }
 
         amrex::Box domain = warpx.Geom(lev).Domain();
         domain.surroundingNodes();

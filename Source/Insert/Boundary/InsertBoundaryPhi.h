@@ -12,8 +12,8 @@ void FillPhiGhosts (
     ablastr::fields::MultiLevelScalarField const& phi,
     MaterialPoissonSolver* material_solver = nullptr);
 
-void AnodeVoltage ();
-void DirichletPhiGuardSet ();
+void AnodeVoltage (int lev = 0);
+void DirichletPhiGuardSet (int lev = 0);
 void VoltageAdjustment ();
 
 } // namespace Insert

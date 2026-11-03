@@ -131,7 +131,7 @@ PhiAdjustmentEntrance () {
  * 边界电势设置入口
  */
 void
-SetBoundaryPhi () {
+SetBoundaryPhi (int lev) {
 #if defined(WARPX_DIM_3D)
 #   ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     // 材料 (体阳极 overset mask) 路径启用时跳过 zmin 面电势设置
@@ -139,7 +139,9 @@ SetBoundaryPhi () {
         return;
     }
 #   endif
-    AnodeVoltage();
+    AnodeVoltage(lev);
+#else
+    amrex::ignore_unused(lev);
 #endif
 }
 
@@ -147,7 +149,7 @@ SetBoundaryPhi () {
  * 求解后 Dirichlet 面 ghost 电势重填入口
  */
 void
-SetPhiGuards () {
+SetPhiGuards (int lev) {
 #if defined(WARPX_DIM_3D)
 #   ifdef WARPX_USE_ELECTROSTATIC_MATERIALS
     // 材料路径有自己的 ghost 处理, 启用时跳过
@@ -155,7 +157,9 @@ SetPhiGuards () {
         return;
     }
 #   endif
-    DirichletPhiGuardSet();
+    DirichletPhiGuardSet(lev);
+#else
+    amrex::ignore_unused(lev);
 #endif
 }
 

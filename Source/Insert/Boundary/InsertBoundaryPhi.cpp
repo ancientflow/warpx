@@ -55,7 +55,7 @@ void FillPhiGhosts (
 }
 
 void
-AnodeVoltage ()
+AnodeVoltage (int lev)
 {
 #if defined(WARPX_DIM_3D)
     // Runtime switch: insert.zmin_ring_anode = 1 sets the zmin domain-face
@@ -73,18 +73,19 @@ AnodeVoltage ()
     }
 
     WarpX& warpx_instance = WarpX::GetInstance();
-    auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
-    auto const config = ReadLegacyAnnularElectrodeConfig(warpx_instance.Geom(0));
+    auto phi_field = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, lev);
+    auto const& geom = warpx_instance.Geom(lev);
+    auto const config = ReadLegacyAnnularElectrodeConfig(geom);
 
-    amrex::Box domain = warpx_instance.Geom(0).Domain();
+    amrex::Box domain = geom.Domain();
     domain.surroundingNodes();
     int const xlo = domain.smallEnd(0);
     int const ylo = domain.smallEnd(1);
     int const zlo = domain.smallEnd(2);
-    amrex::Real const problo_x = warpx_instance.Geom(0).ProbLo(0);
-    amrex::Real const problo_y = warpx_instance.Geom(0).ProbLo(1);
-    amrex::Real const dx = warpx_instance.Geom(0).CellSize(0);
-    amrex::Real const dy = warpx_instance.Geom(0).CellSize(1);
+    amrex::Real const problo_x = geom.ProbLo(0);
+    amrex::Real const problo_y = geom.ProbLo(1);
+    amrex::Real const dx = geom.CellSize(0);
+    amrex::Real const dy = geom.CellSize(1);
 
     for (amrex::MFIter mfi(*phi_field, amrex::TilingIfNotGPU()); mfi.isValid();
          ++mfi) {
@@ -103,12 +104,14 @@ AnodeVoltage ()
             }
         });
     }
-    phi_field->FillBoundary(warpx_instance.Geom(0).periodicity());
+    phi_field->FillBoundary(geom.periodicity());
+#else
+    amrex::ignore_unused(lev);
 #endif
 }
 
 void
-DirichletPhiGuardSet ()
+DirichletPhiGuardSet (int lev)
 {
 #if defined(WARPX_DIM_3D)
     using namespace amrex::literals;
@@ -124,10 +127,11 @@ DirichletPhiGuardSet ()
     }
 
     WarpX& warpx_instance = WarpX::GetInstance();
-    auto phi = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, 0);
-    auto rho = warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, 0);
+    auto phi = warpx_instance.m_fields.get(warpx::fields::FieldType::phi_fp, lev);
+    auto rho = warpx_instance.m_fields.get(warpx::fields::FieldType::rho_fp, lev);
 
-    amrex::Box domain = warpx_instance.Geom(0).Domain();
+    amrex::Geometry const& geom = warpx_instance.Geom(lev);
+    amrex::Box domain = geom.Domain();
     domain.surroundingNodes();
     int const xlo = domain.smallEnd(0);
     int const ylo = domain.smallEnd(1);
@@ -136,7 +140,6 @@ DirichletPhiGuardSet ()
     int const yhi = domain.bigEnd(1);
     int const zhi = domain.bigEnd(2);
 
-    amrex::Geometry const& geom = warpx_instance.Geom(0);
     amrex::Real const cx = geom.CellSize(0) * geom.CellSize(0) / PhysConst::epsilon_0;
     amrex::Real const cy = geom.CellSize(1) * geom.CellSize(1) / PhysConst::epsilon_0;
     amrex::Real const cz = geom.CellSize(2) * geom.CellSize(2) / PhysConst::epsilon_0;
@@ -177,6 +180,8 @@ DirichletPhiGuardSet ()
             }
         });
     }
+#else
+    amrex::ignore_unused(lev);
 #endif
 }
 

@@ -38,6 +38,18 @@ insert.zmin_ring_anode = 1
 `insert.use_electrostatic_materials = 1`（体阳极 overset 路径）启用时自动跳过。
 该设置只改电势，不含壁面电荷沉积、Schur 修正或粒子边界相互作用。
 
+多层 Dirichlet MLMG 中，细层与物理域重合的面默认由粗层电势插值赋值。可设置：
+
+```text
+warpx.apply_physical_phi_bc_on_fine = 1
+```
+
+在粗层插值之后、细层求解之前，按细层几何重新写入这些物理面的完整
+`boundary.potential_*` 面值，并再次应用 `insert.zmin_ring_anode`。求解后也按细层
+网格间距和本层 `rho` 重填这些面的 Dirichlet ghost。内部粗细界面仍由粗层插值，
+粒子采集/沉积缓冲规则不变。该选项默认关闭，仅用于 lab-frame Dirichlet MLMG；
+Robin、非 MLMG 和 Python `poissonsolver` 路径不使用该选项。
+
 ## 静电介质与体阳极
 
 当前统一材料后端用于 3D Cartesian、lab-frame、MLMG、非周期静态网格，不支持 EB、IGF、

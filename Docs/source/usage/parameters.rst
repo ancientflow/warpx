@@ -639,6 +639,20 @@ Overall simulation parameters
     ``warpx.self_fields_phi_extrapolation_order = 2``, the initial guess is
     :math:`(1+\alpha+\beta)\phi_n-(\alpha+2\beta)\phi_{n-1}+\beta\phi_{n-2}`.
 
+.. pp:param:: warpx.apply_physical_phi_bc_on_fine
+    :type: ``boolean``
+    :default: 0
+
+    For lab-frame Dirichlet MLMG solves with mesh refinement, reapply the physical-domain
+    potential on refined levels after coarse-to-fine interpolation and before the fine-level
+    solve. Only refined-level faces that coincide with the physical domain boundary are
+    changed; internal coarse-fine interfaces retain their interpolated values. The complete
+    ``boundary.potential_*`` face value is applied before the optional
+    ``insert.zmin_ring_anode`` pattern. After the solve, physical-face potential guard nodes
+    are recomputed using the refined-level mesh spacing and charge density. Particle gather
+    and deposition buffers are unchanged. This option is not used with Robin boundaries,
+    non-MLMG solvers, or a Python ``poissonsolver`` callback.
+
 .. pp:param:: warpx.self_fields_bottom_solver
     :type: ``string``
     :default: ``default``
