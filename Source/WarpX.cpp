@@ -38,6 +38,7 @@
 #include "Filter/NCIGodfreyFilter.H"
 #include "Initialization/ExternalField.H"
 #include "Initialization/WarpXInit.H"
+#include "Insert/Config/WarpXOptimizationConfig.h"
 #include "Insert/Core/WarpXInsert.h"
 #include "Particles/ParticleBoundaries.H"
 #include "Particles/MultiParticleContainer.H"
@@ -1299,6 +1300,13 @@ WarpX::ReadParameters ()
         pp_algo.query_enum_case_insensitive("current_deposition", current_deposition_algo);
         pp_algo.query_enum_case_insensitive("charge_deposition", charge_deposition_algo);
         pp_algo.query_enum_case_insensitive("particle_pusher", particle_pusher_algo);
+
+#ifdef WARPX_NONRELATIVISTIC_PUSH
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            evolve_scheme == EvolveScheme::Explicit &&
+            particle_pusher_algo == ParticlePusherAlgo::Boris,
+            "WARPX_NONRELATIVISTIC_PUSH requires explicit evolution with the Boris pusher.");
+#endif
 
         // check for implicit evolve scheme
         if (evolve_scheme == EvolveScheme::Semi_Implicit_EM) {

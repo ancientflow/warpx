@@ -206,7 +206,8 @@ ExternalFieldReader::ExternalFieldReader (
       m_distributed(distributed)
 {}
 
-void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
+void ExternalFieldReader::load_data (amrex::RealBox const& pbox,
+                                     amrex::RealBox const* coverage_domain)
 {
 #if defined(WARPX_USE_OPENPMD) && !defined(WARPX_DIM_RCYLINDER) && !defined(WARPX_DIM_RSPHERE)
     using namespace amrex;
@@ -333,18 +334,21 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
         m_domain.setHi(idim, m_offset[idim]+(m_size[idim]-1)*m_dx[idim]);
     }
 
-    // MR may expose regions beyond a formerly single-level field map. Never
-    // silently return zero in the physical target: require every sample used
-    // for interpolation, including local-patch ghosts and component staggering.
-    if (m_require_full_coverage) {
-        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
-            auto const first = std::floor((pbox.lo(d)-m_offset[d])/m_dx[d]);
-            auto const last = std::ceil((pbox.hi(d)-m_offset[d])/m_dx[d]);
-            WARPX_ALWAYS_ASSERT_WITH_MESSAGE(first >= 0 && last < m_size[d],
-                "External field map " + m_file + " (" + m_name + "/" + m_component +
-                ") does not cover the MR target and its ghost interpolation stencil in axis " +
-                std::to_string(d) + ". Extend the field map before using mesh refinement.");
-        }
+    // A prescribed static B may be extrapolated into physical guard cells,
+    // but missing data inside the physical domain must never become zero B.
+    // Use the same closed-endpoint and roundoff rules as the device sampler.
+    if (m_require_full_coverage || coverage_domain != nullptr) {
+        auto const& coverage = coverage_domain ? *coverage_domain : pbox;
+        ExternalFieldView bounds;
+        bounds.dx = m_dx;
+        bounds.offset = m_offset;
+        bounds.global_size = m_size;
+        amrex::RealVect const lower{AMREX_D_DECL(coverage.lo(0), coverage.lo(1), coverage.lo(2))};
+        amrex::RealVect const upper{AMREX_D_DECL(coverage.hi(0), coverage.hi(1), coverage.hi(2))};
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(bounds.contains(lower) && bounds.contains(upper),
+            "External field map " + m_file + " (" + m_name + "/" + m_component +
+            ") does not cover the required physical target, including its boundary nodes. "
+            "Extend the field map; only exterior physical guard cells may be extrapolated.");
     }
 
     // Determine the full extent of the data we need
@@ -467,7 +471,7 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
     }
 
 #else
-    amrex::ignore_unused(pbox);
+    amrex::ignore_unused(pbox, coverage_domain);
     WARPX_ABORT_WITH_MESSAGE("ExternalFieldReader requires openPMD and it is not supported for 1D RCYLINDER and RSPHERE");
 #endif
 }
@@ -475,7 +479,8 @@ void ExternalFieldReader::load_data (amrex::RealBox const& pbox)
 void ExternalFieldReader::prepare (amrex::BoxArray const& grids,
                                    amrex::DistributionMapping const& dmap,
                                    amrex::IntVect const& ngrow,
-                                   std::function<amrex::Real(amrex::Real)> const& get_zlab)
+                                   std::function<amrex::Real(amrex::Real)> const& get_zlab,
+                                   amrex::RealBox const* coverage_domain)
 {
     using namespace amrex;
 
@@ -492,7 +497,7 @@ void ExternalFieldReader::prepare (amrex::BoxArray const& grids,
         rbox.setLo(AMREX_SPACEDIM-1, zlo);
         rbox.setHi(AMREX_SPACEDIM-1, zhi);
     }
-    load_data(rbox);
+    load_data(rbox, coverage_domain);
 
     if (m_distributed) {
         BoxList bl;

@@ -8,6 +8,7 @@
 #ifndef WARPX_PARTICLES_PUSHER_UPDATEPOSITION_H_
 #define WARPX_PARTICLES_PUSHER_UPDATEPOSITION_H_
 
+#include "Insert/Config/WarpXOptimizationConfig.h"
 #include "Utils/WarpXConst.H"
 
 #include <AMReX.H>
@@ -30,12 +31,15 @@ void UpdatePosition ([[maybe_unused]] amrex::ParticleReal& x,
 {
     using namespace amrex::literals;
 
-    amrex::ParticleReal const u2 = ux*ux + uy*uy + uz*uz;
-
     // massive particles
     if (mass > 0.0_rt) {
+#ifdef WARPX_NONRELATIVISTIC_PUSH
+        constexpr amrex::ParticleReal inv_gamma = 1._prt;
+#else
+        amrex::ParticleReal const u2 = ux*ux + uy*uy + uz*uz;
         constexpr amrex::ParticleReal inv_c2 = 1._prt/PhysConst::c2;
         const amrex::ParticleReal inv_gamma = 1._prt/std::sqrt(1._prt + u2*inv_c2);
+#endif
 
         // Update positions over one time step
 #if !defined(WARPX_DIM_1D_Z)
@@ -51,6 +55,7 @@ void UpdatePosition ([[maybe_unused]] amrex::ParticleReal& x,
     }
     // massless particles (photons)
     else {
+        amrex::ParticleReal const u2 = ux*ux + uy*uy + uz*uz;
         if (u2 > 0._prt) {
             amrex::ParticleReal const c_over_unorm = PhysConst::c/std::sqrt(u2);
 

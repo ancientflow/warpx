@@ -1,7 +1,6 @@
 #ifndef WARPX_INSERT_FILTERCOPYTRANSFORMCOUPLED_H_
 #define WARPX_INSERT_FILTERCOPYTRANSFORMCOUPLED_H_
 
-#include "Particles/Algorithms/KineticEnergy.H"
 #include "Particles/ParticleCreation/FilterCopyTransform.H"
 #include "Particles/ShapeFactors.H"
 #include "Particles/WarpXParticleContainer.H"
@@ -13,12 +12,90 @@
 #include <AMReX_Dim3.H>
 #include <AMReX_GpuContainers.H>
 #include <AMReX_IntVect.H>
+#include <AMReX_Parser.H>
 #include <AMReX_REAL.H>
 #include <AMReX_Random.H>
 
+#include <cmath>
 #include <utility>
 
 namespace Insert::CollisionDetail {
+
+/** Squared classical speed, evaluated in double precision before squaring. */
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+double VelocitySquared (amrex::ParticleReal const vx, amrex::ParticleReal const vy,
+                        amrex::ParticleReal const vz) noexcept
+{
+    return double(vx)*double(vx) + double(vy)*double(vy) + double(vz)*double(vz);
+}
+
+/** Speed of either outgoing electron when the available energy is shared equally.
+ *  The ionization filter rejects subthreshold events before consuming a neutral.
+ *  Clamp roundoff at threshold so that the square root remains well defined.
+ */
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+amrex::ParticleReal IonizationElectronSpeed (
+    amrex::ParticleReal const vx, amrex::ParticleReal const vy,
+    amrex::ParticleReal const vz, double const mass, double const energy_cost_eV) noexcept
+{
+    // v_out^2 = 2 * ((m*v_in^2/2 - energy_cost)/2) / m.
+    double const speed_squared =
+        0.5*VelocitySquared(vx, vy, vz) - energy_cost_eV*PhysConst::q_e/mass;
+    return static_cast<amrex::ParticleReal>(std::sqrt(amrex::max(0.0, speed_squared)));
+}
+
+/** Classical impact ionization with equal electron energy sharing and thermal ions.
+ *  Keep the existing reservoir approximation: ion recoil is not resolved.
+ */
+class CoupledImpactIonizationTransformFunc
+{
+public:
+    CoupledImpactIonizationTransformFunc (
+        amrex::ParticleReal energy_cost, double mass,
+        amrex::ParticleReal sqrt_kb_m, amrex::ParserExecutor<4> temperature,
+        amrex::Real time)
+        : m_energy_cost(energy_cost), m_mass(mass), m_sqrt_kb_m(sqrt_kb_m),
+          m_temperature(temperature), m_time(time) {}
+
+    template <typename DstData, typename SrcData>
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void operator() (DstData& electrons, DstData& ions, SrcData& src,
+                     int const i_src, int const i_electron, int const i_ion,
+                     amrex::RandomEngine const& engine) const noexcept
+    {
+        using namespace amrex::literals;
+
+        amrex::ParticleReal x, y, z;
+        get_particle_position(src.getSuperParticle(i_src), x, y, z);
+        amrex::ParticleReal const ion_vel_std =
+            m_sqrt_kb_m*std::sqrt(m_temperature(x, y, z, m_time));
+
+        auto& vx = src.m_rdata[PIdx::ux][i_src];
+        auto& vy = src.m_rdata[PIdx::uy][i_src];
+        auto& vz = src.m_rdata[PIdx::uz][i_src];
+        auto const speed = IonizationElectronSpeed(vx, vy, vz, m_mass, m_energy_cost);
+
+        ParticleUtils::RandomizeVelocity(vx, vy, vz, speed, engine);
+        ParticleUtils::RandomizeVelocity(
+            electrons.m_rdata[PIdx::ux][i_electron],
+            electrons.m_rdata[PIdx::uy][i_electron],
+            electrons.m_rdata[PIdx::uz][i_electron], speed, engine);
+
+        ions.m_rdata[PIdx::ux][i_ion] =
+            ion_vel_std*amrex::RandomNormal(0._prt, 1._prt, engine);
+        ions.m_rdata[PIdx::uy][i_ion] =
+            ion_vel_std*amrex::RandomNormal(0._prt, 1._prt, engine);
+        ions.m_rdata[PIdx::uz][i_ion] =
+            ion_vel_std*amrex::RandomNormal(0._prt, 1._prt, engine);
+    }
+
+private:
+    amrex::ParticleReal m_energy_cost;
+    double m_mass;
+    amrex::ParticleReal m_sqrt_kb_m;
+    amrex::ParserExecutor<4> m_temperature;
+    amrex::Real m_time;
+};
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE int
 DenseBinIndex (amrex::Dim3 const cell, amrex::Dim3 const ncell) noexcept {
@@ -45,25 +122,12 @@ class IonizationSourceTransformFunc {
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     void operator() (SrcData& src, int const i_src,
                      amrex::RandomEngine const& engine) const noexcept {
-        using namespace amrex;
-        using std::sqrt;
-
         auto& ux = src.m_rdata[PIdx::ux][i_src];
         auto& uy = src.m_rdata[PIdx::uy][i_src];
         auto& uz = src.m_rdata[PIdx::uz][i_src];
 
-        constexpr auto eV = PhysConst::q_e;
-        const double E_coll =
-            Algorithms::KineticEnergy<double>(ux, uy, uz, m_mass1) / eV;
-
-        const auto E_out = static_cast<amrex::ParticleReal>(
-            (E_coll - m_energy_cost) / 2.0_prt * eV);
-
-        constexpr auto c2 = PhysConst::c2;
-        const auto mc2 = m_mass1 * c2;
-
         const amrex::ParticleReal up =
-            sqrt(E_out * (E_out + 2.0_prt * mc2) / c2) / m_mass1;
+            IonizationElectronSpeed(ux, uy, uz, m_mass1, m_energy_cost);
 
         ParticleUtils::RandomizeVelocity(ux, uy, uz, up, engine);
     }

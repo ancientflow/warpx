@@ -11,10 +11,7 @@
 #include "Insert/Config/WarpXFunctionConfig.h"
 #include "Insert/Math/ThermalVelocity.h"
 
-#include "Particles/Algorithms/KineticEnergy.H"
-#include "Particles/Collision/BackgroundMCC/ImpactIonization.H"
 #include "Particles/Collision/BinaryCollision/BinaryCollisionUtils.H"
-#include "Particles/Collision/BinaryCollision/TwoProductUtil.H"
 #include "Particles/ParticleCreation/SmartCopy.H"
 #include "Utils/Parser/ParserUtils.H"
 #include "Utils/ParticleUtils.H"
@@ -61,12 +58,14 @@ class CoupledImpactIonizationFilterFunc {
         const ParticleReal uz = ptd.m_rdata[PIdx::uz][i];
 
         constexpr auto eV = PhysConst::q_e;
-        const double E_coll =
-            Algorithms::KineticEnergy<double>(ux, uy, uz, m_mass) / eV;
+        const double u_coll2 = Insert::CollisionDetail::VelocitySquared(ux, uy, uz);
+        const double E_coll = 0.5*m_mass*u_coll2/eV;
+        if (E_coll < m_mcc_process.m_energy_penalty) {
+            return false;
+        }
 
         const ParticleReal sigma_E =
             m_mcc_process.getCrossSection(static_cast<ParticleReal>(E_coll));
-        const ParticleReal u_coll2 = ux * ux + uy * uy + uz * uz;
         const ParticleReal nu_i =
             local_density * sigma_E * sqrt(u_coll2) / m_nu_max;
 
@@ -225,7 +224,8 @@ CoupledBackgroundMCCCollision::CoupledBackgroundMCCCollision (
  */
 amrex::ParticleReal
 CoupledBackgroundMCCCollision::get_nu_max (
-    amrex::Vector<ScatteringProcess> const& mcc_processes) const {
+    amrex::Vector<ScatteringProcess> const& mcc_processes,
+    double const collision_mass) const {
     using namespace amrex::literals;
     amrex::ParticleReal nu, nu_max = 0.0;
     amrex::ParticleReal E_start = 1e-4_prt;
@@ -250,12 +250,14 @@ CoupledBackgroundMCCCollision::get_nu_max (
         // loop through all collision pathways
         for (const auto& scattering_process : mcc_processes) {
             // get collision cross-section
-            sigma_E += scattering_process.getCrossSection(E);
+            if (E >= scattering_process.getEnergyPenalty()) {
+                sigma_E += scattering_process.getCrossSection(E);
+            }
         }
 
         // calculate collision frequency
         nu = (m_max_background_density *
-              std::sqrt(2.0_prt / m_mass1 * PhysConst::q_e) * sigma_E *
+              std::sqrt(2.0 * PhysConst::q_e / collision_mass) * sigma_E *
               std::sqrt(E));
         nu_max = std::max(nu_max, nu);
         E += E_step;
@@ -299,15 +301,7 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
     if (!init_flag) {
         m_mass1 = species1.getMass();
 
-        // calculate maximum collision frequency without ionization
-        m_max_background_density = 1.0_prt;
-        m_nu_max = get_nu_max(m_scattering_processes);
-        m_sigma_max = m_nu_max;
-
         if (ionization_flag) {
-            // calculate maximum collision frequency for ionization
-            m_nu_max_ioniz = get_nu_max(m_ionization_processes);
-            m_ioni_sigma_max = m_nu_max_ioniz;
             // if an ionization process is included the secondary species mass
             // is taken as the background mass
             m_background_mass = species2.getMass();
@@ -317,6 +311,26 @@ CoupledBackgroundMCCCollision::doCollisions (amrex::Real cur_time,
         // same mass as the colliding species (as in ion-neutral collisions)
         else if (m_background_mass == -1) {
             m_background_mass = species1.getMass();
+        }
+
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
+            std::isfinite(m_mass1) && m_mass1 > 0 &&
+            std::isfinite(m_background_mass) && m_background_mass > 0,
+            "Coupled MCC requires finite positive projectile and background masses.");
+
+        // Scattering uses COM energy E = mu*g^2/2, so its frequency bound
+        // must use the reduced mass as well. Form the ratio before multiplying
+        // to avoid underflow of the product of SI masses in single precision.
+        double const reduced_mass = double(m_mass1) *
+            (double(m_background_mass) / (double(m_mass1) + double(m_background_mass)));
+        m_max_background_density = 1.0_prt;
+        m_nu_max = get_nu_max(m_scattering_processes, reduced_mass);
+        m_sigma_max = m_nu_max;
+
+        if (ionization_flag) {
+            // The ionization model uses incident-electron lab-frame energy.
+            m_nu_max_ioniz = get_nu_max(m_ionization_processes, m_mass1);
+            m_ioni_sigma_max = m_nu_max_ioniz;
         }
 
         init_flag = true;
@@ -591,10 +605,13 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
 
     auto const total_collision_prob = m_total_collision_prob;
     auto const nu_max = m_nu_max;
+    if (process_count == 0 || total_collision_prob <= 0 || nu_max <= 0) { return; }
 
     // store projectile and target masses
     auto const m = m_mass1;
     auto const M = m_background_mass;
+    double const target_mass_fraction = double(M) / (double(m) + double(M));
+    double const reduced_mass = double(m) * target_mass_fraction;
 
     // we need particle positions in order to calculate the local density
     // and temperature
@@ -675,8 +692,7 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
 
         const amrex::ParticleReal T_a = T_a_func(x, y, z, t);
 
-        amrex::ParticleReal v_coll, v_coll2, sigma_E, nu_i = 0;
-        double gamma, E_coll;
+        amrex::ParticleReal sigma_E, nu_i = 0;
         amrex::ParticleReal ua_x, ua_y, ua_z, vx, vy, vz;
         const amrex::ParticleReal col_select = amrex::Random(engine);
 
@@ -687,24 +703,23 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
         ua_y = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
         ua_z = vel_std * amrex::RandomNormal(0_prt, 1.0_prt, engine);
 
-        // we assume the target particle is not relativistic (in
-        // the lab frame) and therefore we can transform the projectile
-        // velocity to a frame in which the target is stationary with
-        // a simple Galilean boost
-        // not doing the full Lorentz boost here saves us computation
-        // since most particles will not actually collide
+        // Classical relative velocity in the target rest frame.
         vx = ux[ip] - ua_x;
         vy = uy[ip] - ua_y;
         vz = uz[ip] - ua_z;
-        v_coll2 = (vx * vx + vy * vy + vz * vz);
-        v_coll = std::sqrt(v_coll2);
+        double const v_coll2 = Insert::CollisionDetail::VelocitySquared(vx, vy, vz);
+        auto const v_coll = static_cast<amrex::ParticleReal>(std::sqrt(v_coll2));
 
-        // calculate the collision energy in eV
-        ParticleUtils::getCollisionEnergy(v_coll2, m, M, gamma, E_coll);
+        // Center-of-mass collision energy in eV, without rest-mass energies.
+        double const E_coll = 0.5*reduced_mass*v_coll2/PhysConst::q_e;
 
         // loop through all collision pathways
         for (int i = 0; i < process_count; i++) {
             auto const& scattering_process = *(scattering_processes + i);
+
+            // Reject an energetically forbidden channel before sampling it or
+            // consuming a background particle in the excitation bookkeeping.
+            if (E_coll < scattering_process.m_energy_penalty) { continue; }
 
             // get collision cross-section
             sigma_E = scattering_process.getCrossSection(
@@ -740,35 +755,30 @@ CoupledBackgroundMCCCollision::doBackgroundCollisionsWithinTileCouple (
 #endif
 
             if (update_velocity) {
-                // At this point the given particle has been chosen for a
-                // collision with a background-gas particle of velocity
-                // (ua_x, ua_y, ua_z). Compute the post-collision momentum of
-                // the projectile using conservation of energy and momentum.
-                // The angular distribution in the center-of-mass frame is set
-                // by the process's scattering angle model, and any inelastic
-                // energy loss is passed as the (released) reaction energy.
-                // The background particle is treated as a reservoir: its recoil
-                // is computed as the second product but discarded.
-                amrex::ParticleReal u1x_out, u1y_out, u1z_out;
-                amrex::ParticleReal u2x_out, u2y_out, u2z_out;
-                TwoProductComputeProductMomenta(
-                    ux[ip], uy[ip], uz[ip], m, ua_x, ua_y, ua_z, M, u1x_out,
-                    u1y_out, u1z_out, m, u2x_out, u2y_out, u2z_out, M,
-                    -scattering_process.m_energy_penalty * PhysConst::q_e,
-                    // TwoProductComputeProductMomenta expects the *released*
-                    // energy here, hence the negative sign; the energy penalty
-                    // is also converted from eV to Joules.
+                // Scatter the relative velocity in the COM frame. Inelastic
+                // energy loss changes its magnitude: mu*g_out^2/2 = E - loss.
+                amrex::ParticleReal gx = vx, gy = vy, gz = vz;
+                if (scattering_process.m_energy_penalty != 0._prt) {
+                    auto const scale = static_cast<amrex::ParticleReal>(std::sqrt(
+                        amrex::max(0.0, 1.0 - scattering_process.m_energy_penalty/E_coll)));
+                    gx *= scale;
+                    gy *= scale;
+                    gz *= scale;
+                }
+                amrex::ParticleReal const phi =
+                    2._prt*MathConst::pi*amrex::Random(engine);
+                auto const cos_theta = ParticleUtils::getRandomCosTheta(
+                    engine,
                     scattering_process.m_scattering_angle_model,
-                    // Background MCC does not support Legendre-based scattering.
                     ScatteringUtils::AnisotropicCoefficientTable{},
-                    /*energy_range_status=*/nullptr,
-                    engine);
+                    static_cast<amrex::ParticleReal>(E_coll), nullptr);
+                ParticleUtils::rotateVector(gx, gy, gz, phi, cos_theta);
 
-                // update projectile velocity with new components in labframe
-                // (the background-gas recoil u2*_out is discarded)
-                ux[ip] = u1x_out;
-                uy[ip] = u1y_out;
-                uz[ip] = u1z_out;
+                // v1_out = V_COM + M/(m+M)*g_out, written as a velocity
+                // increment. The reservoir recoil need not be constructed.
+                ux[ip] += static_cast<amrex::ParticleReal>(target_mass_fraction*(gx - vx));
+                uy[ip] += static_cast<amrex::ParticleReal>(target_mass_fraction*(gy - vy));
+                uz[ip] += static_cast<amrex::ParticleReal>(target_mass_fraction*(gz - vz));
             }
             break;
         }
@@ -831,7 +841,7 @@ CoupledBackgroundMCCCollision::doBackgroundIonizationCouple (
             const auto np_ion = ion_tile.numParticles();
 
 #ifndef IONIZATION_SOURCE_INJECT
-            auto Transform = ImpactIonizationTransformFunc(
+            auto Transform = Insert::CollisionDetail::CoupledImpactIonizationTransformFunc(
                 m_ionization_processes[0].getEnergyPenalty(), m_mass1,
                 sqrt_kb_m, m_background_temperature_func, t);
 #else

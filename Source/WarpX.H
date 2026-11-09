@@ -902,11 +902,13 @@ public:
     /**
      * \brief Load field values from a user-specified openPMD file
      * for a specific field (specified by `F_name`)
+     * \param extrapolate_physical_ghosts require physical-domain coverage and
+     *        linearly extend the file into exterior guard cells when necessary
      */
     void ReadExternalFieldFromFile (
          const std::string& read_fields_from_path, amrex::MultiFab* mf,
          const std::string& F_name, const std::string& F_component,
-         int lev, int dest_comp = 0);
+         int lev, int dest_comp = 0, bool extrapolate_physical_ghosts = false);
 
     /**
      * \brief

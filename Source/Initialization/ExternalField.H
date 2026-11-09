@@ -23,7 +23,9 @@
 #include <AMReX_RealVect.H>
 #include <AMReX_TableData.H>
 
+#include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -83,19 +85,56 @@ struct ExternalFieldParams
  */
 struct ExternalFieldView
 {
+    //! Include both end samples, allowing only floating-point coordinate roundoff.
+    [[nodiscard]] AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    bool contains (amrex::RealVect const& pos) const
+    {
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            if (global_size[d] < 2) { return false; }
+            amrex::Real const upper = offset[d] + (global_size[d]-1)*dx[d];
+            amrex::Real const tolerance = 8*std::numeric_limits<amrex::Real>::epsilon()
+                * (std::abs(offset[d]) + std::abs(upper) + dx[d]);
+            if (!(pos[d] >= offset[d]-tolerance && pos[d] <= upper+tolerance)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     //! Return value for given position. Linear interpolation is
-    //! performed. This returns zero if no data are available.
+    //! performed on the closed sample domain. Outside it, return zero unless
+    //! extrapolation using the nearest end interval was explicitly requested.
+    //! Extrapolation is intended only for imposed-field physical guard cells.
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    amrex::Real operator() (amrex::RealVect const& pos) const
+    amrex::Real operator() (amrex::RealVect const& pos, bool extrapolate = false) const
     {
 #if defined(AMREX_USE_GPU)
         AMREX_IF_ON_HOST((amrex::Abort("For GPU builds, ExternalFieldView only works on device. We could make it work on host if necessary.");))
 #endif
 
-        // Get index of the external field array
-        AMREX_D_TERM(const auto i0 = static_cast<int>(std::floor( (pos[0]-offset[0])/dx[0] ));,
-                     const auto i1 = static_cast<int>(std::floor( (pos[1]-offset[1])/dx[1] ));,
-                     const auto i2 = static_cast<int>(std::floor( (pos[2]-offset[2])/dx[2] )));
+        if (!extrapolate && !contains(pos)) { return 0; }
+
+        amrex::IntVect index;
+        amrex::RealVect sample_pos = pos;
+        for (int d = 0; d < AMREX_SPACEDIM; ++d) {
+            if (global_size[d] < 2) { return 0; }
+            amrex::Real const coordinate = (pos[d]-offset[d])/dx[d];
+            if (coordinate <= 0) {
+                index[d] = 0;
+                if (!extrapolate) { sample_pos[d] = offset[d]; }
+            } else if (coordinate >= global_size[d]-1) {
+                // The final sample belongs to the last interval, with weight one.
+                index[d] = global_size[d]-2;
+                if (!extrapolate) {
+                    sample_pos[d] = offset[d] + (global_size[d]-1)*dx[d];
+                }
+            } else {
+                index[d] = static_cast<int>(std::floor(coordinate));
+            }
+        }
+        AMREX_D_TERM(auto const i0 = index[0];,
+                     auto const i1 = index[1];,
+                     auto const i2 = index[2]);
 
         // Get coordinates of external grid point
         AMREX_D_TERM(amrex::Real const xx0 = offset[0] + i0 * dx[0];,
@@ -104,59 +143,41 @@ struct ExternalFieldView
 
 #if (AMREX_SPACEDIM == 1)
 
-        if (i0 < table.begin || i0 >= table.end-1) // This covers empty Table.
-        {
-            AMREX_ALWAYS_ASSERT(i0 < 0 || i0 >= global_size[0]-1);
-            return 0;
-        } else {
-            return static_cast<amrex::Real>(
-                ablastr::math::linear_interp<double>(
-                    xx0, xx0+dx[0], table(i0), table(i0+1), pos[0]));
-        }
+        AMREX_ALWAYS_ASSERT(i0 >= table.begin && i0 < table.end-1);
+        return static_cast<amrex::Real>(
+            ablastr::math::linear_interp<double>(
+                xx0, xx0+dx[0], table(i0), table(i0+1), sample_pos[0]));
 
 #elif (AMREX_SPACEDIM == 2)
 
-        if (i0 < table.begin[0] || i0 >= table.end[0]-1 ||
-            i1 < table.begin[1] || i1 >= table.end[1]-1)
-        {
-            AMREX_ALWAYS_ASSERT(i0 < 0 || i0 >= global_size[0]-1 ||
-                                i1 < 0 || i1 >= global_size[1]-1);
-            return 0;
-        } else {
-            return static_cast<amrex::Real>(
-                ablastr::math::bilinear_interp<double>(
-                    xx0, xx0+dx[0], xx1, xx1+dx[1],
-                    table(i0  ,i1  ),
-                    table(i0  ,i1+1),
-                    table(i0+1,i1  ),
-                    table(i0+1,i1+1),
-                    pos[0], pos[1]));
-        }
+        AMREX_ALWAYS_ASSERT(i0 >= table.begin[0] && i0 < table.end[0]-1 &&
+                            i1 >= table.begin[1] && i1 < table.end[1]-1);
+        return static_cast<amrex::Real>(
+            ablastr::math::bilinear_interp<double>(
+                xx0, xx0+dx[0], xx1, xx1+dx[1],
+                table(i0  ,i1  ),
+                table(i0  ,i1+1),
+                table(i0+1,i1  ),
+                table(i0+1,i1+1),
+                sample_pos[0], sample_pos[1]));
 
 #elif (AMREX_SPACEDIM == 3)
 
-        if (i0 < table.begin[0] || i0 >= table.end[0]-1 ||
-            i1 < table.begin[1] || i1 >= table.end[1]-1 ||
-            i2 < table.begin[2] || i2 >= table.end[2]-1)
-        {
-            AMREX_ALWAYS_ASSERT(i0 < 0 || i0 >= global_size[0]-1 ||
-                                i1 < 0 || i1 >= global_size[1]-1 ||
-                                i2 < 0 || i2 >= global_size[2]-1);
-            return 0;
-        } else {
-            return static_cast<amrex::Real>(
-                ablastr::math::trilinear_interp<double>(
-                    xx0, xx0+dx[0], xx1, xx1+dx[1], xx2, xx2+dx[2],
-                    table(i0  ,i1  ,i2  ),
-                    table(i0  ,i1  ,i2+1),
-                    table(i0  ,i1+1,i2  ),
-                    table(i0  ,i1+1,i2+1),
-                    table(i0+1,i1  ,i2  ),
-                    table(i0+1,i1  ,i2+1),
-                    table(i0+1,i1+1,i2  ),
-                    table(i0+1,i1+1,i2+1),
-                    pos[0], pos[1], pos[2]));
-        }
+        AMREX_ALWAYS_ASSERT(i0 >= table.begin[0] && i0 < table.end[0]-1 &&
+                            i1 >= table.begin[1] && i1 < table.end[1]-1 &&
+                            i2 >= table.begin[2] && i2 < table.end[2]-1);
+        return static_cast<amrex::Real>(
+            ablastr::math::trilinear_interp<double>(
+                xx0, xx0+dx[0], xx1, xx1+dx[1], xx2, xx2+dx[2],
+                table(i0  ,i1  ,i2  ),
+                table(i0  ,i1  ,i2+1),
+                table(i0  ,i1+1,i2  ),
+                table(i0  ,i1+1,i2+1),
+                table(i0+1,i1  ,i2  ),
+                table(i0+1,i1  ,i2+1),
+                table(i0+1,i1+1,i2  ),
+                table(i0+1,i1+1,i2+1),
+                sample_pos[0], sample_pos[1], sample_pos[2]));
 #endif
     }
 
@@ -217,11 +238,14 @@ public:
      * \param[in] dmap     DistributionMapping of destionation ParticleContainer/MultiFab
      * \param[in] ngrow    number of ghost cells in destination MultiFab
      * \param[in] get_zlab optional function for transforming z-coordinates into lab frame
+     * \param[in] coverage_domain optional physical domain that the file must cover;
+     *                            exterior guard cells do not require extra file samples
      */
     void prepare (amrex::BoxArray const& grids,
                   amrex::DistributionMapping const& dmap,
                   amrex::IntVect const& ngrow,
-                  std::function<amrex::Real(amrex::Real)> const& get_zlab = nullptr);
+                  std::function<amrex::Real(amrex::Real)> const& get_zlab = nullptr,
+                  amrex::RealBox const* coverage_domain = nullptr);
 
     /**
      * \brief This needs to be called before loading data for moving window.
@@ -240,7 +264,8 @@ public:
 private:
 
     //! Read data within this box
-    void load_data (amrex::RealBox const& pbox);
+    void load_data (amrex::RealBox const& pbox,
+                    amrex::RealBox const* coverage_domain = nullptr);
     //! Used by getView to make ExternalFieldView
     [[nodiscard]] ExternalFieldView make_view (amrex::BaseFab<double> const& fab) const noexcept;
     //! During the moving window stage, we cache the data for

@@ -22,6 +22,9 @@
 
 class BackgroundCoupledDensity;
 
+/** Nonrelativistic MCC against the coupled neutral-density reservoir.
+ *  Particle ux/uy/uz are interpreted as classical velocities throughout this module.
+ */
 class CoupledBackgroundMCCCollision final : public CollisionBase {
   public:
     explicit CoupledBackgroundMCCCollision (std::string const& collision_name);
@@ -37,7 +40,8 @@ class CoupledBackgroundMCCCollision final : public CollisionBase {
     operator=(CoupledBackgroundMCCCollision&&) = delete;
 
     [[nodiscard]] amrex::ParticleReal
-    get_nu_max (amrex::Vector<ScatteringProcess> const& mcc_processes) const;
+    get_nu_max (amrex::Vector<ScatteringProcess> const& mcc_processes,
+                double collision_mass) const;
 
     /** Perform the collisions
      *

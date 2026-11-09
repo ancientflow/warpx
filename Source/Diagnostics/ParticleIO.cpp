@@ -358,7 +358,10 @@ storeFieldOnParticles ( WarpXParticleContainer::Base& tmp, bool is_full_diagnost
 #endif
         for (PinnedParIter pti(tmp, lev); pti.isValid(); ++pti) {
 
-            const amrex::Box box = pti.tilebox();
+            // Match the pusher's origin: lowered cell-centered shapes must not
+            // see negative local coordinates near a tile's lower boundary.
+            amrex::Box box = pti.tilebox();
+            box.grow(Ex.nGrowVect());
             const amrex::XDim3 xyzmin = WarpX::LowerCorner(box, lev, 0._rt);
             const Dim3 lo = lbound(box);
 

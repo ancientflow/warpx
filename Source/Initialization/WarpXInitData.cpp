@@ -983,6 +983,14 @@ WarpX::AddExternalFields (int const lev)
         ApplyEfieldBoundary(lev, PatchType::fine, 0.0);
     }
     if (m_p_ext_field_params->B_ext_grid_type != ExternalFieldType::default_zero) {
+        // In electrostatic evolution this is an imposed field, not an initial
+        // condition for Maxwell/Darwin evolution. Apply magnetic boundaries to
+        // the self field before adding it, so PEC cannot erase the imposed Bn.
+        bool const prescribed_B = electrostatic_solver_id != ElectrostaticSolverAlgo::None
+            && evolve_scheme != EvolveScheme::Semi_Implicit_Darwin;
+        if (prescribed_B) {
+            ApplyBfieldBoundary(lev, PatchType::fine, SubcyclingHalf::FirstHalf, 0.0);
+        }
         ablastr::fields::MultiLevelVectorField const& Bfield_fp = m_fields.get_mr_levels_alldirs(FieldType::Bfield_fp, max_level);
         if (m_p_ext_field_params->B_ext_grid_type == ExternalFieldType::constant) {
             Bfield_fp[lev][0]->plus(m_p_ext_field_params->B_external_grid[0], guard_cells.ng_alloc_EB.min());
@@ -994,8 +1002,10 @@ WarpX::AddExternalFields (int const lev)
             amrex::MultiFab::Add(*Bfield_fp[lev][1], *m_fields.get(FieldType::Bfield_fp_external, Direction{1}, lev), 0, 0, 1, guard_cells.ng_alloc_EB);
             amrex::MultiFab::Add(*Bfield_fp[lev][2], *m_fields.get(FieldType::Bfield_fp_external, Direction{2}, lev), 0, 0, 1, guard_cells.ng_alloc_EB);
         }
-        // Apply B-field boundary such that the initial field satisfies the expected boundary conditions
-        ApplyBfieldBoundary(lev, PatchType::fine, SubcyclingHalf::FirstHalf, 0.0);
+        if (!prescribed_B) {
+            // Evolved magnetic fields must still satisfy their EM boundaries.
+            ApplyBfieldBoundary(lev, PatchType::fine, SubcyclingHalf::FirstHalf, 0.0);
+        }
     }
 }
 
@@ -1702,10 +1712,12 @@ WarpX::LoadExternalFields (int const lev)
         WARPX_ALWAYS_ASSERT_WITH_MESSAGE(n_rz_azimuthal_modes == 1,
                                          "External field reading is not implemented for more than one RZ mode (see #3829)");
 #endif
+        bool const prescribed_B = electrostatic_solver_id != ElectrostaticSolverAlgo::None
+            && evolve_scheme != EvolveScheme::Semi_Implicit_Darwin;
         for (int dir = 0; dir < 3; ++dir) {
             ReadExternalFieldFromFile(m_p_ext_field_params->external_fields_path,
                 m_fields.get(FieldType::Bfield_fp_external, Direction{dir}, lev),
-                "B", dimnames[dir], lev);
+                "B", dimnames[dir], lev, 0, prescribed_B);
         }
     }
 
@@ -1794,16 +1806,18 @@ void
 WarpX::ReadExternalFieldFromFile (
        const std::string& read_fields_from_path, amrex::MultiFab* mf,
        const std::string& F_name, const std::string& F_component,
-       int const lev, int dest_comp)
+       int const lev, int dest_comp, bool const extrapolate_physical_ghosts)
 {
 #if !defined(WARPX_USE_OPENPMD)
 
-    amrex::ignore_unused(read_fields_from_path, mf, F_name, F_component, lev, dest_comp);
+    amrex::ignore_unused(read_fields_from_path, mf, F_name, F_component, lev, dest_comp,
+                        extrapolate_physical_ghosts);
     WARPX_ABORT_WITH_MESSAGE("ReadExternalFieldFromFile requires OpenPMD support to be enabled");
 
 #elif defined(WARPX_DIM_RCYLINDER) || defined(WARPX_DIM_RSPHERE)
 
-    amrex::ignore_unused(read_fields_from_path, mf, F_name, F_component, lev, dest_comp);
+    amrex::ignore_unused(read_fields_from_path, mf, F_name, F_component, lev, dest_comp,
+                        extrapolate_physical_ghosts);
     WARPX_ABORT_WITH_MESSAGE("ReadExternalFieldFromFile is not supported for 1D RCYLINDER and RSPHERE");
 
 #else
@@ -1820,18 +1834,21 @@ WarpX::ReadExternalFieldFromFile (
         }
     }
 
-    // Read external field openPMD data. Physical-domain ghosts retain the
-    // single-level zero-outside convention; MR coverage checks apply within
-    // the physical domain, including local fine patches and their ghosts.
+    // Load supplied ghost samples too. For an imposed B, a file ending exactly
+    // at the physical boundary is sufficient: only exterior guards are extended.
     Box pbox = amrex::grow(mf->boxArray().minimalBox(), mf->nGrowVect());
-    if (maxLevel() > 0) {
+    if (maxLevel() > 0 && !extrapolate_physical_ghosts) {
         pbox &= amrex::convert(target_geom.Domain(), nodal_flag);
     }
     const bool distributed = true;
     ExternalFieldReader external_field_reader(read_fields_from_path, F_name, F_component,
                                               problo, dx, pbox, distributed, maxLevel() > 0);
     external_field_reader.prepare(mf->boxArray(), mf->DistributionMap(),
-                                  mf->nGrowVect());
+                                  mf->nGrowVect(), nullptr,
+                                  extrapolate_physical_ghosts ? &target_geom.ProbDomain() : nullptr);
+    auto const domain = amrex::convert(target_geom.Domain(), nodal_flag);
+    auto const domain_lo = amrex::lbound(domain);
+    auto const domain_hi = amrex::ubound(domain);
 
     // Loop over boxes
 #if defined(AMREX_USE_OMP) && !defined(AMREX_USE_GPU)
@@ -1867,7 +1884,12 @@ WarpX::ReadExternalFieldFromFile (
                     AMREX_D_DECL(problo[0] + ii*dx[0],
                                   problo[1] + j *dx[1],
                                   problo[2] + k *dx[2])};
-                mffab(i,j,k, dest_comp) = external_field_view(pos);
+                bool const physical_ghost = AMREX_D_TERM(
+                    ii < domain_lo.x || ii > domain_hi.x,
+                    || j < domain_lo.y || j > domain_hi.y,
+                    || k < domain_lo.z || k > domain_hi.z);
+                mffab(i,j,k, dest_comp) = external_field_view(
+                    pos, extrapolate_physical_ghosts && physical_ghost);
             }
 
         ); // End ParallelFor

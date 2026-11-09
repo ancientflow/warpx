@@ -8,6 +8,8 @@
 #ifndef WARPX_PARTICLES_PUSHER_UPDATEMOMENTUM_BORIS_H_
 #define WARPX_PARTICLES_PUSHER_UPDATEMOMENTUM_BORIS_H_
 
+#include "Insert/Config/WarpXOptimizationConfig.h"
+
 #include <AMReX_REAL.H>
 
 /** \brief Push the particle's positions over one timestep,
@@ -33,9 +35,13 @@ void UpdateMomentumBoris(
         uy += econst*Ey;
         uz += econst*Ez;
     }
-    // Compute temporary gamma factor
+    // Compute temporary gamma factor (unity in the nonrelativistic mode).
+#ifdef WARPX_NONRELATIVISTIC_PUSH
+    constexpr amrex::ParticleReal inv_gamma = 1._prt;
+#else
     constexpr auto inv_c2 = PhysConst::inv_c2_v< amrex::ParticleReal>;
     const amrex::ParticleReal inv_gamma = 1._prt/std::sqrt(1._prt + (ux*ux + uy*uy + uz*uz)*inv_c2);
+#endif
     // Magnetic rotation
     // - Compute temporary variables
     amrex::ParticleReal tx = econst*inv_gamma*Bx;
