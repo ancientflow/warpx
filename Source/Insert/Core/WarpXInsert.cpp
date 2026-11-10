@@ -31,6 +31,15 @@ namespace Insert {
 void
 BackwardCompatibility ()
 {
+    amrex::ParmParse const pp_bg("background_density");
+    for (char const* name : {"average_steps_per_period", "average_periods",
+                            "raw_output_interval", "output_dir", "output_fab"}) {
+        WARPX_ALWAYS_ASSERT_WITH_MESSAGE(!pp_bg.contains(name),
+            std::string("background_density.") + name + " has been removed. "
+            "Average rho_<species> diagnostics offline and convert to a nodal VisMF "
+            "for background_density.input_fab with MCC_DENSITY_AVERAGE_USE.");
+    }
+
     amrex::ParmParse pp_mc("my_constants");
     // Accept historical device-specific diagnostic names without silently
     // choosing one value when old and new spellings conflict.

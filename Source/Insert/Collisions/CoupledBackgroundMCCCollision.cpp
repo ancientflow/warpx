@@ -98,12 +98,12 @@ CoupledBackgroundMCCCollision::CoupledBackgroundMCCCollision (
 #ifndef WARPX_DIM_3D
         WARPX_ABORT_WITH_MESSAGE("Coupled MCC with mesh refinement requires 3D Cartesian grids.");
 #endif
-#if defined(MCC_DENSITY_AVERAGE_USE) || defined(MCC_DENSITY_AVERAGE_CALC) || \
+#if defined(MCC_DENSITY_AVERAGE_USE) || \
     defined(IONIZATION_SOURCE_RECORD) || defined(IONIZATION_SOURCE_INJECT) || \
     defined(MCC_ION_CACHED_RHO) || defined(MCC_EXCITATION)
         WARPX_ABORT_WITH_MESSAGE(
             "Coupled MCC with mesh refinement supports direct background density only. "
-            "Disable MCC_DENSITY_AVERAGE_USE/CALC, IONIZATION_SOURCE_RECORD/INJECT, "
+            "Disable MCC_DENSITY_AVERAGE_USE, IONIZATION_SOURCE_RECORD/INJECT, "
             "MCC_ION_CACHED_RHO and MCC_EXCITATION.");
 #endif
     }

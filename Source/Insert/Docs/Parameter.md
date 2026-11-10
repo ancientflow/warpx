@@ -22,6 +22,26 @@ AMReX `ParmParse` 写法列出，例如 `my_constants.foo` 和 `insert.foo`。
 仅是表达式常量；zmin 环形阳极可用 `insert.zmin_ring_anode`（见下节）显式打开，
 或在体阳极电势表达式中引用。
 
+## 固定中性背景密度
+
+中性密度的在线累计、原始 FAB 快照和平均 FAB 输出已移除。
+可对诊断中的 `rho_<背景物种>`（例如 `rho_xe_neutral`）离线平均，
+再转换成与目标网格匹配的 nodal VisMF（包含所需 ghost）。BP5 诊断为
+cell-centered 数据，不能直接作为背景 FAB 读取；应核对物种电荷约定、
+单位、物理坐标及采样时间窗口。
+
+保留编译开关 `MCC_DENSITY_AVERAGE_USE` 和运行参数
+`background_density.input_fab`；未指定路径时，默认读取
+`background_density_fab/<背景物种>/average/lev0/average`。
+当前读取路径仍限单层、单 FAB。`IONIZATION_SOURCE_INJECT` 仍要求
+`MCC_DENSITY_AVERAGE_USE`，电离源记录与注入功能不受此次移除影响。
+
+旧宏 `MCC_DENSITY_AVERAGE_CALC` 会触发编译错误。以下旧记录参数会在
+`BackwardCompatibility()` 中被拒绝，即使其值为零：
+`background_density.average_steps_per_period`、`average_periods`、
+`raw_output_interval`、`output_dir`、`output_fab`。使用固定背景时应删除它们，
+仅保留读取参数 `background_density.input_fab`。
+
 ## zmin 面环形阳极电势
 
 无陶瓷的简化 Hall 模型（阳极环位于 zmin 域边界面上）可用以下开关：

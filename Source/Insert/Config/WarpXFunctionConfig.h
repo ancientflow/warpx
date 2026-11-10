@@ -12,9 +12,8 @@
 // #define COLLISION_RECORD
 #define BENCHMARK_2D
 
-/* Background MCC density coupling. */
+/* Background MCC density coupling. AVERAGE_USE loads an offline-averaged FAB. */
 #define MCC_DENSITY
-// #define MCC_DENSITY_AVERAGE_CALC
 // #define MCC_DENSITY_AVERAGE_USE
 
 /* Coupled MCC collision behavior. */
@@ -33,8 +32,8 @@
 #include "Insert/Config/WarpXOptimizationConfig.h"
 
 /* Configuration checks. */
-#if defined(MCC_DENSITY_AVERAGE_CALC) && defined(MCC_DENSITY_AVERAGE_USE)
-#error "MCC_DENSITY_AVERAGE_CALC and MCC_DENSITY_AVERAGE_USE are mutually exclusive"
+#ifdef MCC_DENSITY_AVERAGE_CALC
+#error "MCC_DENSITY_AVERAGE_CALC has been removed. Average rho_<species> diagnostics offline instead."
 #endif
 
 #if defined(MCC_ION_CACHED_RHO) && defined(MCC_DENSITY_AVERAGE_USE)

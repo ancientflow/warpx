@@ -62,7 +62,7 @@ GlobalBackgroundDensityUpdate (const int step)
         int const ndt = ParticleSubcyclingNdt(density.m_ground_species);
         const bool if_update_push = (ndt == 1 || step == 0 || step % ndt == 1);
         if (if_update_push || if_update_sort) {
-            density.backgroundDensityUpdate(mypc, elec_weight, step);
+            density.backgroundDensityUpdate(mypc, elec_weight);
         }
     }
 #endif
@@ -101,9 +101,6 @@ void
 GlobalBackgroundDensityFinalize ()
 {
 #ifdef MCC_DENSITY
-    for (auto& density : global_background_density) {
-        density.backgroundDensityFinalize();
-    }
     // Release the MultiFabs now, while the AMReX arenas are still alive.
     // The static destructor of this global vector would otherwise run after
     // AMReX finalization and abort with "pure virtual method called".

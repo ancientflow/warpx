@@ -25,7 +25,7 @@
 7. 第一版不考虑 MPI 和自适应网格，只支持单 MPI rank、单 level。
 8. 所有功能控制都由编译宏完成；相关宏关闭时，代码行为必须与修改前一致。
 
-`MCC_DENSITY_AVERAGE_CALC` 和 `MCC_DENSITY_AVERAGE_USE` 对本目标已经没有保留意义：它们应被平均电离源统计、双线性采样以及未来注入路径完全替代。新的控制算例不得再依赖平均中性密度文件，也不得同时启用平均中性密度和平均电离源路径。
+当前实现已移除 `MCC_DENSITY_AVERAGE_CALC` 在线记录；中性密度改由诊断离线平均并转换为 nodal VisMF。保留 `MCC_DENSITY_AVERAGE_USE` 文件读取，且 `IONIZATION_SOURCE_INJECT` 必须与它同时启用。下文的阶段性计划不能替代当前编译开关和参数约定，参见 [参数说明](Parameter.md#固定中性背景密度)。
 
 ## 2. 当前 WarpX 代码事实
 
@@ -49,7 +49,7 @@ Source/Insert/Config/WarpXFunctionConfig.h
 4. `filterCopyTransformParticles<1, depos_order>()` 对满足条件的入射电子生成一个新电子和一个离子。
 5. `ImpactIonizationTransformFunc` 修改入射电子能量，并设置新电子和新离子的速度。
 6. 完整自洽统计算例中，还会按 `elec_weight` 消耗中性粒子权重并更新背景密度。
-7. 旧的 `MCC_DENSITY_AVERAGE_CALC/USE` 只平均背景中性密度，不能切断瞬时电离反馈；新实现应停止使用这两个宏作为控制算例路径。
+7. 单独冻结背景中性密度不会固定电离产物生成率；当前控制路径使用 `MCC_DENSITY_AVERAGE_USE` 提供碰撞背景，同时由 `IONIZATION_SOURCE_INJECT` 替换瞬时电离产物生成。在线密度记录已移除。
 
 电离源统计和采样属于碰撞模块，应放在 `Source/Insert/Collisions`。当前分支只复用：
 
@@ -571,7 +571,7 @@ Source/Insert/Collisions/CoupledBackgroundMCCCollision.cpp
 3. `IONIZATION_SOURCE_INJECT`：当前分支不实现；等待注入重构分支合并后，用其接口读取固定源项表并注入平均电离源。
 4. 两个宏互斥，不能同时定义。
 
-实现任务应删除或永久停用 `MCC_DENSITY_AVERAGE_CALC` 和 `MCC_DENSITY_AVERAGE_USE` 控制路径。
+在线中性密度记录已移除；保留 `MCC_DENSITY_AVERAGE_USE` 作为固定源注入时的碰撞背景读取路径。
 
 ## 11. 推荐最小实现顺序
 
@@ -614,7 +614,7 @@ $$
 
 该阶段不属于当前分支实现范围，只保留接口计划：
 
-1. 删除或停用 `MCC_DENSITY_AVERAGE_CALC` 和 `MCC_DENSITY_AVERAGE_USE` 相关控制路径。
+1. 移除在线中性密度记录，保留 `MCC_DENSITY_AVERAGE_USE` 读取离线平均背景。
 2. 输入文件移除 MCC 电离过程或禁用电离产物生成，避免和平均源项注入双计数。
 3. 保留其他非电离碰撞、边界、阴极电子注入和场求解。
 4. 通过注入重构分支提供的接口按 `IonizationSourceSampler` 返回的位置、权重和未来速度模型创建电子-离子对。

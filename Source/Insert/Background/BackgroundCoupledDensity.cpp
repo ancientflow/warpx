@@ -1,29 +1,25 @@
 #include "BackgroundCoupledDensity.h"
 
 #include "BoundaryConditions/WarpX_PEC.H"
-#include "Insert/Utils/InsertUtils.h"
 #include "Parallelization/WarpXSumGuardCells.H"
 #include "WarpX.H"
 
 #include <AMReX_ParmParse.H>
 
-#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
+#ifdef MCC_DENSITY_AVERAGE_USE
 #include <AMReX_VisMF.H>
 #endif
 
-#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
+#ifdef MCC_DENSITY_AVERAGE_USE
 #include <cctype>
 #endif
 #include <cmath>
-#ifdef MCC_DENSITY_AVERAGE_CALC
-#include <iomanip>
-#endif
 #include <limits>
-#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
+#ifdef MCC_DENSITY_AVERAGE_USE
 #include <sstream>
 #endif
 
-#if defined(MCC_DENSITY_AVERAGE_CALC) || defined(MCC_DENSITY_AVERAGE_USE)
+#ifdef MCC_DENSITY_AVERAGE_USE
 namespace {
 
 std::string
@@ -52,32 +48,6 @@ FabOutputPath (std::string const& base_dir, std::string const& species,
     std::ostringstream os;
     os << FabOutputParent(base_dir, species, quantity, lev) << "/" << quantity;
     return os.str();
-}
-
-} // namespace
-#endif
-
-#ifdef MCC_DENSITY_AVERAGE_CALC
-namespace {
-
-std::string
-FabStepOutputPath (std::string const& base_dir, std::string const& species,
-                   std::string const& quantity, int lev, int step) {
-    std::ostringstream os;
-    os << FabOutputParent(base_dir, species, quantity, lev) << "/step"
-       << std::setw(8) << std::setfill('0') << step;
-    return os.str();
-}
-
-void
-WriteSingleFabMultiFab (amrex::MultiFab const& mf, std::string const& path,
-                        std::string const& species, int lev) {
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        mf.boxArray().size() == 1,
-        "Background density FAB output requires exactly one FAB for species " +
-            species + " at level " + std::to_string(lev) + ".");
-    Insert::CreateDirectoryTree(Insert::ParentPath(path));
-    amrex::VisMF::Write(mf, path);
 }
 
 } // namespace
@@ -145,9 +115,6 @@ BackgroundCoupledDensity::backgroundDensityInit () {
 #endif
     m_background_density_fabs.resize(flvl + 1);
     m_ionization_consumption_fabs.resize(flvl + 1);
-#ifdef MCC_DENSITY_AVERAGE_CALC
-    m_background_density_sum_fabs.resize(flvl + 1);
-#endif
     m_tiles.resize(flvl + 1);
 
     amrex::Print() << "Background density initialized with size: \n";
@@ -162,32 +129,7 @@ BackgroundCoupledDensity::backgroundDensityInit () {
         m_background_density_fabs[lev].setVal(0.0);
         m_ionization_consumption_fabs[lev] = amrex::MultiFab(ba, dm, 1, ng);
         m_ionization_consumption_fabs[lev].setVal(0.0);
-#ifdef MCC_DENSITY_AVERAGE_CALC
-        m_background_density_sum_fabs[lev] =
-            amrex::MultiFab(ba, dm, WarpX::ncomps, ng);
-        m_background_density_sum_fabs[lev].setVal(0.0);
-#endif
     }
-#ifdef MCC_DENSITY_AVERAGE_CALC
-    amrex::ParmParse const pp_bg("background_density");
-    pp_bg.query("average_steps_per_period", m_average_steps_per_period);
-    pp_bg.query("average_periods", m_average_periods);
-    pp_bg.query("raw_output_interval", m_raw_output_interval);
-    pp_bg.query("output_dir", m_output_dir);
-    pp_bg.query("output_fab", m_output_fab);
-
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_average_steps_per_period > 0,
-        "background_density.average_steps_per_period must be positive.");
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_average_periods > 0,
-        "background_density.average_periods must be positive.");
-    WARPX_ALWAYS_ASSERT_WITH_MESSAGE(
-        m_raw_output_interval >= 0,
-        "background_density.raw_output_interval must be non-negative.");
-
-    m_average_window_steps = m_average_steps_per_period * m_average_periods;
-#endif
 #ifdef MCC_DENSITY_AVERAGE_USE
     amrex::ParmParse const pp_bg("background_density");
     pp_bg.query("input_fab", m_input_fab);
@@ -211,11 +153,8 @@ BackgroundCoupledDensity::backgroundDensityInit () {
  */
 void
 BackgroundCoupledDensity::backgroundDensityUpdate (
-    MultiParticleContainer& mypc, amrex::ParticleReal elec_weight, int step) {
+    MultiParticleContainer& mypc, amrex::ParticleReal elec_weight) {
     using namespace amrex::literals;
-#ifndef MCC_DENSITY_AVERAGE_CALC
-    static_cast<void>(step);
-#endif
 
     WarpX& warpx_instance = WarpX::GetInstance();
     auto& background_species =
@@ -243,21 +182,6 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
             "Coupled MCC background particles must use the field mesh layout.");
         m_background_density_fabs[lev].setVal(0.0_prt);
         AtomDepositAPI(background_species, m_background_density_fabs[lev], lev);
-#ifdef MCC_DENSITY_AVERAGE_CALC
-        if (m_raw_output_interval > 0 && step % m_raw_output_interval == 0) {
-            WriteSingleFabMultiFab(m_background_density_fabs[lev],
-                                   FabStepOutputPath(m_output_dir,
-                                                     m_ground_species, "raw",
-                                                     lev, step),
-                                   m_ground_species, lev);
-        }
-        if (m_average_sample_count < m_average_window_steps) {
-            amrex::MultiFab::Add(m_background_density_sum_fabs[lev],
-                                 m_background_density_fabs[lev], 0, 0,
-                                 m_background_density_fabs[lev].nComp(),
-                                 m_background_density_fabs[lev].nGrowVect());
-        }
-#endif
         auto const& geo = warpx_instance.Geom(lev);
         auto& tiles = m_tiles[lev];
         amrex::Gpu::streamSynchronize();
@@ -291,11 +215,6 @@ BackgroundCoupledDensity::backgroundDensityUpdate (
             });
         }
     }
-#ifdef MCC_DENSITY_AVERAGE_CALC
-    if (m_average_sample_count < m_average_window_steps) {
-        ++m_average_sample_count;
-    }
-#endif
     amrex::Print() << "rank " << amrex::ParallelDescriptor::MyProc()
                    << ": Updated background species: " << m_ground_species
                    << " end\n";
@@ -327,47 +246,6 @@ BackgroundCoupledDensity::applyIonizationConsumption (int lev) {
 
     amrex::MultiFab::Subtract(background_density, consumption, 0, 0, 1,
                               background_density.nGrowVect());
-}
-
-void
-BackgroundCoupledDensity::backgroundDensityFinalize () {
-#ifdef MCC_DENSITY_AVERAGE_CALC
-    using namespace amrex::literals;
-
-    if (m_average_sample_count <= 0) {
-        amrex::Print() << "No background density samples collected for species "
-                       << m_ground_species << "; skip averaged FAB output.\n";
-        return;
-    }
-
-    auto const sample_count = static_cast<amrex::Real>(m_average_sample_count);
-    amrex::Vector<amrex::MultiFab> average_fabs(
-        m_background_density_sum_fabs.size());
-    for (int lev = 0;
-         lev < static_cast<int>(m_background_density_sum_fabs.size()); ++lev) {
-        average_fabs[lev] = amrex::MultiFab(
-            m_background_density_sum_fabs[lev].boxArray(),
-            m_background_density_sum_fabs[lev].DistributionMap(),
-            m_background_density_sum_fabs[lev].nComp(),
-            m_background_density_sum_fabs[lev].nGrowVect());
-        amrex::MultiFab::Copy(average_fabs[lev],
-                              m_background_density_sum_fabs[lev], 0, 0,
-                              m_background_density_sum_fabs[lev].nComp(),
-                              m_background_density_sum_fabs[lev].nGrowVect());
-        average_fabs[lev].mult(1.0_rt / sample_count);
-
-        std::string const output_path =
-            (lev == 0 && !m_output_fab.empty())
-                ? m_output_fab
-                : FabOutputPath(m_output_dir, m_ground_species, "average", lev);
-        WriteSingleFabMultiFab(average_fabs[lev], output_path, m_ground_species,
-                               lev);
-    }
-
-    amrex::Print() << "Wrote averaged background density FAB for species "
-                   << m_ground_species << " from " << m_average_sample_count
-                   << " samples.\n";
-#endif
 }
 
 /**
