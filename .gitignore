@@ -81,3 +81,6 @@ WARP.md
 .LSOverride
 
 data/
+
+# Local simulation scripts
+/Script/
